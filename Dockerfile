@@ -32,9 +32,10 @@ COPY pyproject.toml pixi.lock toolchain.sh ck-jobs.cmake ./
 # The mount is pixi's whole cache, since uv moves a built wheel into place from elsewhere in it; what
 # survives the step is the compiled wheels and comfy-kitchen's checkout. A changed lock re-downloads the
 # rest in minutes, where the kernels are hours on a CI runner. One per architecture, because the wheel
-# cache does not key on it.
+# cache does not key on it. pixi logs a source build's output only at uv's debug level, and without
+# it the hours of kernel builds print nothing.
 RUN --mount=type=cache,id=difflab-kernels-${COMFY_CUDA_ARCHS},target=/root/.cache/rattler/cache \
-    pixi install --locked -e prod \
+    RUST_LOG=uv_build_frontend=debug pixi install --locked -e prod \
     && rm -rf .pixi/tmp \
     && find /root/.cache/rattler/cache -mindepth 1 -maxdepth 1 ! -name uv-cache -exec rm -rf {} + \
     && find /root/.cache/rattler/cache/uv-cache -mindepth 1 -maxdepth 1 ! -name sdists-v9 ! -name git-v0 -exec rm -rf {} +
