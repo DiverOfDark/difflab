@@ -5,6 +5,9 @@ export NVCC_CCBIN="$CONDA_PREFIX/bin/x86_64-conda-linux-gnu-g++"
 export NVCC_PREPEND_FLAGS="-ccbin=$NVCC_CCBIN"
 export CUDAHOSTCXX="$NVCC_CCBIN"
 export CMAKE_TOOLCHAIN_FILE="$PIXI_PROJECT_ROOT/ck-jobs.cmake"
+# Parallel nvcc jobs for both extensions. 4 fits 58 GB beside a resident model; a 2-core, 7 GB CI runner
+# needs 1.
+export MAX_JOBS="${MAX_JOBS:-4}"
 # nvcc's intermediates for comfy-kitchen's CUTLASS kernels run to gigabytes each, four at a time: more
 # than a tmpfs /tmp holds.
 export TMPDIR="$PIXI_PROJECT_ROOT/.pixi/tmp"

@@ -10,3 +10,4 @@ output
 sources
 samples
 frontend/node_modules
+difflab/api/static

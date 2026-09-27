@@ -75,7 +75,7 @@ no-build-isolation = ["causal-conv1d"]
 
 [tool.pixi.activation]
 scripts = ["toolchain.sh"]
-env = { CAUSAL_CONV1D_FORCE_BUILD = "TRUE", MAX_JOBS = "4", CMAKE_GENERATOR = "Ninja" }
+env = { CAUSAL_CONV1D_FORCE_BUILD = "TRUE", CMAKE_GENERATOR = "Ninja" }
 
 [tool.pixi.environments]
 default = { features = ["dev"], solve-group = "default" }

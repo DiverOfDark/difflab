@@ -1,42 +1,51 @@
+# syntax=docker/dockerfile:1
 # difflab on a GPU host, as one process: uvicorn serves the page and the worker thread beside it renders.
 #
-# The environment is pixi's, from pyproject.toml and pixi.lock exactly as on a workstation, and comes over
-# to the runtime stage whole: its toolchain rides along, because causal-conv1d is built inside it.
+# The environment is pixi's, from pyproject.toml and pixi.lock exactly as on a workstation, and the image
+# is that stage itself rather than a copy of it: every layer is in the pushed image, so the image is its
+# own build cache, and the environment layer is only rebuilt when the manifest, the lock or the toolchain
+# script changes.
+#
 # comfy-kitchen is compiled for one architecture: 86-real is a 3090, and another card needs
 # --build-arg COMFY_CUDA_ARCHS=<its compute capability without the dot>-real, or its attention kernels
 # will not load. An empty value builds comfy-kitchen's own list for every card, sm_86 on sm_80 code.
-FROM ghcr.io/prefix-dev/pixi:0.81.0 AS build
+
+FROM node:22-slim AS page
+WORKDIR /app
+COPY frontend/package.json frontend/package-lock.json ./frontend/
+RUN npm --prefix frontend ci
+COPY frontend ./frontend
+RUN npm --prefix frontend run build
+
+FROM ghcr.io/prefix-dev/pixi:0.81.0
 
 ARG COMFY_CUDA_ARCHS=86-real
-ENV COMFY_CUDA_ARCHS=${COMFY_CUDA_ARCHS}
+ARG MAX_JOBS=4
+ENV COMFY_CUDA_ARCHS=${COMFY_CUDA_ARCHS} \
+    MAX_JOBS=${MAX_JOBS}
 
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY pyproject.toml pixi.lock toolchain.sh ck-jobs.cmake README.md ./
-RUN pixi install --locked -e prod
-
-COPY frontend/package.json frontend/package-lock.json ./frontend/
-RUN pixi run -e prod npm --prefix frontend ci
-COPY frontend ./frontend
-COPY difflab ./difflab
-RUN pixi run -e prod npm --prefix frontend run build
-COPY main.py ./
-
-FROM ubuntu:24.04
-
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+COPY pyproject.toml pixi.lock toolchain.sh ck-jobs.cmake ./
+# The mount is pixi's whole cache, since uv moves a built wheel into place from elsewhere in it; what
+# survives the step is the compiled wheels and comfy-kitchen's checkout. A changed lock re-downloads the
+# rest in minutes, where the kernels are hours on a CI runner. One per architecture, because the wheel
+# cache does not key on it.
+RUN --mount=type=cache,id=difflab-kernels-${COMFY_CUDA_ARCHS},target=/root/.cache/rattler/cache \
+    pixi install --locked -e prod \
+    && rm -rf .pixi/tmp \
+    && find /root/.cache/rattler/cache -mindepth 1 -maxdepth 1 ! -name uv-cache -exec rm -rf {} + \
+    && find /root/.cache/rattler/cache/uv-cache -mindepth 1 -maxdepth 1 ! -name sdists-v9 ! -name git-v0 -exec rm -rf {} +
 
 ENV PYTHONUNBUFFERED=1 \
     HF_HOME=/models \
     DIFFLAB_HOST=0.0.0.0
 
-COPY --from=build /app/.pixi/envs/prod /app/.pixi/envs/prod
-COPY --from=build /app/difflab /app/difflab
-COPY --from=build /app/main.py /app/
-WORKDIR /app
+COPY main.py ./
+COPY difflab ./difflab
+COPY --from=page /app/difflab/api/static ./difflab/api/static
 
 # Weights are fetched on first use into HF_HOME; mount a volume there or the first render downloads
 # ~160 GB again on every new pod.
