@@ -20,15 +20,6 @@ CANVAS_ALIGN = 32
 INPUT_IMAGE = PROJECT_DIR / "samples/input.jpg"
 INPUT_VIDEO = PROJECT_DIR / "samples/input.mp4"
 
-# The VLM is 52 GB of bf16 on disk and 15.1 GiB of NF4 in VRAM, and `from_pretrained` quantizes it on
-# the way in - so every director pass reads 52 GB to produce 15, at about 1.5 GB/s, and none of it can
-# stay in the page cache because the box has 58 GB and a render wants most of them. Saving the
-# quantized model once and loading that instead reads a third as much and quantizes nothing.
-#
-# It is a cache, not a conversion step: written automatically the first time, keyed by the snapshot's
-# own commit so a new pin makes a new one, and deletable at any time for the cost of one slow load.
-VLM_4BIT_CACHE = True
-VLM_4BIT_DIR = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "difflab" / "qwenvl-nf4"
 
 # CUDA graphs, measured and turned down. Decoding looks launch-bound - 54 ms a token
 # against the ~16 ms the 15.1 GiB of weights each token reads would take at the card's bandwidth - and

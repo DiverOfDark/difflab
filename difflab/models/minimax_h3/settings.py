@@ -26,13 +26,13 @@ class VideoSettings(Settings):
         "Comfy-Org/MiniMax-H3@7e75982b97cd5a41d2dcfa1904ee88d0686d6fd1:diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors",
         "model",
         "the int8 DiT: repo@commit:path",
-        advanced=True,
+        role="video-model",
     )
     lora: str = setting(
         "larryvrh/MiniMax-H3-Turbo-Lora@43a74557ac3f6539db8e0f2a959d03feb7a81480:minimax_h3_turbo_v4_step600_ema.safetensors",
         "turbo LoRA",
         "repo@commit:path",
-        advanced=True,
+        role="video-lora",
     )
     # Qwen3-VL-32B truncated to 50 layers, int8 ConvRot (26 GB).
     text_encoder: str = setting(
@@ -41,6 +41,7 @@ class VideoSettings(Settings):
         "text encoder",
         "the int8 Qwen3-VL: repo@commit:path",
         advanced=True,
+        role="video-text-encoder",
     )
     # int8 ConvRot decoder linears (see vae.py): the decode is compute-bound, and int8 runs at 4x fp16 here.
     video_vae: str = setting(
@@ -48,26 +49,43 @@ class VideoSettings(Settings):
         "video VAE",
         "repo@commit:path",
         advanced=True,
+        role="video-vae",
     )
     audio_vae: str = setting(
-        f"{COMFY}:vae/minimax_h3_audio_vae_fp32.safetensors", "audio VAE", "repo@commit:path", advanced=True
+        f"{COMFY}:vae/minimax_h3_audio_vae_fp32.safetensors",
+        "audio VAE",
+        "repo@commit:path",
+        advanced=True,
+        role="audio-vae",
     )
     duration: float = setting(2.0, "duration", "seconds per clip, or per chunk of a take", unit="s", low=0.2)
     # ImageScaleToTotalPixels(megapixels, nearest-exact, resolution_steps=32)
     megapixels: float = setting(
         0.4, "canvas", "0.4 is the fast one, 0.98 the benchmarked one", unit="MP", low=0.1, high=2.5
     )
-    seed: int = setting(336100010134930, "seed", "a take hangs off this; chunk k uses seed + k")
-    steps: int = setting(8, "steps", "8 reproduces the graph, 4 the spec; the LoRA was trained for 4", low=1, high=50)
+    seed: int = setting(336100010134930, "seed", "a take hangs off this; chunk k uses seed + k", advanced=True)
+    steps: int = setting(
+        8, "steps", "8 reproduces the graph, 4 the spec; the LoRA was trained for 4", low=1, high=50, advanced=True
+    )
     reference_size: ReferenceSize = setting(
-        "match", "reference size", "max holds identity harder and is markedly slower", choices=("match", "max")
+        "match",
+        "reference size",
+        "max holds identity harder and is markedly slower",
+        choices=("match", "max"),
+        advanced=True,
     )
     # MiniMaxH3SigmaShift + BasicScheduler beta + euler, no CFG.
     shift_video: float = setting(12.0, "video shift", "flow shift of the video schedule", low=0, advanced=True)
     shift_audio: float = setting(3.0, "audio shift", "flow shift of the audio schedule", low=0, advanced=True)
     previews: bool = setting(True, "previews", "each step's guess at the clip, on the page", keyed=False)
     preview_scale: float = setting(
-        0.5, "preview size", "of the sampled size; half is a quarter of the work", low=0.1, high=1, keyed=False
+        0.5,
+        "preview size",
+        "of the sampled size; half is a quarter of the work",
+        low=0.1,
+        high=1,
+        keyed=False,
+        advanced=True,
     )
     # taeh3, ComfyUI's 9 MB approximation of H3's VAE (Kijai's 2D build).
     preview_decoder: str = setting(
@@ -76,6 +94,7 @@ class VideoSettings(Settings):
         "repo@commit:path",
         keyed=False,
         advanced=True,
+        role="preview-decoder",
     )
 
     @classmethod
@@ -88,13 +107,15 @@ class VideoSettings(Settings):
 class VideoPromptSettings(VlmSettings):
     """The VLM writing an H3 caption, as the video graph's AILab_QwenVL_Advanced asked it."""
 
-    max_new_tokens: int = setting(4096, "max new tokens", "a cap, not a target", low=1)
-    temperature: float = setting(0.6, "temperature", "lower repeats, higher invents", low=0, high=2)
-    top_p: float = setting(0.9, "top p", "the graph's; Qwen's own is 0.8 with temperature 0.7", low=0, high=1)
+    max_new_tokens: int = setting(4096, "max new tokens", "a cap, not a target", low=1, advanced=True)
+    temperature: float = setting(0.6, "temperature", "lower repeats, higher invents", low=0, high=2, advanced=True)
+    top_p: float = setting(
+        0.9, "top p", "the graph's; Qwen's own is 0.8 with temperature 0.7", low=0, high=1, advanced=True
+    )
     # The node leaves top_k unset, so Qwen's generation_config default of 20 applies.
-    top_k: int = setting(20, "top k", "rarely worth moving", low=0)
+    top_k: int = setting(20, "top k", "rarely worth moving", low=0, advanced=True)
     # The graph's seed, -458385857301790, masked to the unsigned 32 bits transformers takes.
-    seed: int = setting(-458385857301790 & 0xFFFFFFFF, "seed", "its own, apart from the video seed")
+    seed: int = setting(-458385857301790 & 0xFFFFFFFF, "seed", "its own, apart from the video seed", advanced=True)
 
 
 @dataclass(frozen=True)
@@ -109,4 +130,5 @@ class EnlargeLatentsSettings(Settings):
         "model",
         "repo@commit:config.json,weights.safetensors",
         advanced=True,
+        role="latent-upscaler",
     )

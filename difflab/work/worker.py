@@ -21,8 +21,13 @@ from typing import Any
 
 from difflab import config, store
 from difflab.core import context, events, protocol, ui
+from difflab.core.settings import DirectorSettings, JudgeSettings
 from difflab.screenplay import made
+from difflab.tools import TOOLS, direct
 from difflab.work import Skipped, runners
+
+# The tools that ask through the director, which takes its model from the job rather than a parameter.
+_DIRECTED = {tool.name for tool in TOOLS if tool.settings in (DirectorSettings, JudgeSettings)}
 
 POLL = 0.5  # seconds between looks at an empty queue
 STATS_EVERY = 2.0  # the liveness heartbeat the page watches
@@ -91,7 +96,10 @@ class Worker(threading.Thread):
             started = time.perf_counter()
             state, error, outputs = store.DONE, "", {}
             try:
-                with ui.reporting(_progress):
+                with (
+                    ui.reporting(_progress),
+                    direct.using(job.settings.get("checkpoint") if job.tool in _DIRECTED else None),
+                ):
                     outputs = runners.RUNNERS[job.tool](_resolve(job.inputs), job.settings)
                 if isinstance(outputs, Skipped):
                     state = store.SKIPPED

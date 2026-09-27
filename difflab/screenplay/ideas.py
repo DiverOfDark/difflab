@@ -59,6 +59,7 @@ def improve(
             {"production": production_id, "round": drafted.round, "idea": source, "photos": photos, "count": count,
              "seconds": round(seconds, 2), "previous": previous.story if previous else "", "feedback": feedback},
             label=f"revise round {revises}" if previous else f"rewrite the idea, round {drafted.round}",
+            settings=settings.for_job("refine_idea", production_id),
         )  # fmt: skip
         store.set_idea_job(connection, drafted.id, job.id)
     return run_id

@@ -292,6 +292,8 @@ def plan_production(
         )  # fmt: skip
 
         def add(tool: str, inputs: dict[str, Any], label: str, chosen: dict[str, Any] | None = None) -> int:
+            if chosen is None:
+                chosen = settings.for_job(tool, production_id)
             return store.add_job(connection, run_id, tool, {**common, **inputs}, label=label, settings=chosen or {}).id
 
         surveyed = add("survey", {"idea": idea, "photos": photos}, "survey the photographs")

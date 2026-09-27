@@ -130,10 +130,10 @@ mypy treats the large, dynamically typed ML libraries (diffusers, transformers, 
 |---|---|
 | Editor: transformer + text encoder + VAE (single-file AIO, v18 = the original graph's file) | HF `Phr00t/Qwen-Image-Edit-Rapid-AIO` @ `691024f4`, `v18/Qwen-Rapid-AIO-SFW-v18.safetensors` |
 | Newer AIO revision (set `edit_image`'s model setting to it) | the same repo, `v23/Qwen-Rapid-AIO-SFW-v23.safetensors` |
-| The VLM, which sees and writes every prompt (bf16 on disk, 4-bit on load) | HF `Qwen/Qwen3.8-27B` @ `1d4bf0f2` |
+| The VLM, which sees and writes every prompt (NF4 of HF `Qwen/Qwen3.8-27B` @ `1d4bf0f2`) | HF `Qwen/Qwen3.8-27B` @ `1d4bf0f2` |
 | Editor tokenizer (not stored in the AIO) | HF `Qwen/Qwen-Image` @ `75e0b4be`, `tokenizer/*` |
 
-Every model is named by where it comes from, pinned to a commit (`core/hub.py`): a Hugging Face repo (`Checkpoint`, `HubFile`), or, for the one file not on the Hub, a GitHub raw URL checked by sha256 (`UrlFile`, cached under `~/.cache/difflab`). The first fetch of everything is about 160 GB. One of them downloads into the HF cache the first time its model loads, then leaves a marker file there, so later loads never touch the network. That fetch is the only download difflab does: every `from_pretrained` call gets a local path plus `local_files_only=True`.
+Every model is named by where it comes from, pinned to a commit (`core/hub.py`): a Hugging Face repo (`Checkpoint`, `HubFile`), or, for the one file not on the Hub, a GitHub raw URL checked by sha256 (`UrlFile`, cached under `~/.cache/difflab`). The first fetch of everything is about 96 GB. The VLM's default is its 4-bit copy rather than the 52 GB original; an unquantized checkpoint is quantized to 4-bit as it loads, reading all of it every time. Each of them downloads into the HF cache the first time its model loads, then leaves a marker file there, so later loads never touch the network. That fetch is the only download difflab does: every `from_pretrained` call gets a local path plus `local_files_only=True`.
 
 ## Usage
 
@@ -500,9 +500,10 @@ their keyframe, prompt and clip, and the two buttons that make a run: *Plan* (th
 chained, composed by the editor from the plan's words, or a picture you give; a shot re-rolls with a
 new seed. **Quick** is the three quick modes as a form the server checks on every edit. **Runs** lists
 every run, and one run's screen is the render as it happens or its delivery once it ended.
-**Settings** shows every tool's fields with their defaults, what this machine and one production
-override, and prices a change before saving it - the keyed fields that move, and the made things in
-scope that go stale for it.
+**Settings** is the models first - one picker per role, set on every tool that loads it, remembering
+what was pasted before until it is forgotten - then the knobs that matter, grouped by what they
+change, with the rest behind Advanced. For this machine or one production, and priced as it is edited:
+the keyed fields that move, and the made things in scope that go stale for it.
 
 Photos are uploaded and kept under `output/assets/`, named by their own content hash, so the same
 picture sent twice is one file. For working on the page itself, `npm --prefix frontend run dev`

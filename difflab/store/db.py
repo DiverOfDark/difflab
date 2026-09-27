@@ -378,6 +378,18 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         )
         """,
     ),
+    # Models chosen for a role on the settings page, offered again until forgotten. A role's code
+    # default is never a row: it is always offered.
+    (
+        """
+        CREATE TABLE model_choices (
+            role    TEXT NOT NULL,
+            value   TEXT NOT NULL,
+            used_at REAL NOT NULL,
+            PRIMARY KEY (role, value)
+        )
+        """,
+    ),
 )
 
 SCHEMA_VERSION = len(MIGRATIONS)

@@ -28,9 +28,11 @@ def setting(
     high: float | None = None,
     keyed: bool = True,
     advanced: bool = False,
+    role: str = "",
 ) -> Any:
     """A dataclass field with the metadata the page and the keys read. `keyed=False` for a knob that
-    changes how a run is shown rather than what it makes."""
+    changes how a run is shown rather than what it makes. Fields of one `role` name the same model in
+    different tools, and the page sets them together."""
     return dataclasses.field(
         default=default,
         metadata={
@@ -42,6 +44,7 @@ def setting(
             "high": high,
             "keyed": keyed,
             "advanced": advanced,
+            "role": role,
         },
     )
 
@@ -55,7 +58,11 @@ class Settings:
         return {f.name: getattr(self, f.name) for f in dataclasses.fields(self)}
 
     def key_part(self) -> dict[str, Any]:
-        return {f.name: getattr(self, f.name) for f in dataclasses.fields(self) if f.metadata.get("keyed", True)}
+        return {
+            f.name: model_identity(getattr(self, f.name)) if f.metadata.get("role") else getattr(self, f.name)
+            for f in dataclasses.fields(self)
+            if f.metadata.get("keyed", True)
+        }
 
     @classmethod
     def schema(cls) -> list[dict[str, Any]]:
@@ -131,21 +138,32 @@ def _coerce(value: Any, kind: str) -> Any:
     return str(value)
 
 
-# The one language model, which sees and writes: Qwen3.8-27B, vision tower kept (bf16 on disk,
-# quantized to 4-bit on load - see models/qwenvl.py). Pinned to the snapshot it was set up against.
+# The one language model, which sees and writes: Qwen3.8-27B, vision tower kept, as the NF4
+# `qwenvl` makes of the 52 GB original - 19 GB to fetch and nothing to quantize (see models/qwenvl.py).
 VLM = "Qwen/Qwen3.8-27B@1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0"
+# Checkpoints holding the same weights, and the one name every key gives them. The NF4 above is the
+# cache `qwenvl` writes from the original, uploaded as written (sha256 6640f8b2... on both sides), and
+# the original was the default every answer and plan until 2026-09-28 was keyed under: mapping it here
+# is what keeps those found.
+SAME_MODEL = {VLM: "Qwen/Qwen3.8-27B@1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0"}
+
+
+def model_identity(checkpoint: Any) -> Any:
+    return SAME_MODEL.get(checkpoint, checkpoint)
 
 
 @dataclass(frozen=True)
 class VlmSettings(Settings):
     """Qwen-VL, as `AILab_QwenVL_Advanced` ran it: 4-bit, max_tokens 2048, keep_model_loaded."""
 
-    checkpoint: str = setting(VLM, "model", "a Hugging Face repo at a pinned commit", advanced=True)
-    max_new_tokens: int = setting(2048, "max new tokens", "a cap, not a target", low=1)
-    temperature: float = setting(0.7, "temperature", "lower repeats, higher invents", low=0, high=2)
-    top_p: float = setting(0.8, "top p", "Qwen's own recommendation is 0.8 with temperature 0.7", low=0, high=1)
-    top_k: int = setting(20, "top k", "rarely worth moving", low=0)
-    seed: int = setting(42, "seed", "its own, apart from the video seed")
+    checkpoint: str = setting(VLM, "model", "a Hugging Face repo at a pinned commit", role="vlm")
+    max_new_tokens: int = setting(2048, "max new tokens", "a cap, not a target", low=1, advanced=True)
+    temperature: float = setting(0.7, "temperature", "lower repeats, higher invents", low=0, high=2, advanced=True)
+    top_p: float = setting(
+        0.8, "top p", "Qwen's own recommendation is 0.8 with temperature 0.7", low=0, high=1, advanced=True
+    )
+    top_k: int = setting(20, "top k", "rarely worth moving", low=0, advanced=True)
+    seed: int = setting(42, "seed", "its own, apart from the video seed", advanced=True)
 
     def generation(self) -> dict[str, Any]:
         """What `QwenVL.ask` takes: everything but the checkpoint, which chose the model."""
@@ -153,15 +171,30 @@ class VlmSettings(Settings):
 
 
 @dataclass(frozen=True)
+class DirectorSettings(Settings):
+    """The VLM the director asks with. Its sampling stays the code's, tuned with its prompts (`tools/direct`)."""
+
+    checkpoint: str = setting(VLM, "model", "a Hugging Face repo at a pinned commit", role="vlm")
+
+
+@dataclass(frozen=True)
 class JudgeSettings(Settings):
     """The VLM as a continuity supervisor over a keyframe or a clip. A gate of 0 turns it off."""
 
-    checkpoint: str = setting(VLM, "model", "a Hugging Face repo at a pinned commit", advanced=True)
+    checkpoint: str = setting(VLM, "model", "a Hugging Face repo at a pinned commit", role="vlm")
     gate: float = setting(0.0, "gate", "the score a keyframe or clip needs; 0 asks no judge at all", low=0.0, high=1.0)
     retries: int = setting(
-        2, "retries", "attempts with a new seed before a failing score goes to review", low=0, high=5, keyed=False
+        2,
+        "retries",
+        "attempts with a new seed before a failing score goes to review",
+        low=0,
+        high=5,
+        keyed=False,
+        advanced=True,
     )
-    max_new_tokens: int = setting(512, "answer length", "a cap, in tokens", low=64, high=4096, keyed=False)
+    max_new_tokens: int = setting(
+        512, "answer length", "a cap, in tokens", low=64, high=4096, keyed=False, advanced=True
+    )
 
 
 @dataclass(frozen=True)
@@ -175,13 +208,13 @@ class EditSettings(Settings):
         "Phr00t/Qwen-Image-Edit-Rapid-AIO@691024f438640508f8aa86414863fc15edfb8a84:v18/Qwen-Rapid-AIO-SFW-v18.safetensors",
         "model",
         "the AIO file: repo@commit:path",
-        advanced=True,
+        role="editor",
     )
-    steps: int = setting(8, "steps", "the editor is distilled; eight is the whole of it", low=1, high=60)
-    cfg: float = setting(1.0, "cfg", "at 1 the negative prompt is inactive", low=1, high=8)
-    seed: int = setting(42, "seed", "the only thing that changes between two runs of one instruction")
+    steps: int = setting(8, "steps", "the editor is distilled; eight is the whole of it", low=1, high=60, advanced=True)
+    cfg: float = setting(1.0, "cfg", "at 1 the negative prompt is inactive", low=1, high=8, advanced=True)
+    seed: int = setting(42, "seed", "the only thing that changes between two runs of one instruction", advanced=True)
     megapixels: float = setting(
-        2.0, "size", "ImageScaleToTotalPixels(megapixels=2, lanczos)", unit="MP", low=0.25, high=4
+        2.0, "size", "the picture is resized to this many pixels before editing", unit="MP", low=0.25, high=4
     )
 
 
@@ -197,6 +230,7 @@ class EnlargePixelsSettings(Settings):
         "model",
         "an ESRGAN-family .pth: repo@commit:path",
         advanced=True,
+        role="pixel-upscaler",
     )
 
 
@@ -212,6 +246,7 @@ class RetimeSettings(Settings):
         "model",
         "a RIFE 4.x safetensors: repo@commit:path",
         advanced=True,
+        role="frame-interpolation",
     )
 
 
@@ -238,10 +273,20 @@ class Continuity(Settings):
     """
 
     tail_seconds: float = setting(
-        0.25, "tail", "seconds of the previous chunk shown to the next; 0 disables it", unit="s", low=0, high=3
+        0.25,
+        "tail",
+        "seconds of the previous chunk shown to the next; 0 disables it",
+        unit="s",
+        low=0,
+        high=3,
+        advanced=True,
     )
     handoff_window: int = setting(
-        6, "handoff window", "frames searched at the end of a chunk for the sharpest one; 1 means the last", low=1
+        6,
+        "handoff window",
+        "frames searched at the end of a chunk for the sharpest one; 1 means the last",
+        low=1,
+        advanced=True,
     )
     crossfade: float = setting(
         0.0, "crossfade", "seconds of overlap blended rather than cut; at most the handoff window", unit="s", low=0

@@ -1,14 +1,15 @@
 """The one language model: Qwen3.8-27B, which sees photographs and writes every prompt.
 
 `Qwen/Qwen3.8-27B` is Qwen3.8-27B with its vision tower. 52 GB of bf16 on disk and 15.1 GiB of NF4 on the card, so it cannot share the 24 GB card with
-H3 or the editor, and the quantized weights are kept rather than made again (`config.VLM_4BIT_CACHE`).
+H3 or the editor. A checkpoint already at 4 bits is loaded as published; an unquantized one is
+quantized to NF4 on the way in, on every load.
 
 Qwen3.8 thinks before it answers unless told not to; every call here turns thinking off, so the token
 budget is spent on the answer alone.
 """
 
 import gc
-import shutil
+import json
 import threading
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -56,19 +57,25 @@ def compile_generation(model: Any) -> None:
     model.generation_config.max_cache_len = config.VLM_CACHE_TOKENS
 
 
-def _keep(model: Qwen3_5ForConditionalGeneration, kept: Path, detail: Callable[[str], None]) -> None:
-    """Never fatal: the model is already loaded, so failing here costs one slow load next time."""
-    staging = kept.with_name(f"{kept.name}.partial")
-    try:
-        shutil.rmtree(staging, ignore_errors=True)
-        staging.mkdir(parents=True, exist_ok=True)
-        model.save_pretrained(staging)
-        staging.rename(kept)
-        size = sum(f.stat().st_size for f in kept.rglob("*") if f.is_file())
-        detail(f"kept 4-bit for next time: {size / 1024**3:.1f} GB in {ui.link(kept)}")
-    except (OSError, RuntimeError, ValueError) as error:
-        shutil.rmtree(staging, ignore_errors=True)
-        ui.note(f"could not keep the 4-bit weights ({type(error).__name__}: {error}); loading stays slow")
+def weight_bits(model_config: dict[str, Any]) -> int | None:
+    """The width a checkpoint stores its weights at, read from its `quantization_config`; None when it is
+    not quantized. Mixed compressed-tensors checkpoints keep some layers wider (TelperionAI's AWQ holds
+    8- and 4-bit groups), so the narrowest group is the one that says what the checkpoint is."""
+    quantization = model_config.get("quantization_config")
+    if not quantization:
+        return None
+    if quantization.get("load_in_4bit"):
+        return 4
+    if quantization.get("load_in_8bit"):
+        return 8
+    if "bits" in quantization or "w_bit" in quantization:
+        return int(quantization.get("bits", quantization.get("w_bit")))
+    groups = [g.get("weights", {}).get("num_bits") for g in quantization.get("config_groups", {}).values()]
+    if any(groups):
+        return min(int(bits) for bits in groups if bits)
+    if quantization.get("quant_method") == "fp8":
+        return 8
+    raise ValueError(f"{quantization.get('quant_method')!r} quantization does not say its width in a way read here")
 
 
 def load_processor(path: Path) -> ImageOnlyQwen3VLProcessor:
@@ -91,42 +98,43 @@ class QwenVL:
 
     def load(self) -> tuple[Qwen3_5ForConditionalGeneration, ImageOnlyQwen3VLProcessor]:
         if self._model is None or self._processor is None:
-            path = self.checkpoint.fetch()
-            with ui.loading("Loading VLM (Qwen3.8 27B, 4-bit)") as detail:
-                self._model = self._quantized(path, detail)
+            with ui.loading(f"Loading VLM ({self.checkpoint.repo.rsplit('/', 1)[-1]})") as detail:
+                self._model, path = self._weights(detail)
                 self._processor = load_processor(path)
                 if config.VLM_COMPILE:
                     compile_generation(self._model)
                 detail(f"{self._model.get_memory_footprint() / 1024**3:.1f} GB")
         return self._model, self._processor
 
-    def _quantized(self, path: Path, detail: Callable[[str], None]) -> Qwen3_5ForConditionalGeneration:
-        """The 4-bit model: the kept copy if there is one, otherwise made now and kept.
+    def _weights(self, detail: Callable[[str], None]) -> tuple[Qwen3_5ForConditionalGeneration, Path]:
+        """The model and the folder its processor files are in: as published when it is 4-bit already,
+        quantized to NF4 as it loads when it is not quantized at all. bitsandbytes cannot re-quantize
+        weights another scheme already packed, so any other width is refused rather than run wide."""
+        path = self.checkpoint.fetch()
+        bits = weight_bits(json.loads((path / "config.json").read_text(encoding="utf-8")))
+        if bits == 4:
+            return self._as_published(path, detail), path
+        if bits is not None:
+            raise ValueError(f"{self.checkpoint} is quantized to {bits} bits: name its 4-bit or unquantized checkpoint")
 
-        Keyed by the snapshot's own commit, so re-pinning the checkpoint makes a new one rather than
-        quietly loading the old model. Written through a temporary directory and renamed, because a save
-        interrupted half way through would otherwise be indistinguishable from a finished one.
-        """
-        kept = config.VLM_4BIT_DIR.with_name(f"{config.VLM_4BIT_DIR.name}-{self.checkpoint.revision[:12]}")
-        if config.VLM_4BIT_CACHE and (kept / "config.json").is_file():
-            detail(f"from {ui.link(kept)}")
-            model: Qwen3_5ForConditionalGeneration = Qwen3_5ForConditionalGeneration.from_pretrained(
-                kept, dtype=torch.bfloat16, device_map=self.device, local_files_only=True
-            ).eval()
-            return model
-
+        detail("not quantized: quantizing to NF4")
         quantization = BitsAndBytesConfig(
             load_in_4bit=True, bnb_4bit_quant_type="nf4", bnb_4bit_compute_dtype=torch.bfloat16
         )
-        model = Qwen3_5ForConditionalGeneration.from_pretrained(
+        model: Qwen3_5ForConditionalGeneration = Qwen3_5ForConditionalGeneration.from_pretrained(
             path,
             quantization_config=quantization,
             dtype=torch.bfloat16,
             device_map=self.device,
             local_files_only=True,
         ).eval()
-        if config.VLM_4BIT_CACHE:
-            _keep(model, kept, detail)
+        return model, path
+
+    def _as_published(self, weights: Path, detail: Callable[[str], None]) -> Qwen3_5ForConditionalGeneration:
+        detail(f"from {ui.link(weights)}")
+        model: Qwen3_5ForConditionalGeneration = Qwen3_5ForConditionalGeneration.from_pretrained(
+            weights, dtype=torch.bfloat16, device_map=self.device, local_files_only=True
+        ).eval()
         return model
 
     def ask(

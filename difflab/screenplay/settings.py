@@ -10,6 +10,7 @@ import dataclasses
 from typing import Any
 
 from difflab import store, tools
+from difflab.core.hub import Checkpoint
 from difflab.core.settings import Settings
 
 MACHINE = "machine"
@@ -33,6 +34,13 @@ def effective(tool: str, production_id: int | None = None) -> tuple[Settings, li
         machine = store.overrides(connection, MACHINE, "", tool)
         own = store.overrides(connection, PRODUCTION, str(production_id), tool) if production_id is not None else {}
     return cls.resolve(machine, own)
+
+
+def for_job(tool: str, production_id: int | None = None) -> dict[str, Any]:
+    """What a job of the tool records and runs with; nothing for a tool with no settings."""
+    if next(t for t in tools.TOOLS if t.name == tool).settings is None:
+        return {}
+    return effective(tool, production_id)[0].data()
 
 
 def describe(production_id: int | None = None) -> list[dict[str, Any]]:
@@ -69,8 +77,12 @@ def put(scope_kind: str, scope_id: str, tool: str, values: dict[str, Any]) -> di
         and not any(f".{name}:" in note or f"called {name!r}" in note for note in notes)
         and getattr(resolved, name) != getattr(defaults, name)
     }
+    roles = {f.name: f.metadata.get("role", "") for f in dataclasses.fields(cls)}
     with store.connect() as connection, store.transaction(connection):
         store.put_overrides(connection, scope_kind, scope_id, tool, kept)
+        for name, value in kept.items():
+            if roles.get(name) and value:
+                store.remember_model(connection, roles[name], str(value))
     production_id = int(scope_id) if scope_kind == PRODUCTION and scope_id else None
     now, _ = effective(tool, production_id)
     return {"overrides": kept, "effective": now.data(), "notes": notes}
@@ -123,3 +135,21 @@ def _shots_in(connection: Any, production_id: int | None) -> list[store.Shot]:
         for chapter in store.chapters_of(connection, production.id)
         for shot in store.shots_of(connection, chapter.id)
     ]
+
+
+def models() -> dict[str, list[str]]:
+    """Per role, the models chosen before, newest first; the code default is not among them."""
+    with store.connect() as connection:
+        return store.model_choices(connection)
+
+
+def remember(role: str, value: str) -> None:
+    """Refuses what is not `org/repo@<commit>[:files]`, which is all a model field can load."""
+    Checkpoint.parse(value)
+    with store.connect() as connection, store.transaction(connection):
+        store.remember_model(connection, role, value)
+
+
+def forget(role: str, value: str) -> None:
+    with store.connect() as connection, store.transaction(connection):
+        store.forget_model(connection, role, value)

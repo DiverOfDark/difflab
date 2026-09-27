@@ -592,6 +592,25 @@ def adopt_idea(connection: sqlite3.Connection, production_id: int, round_: int) 
 
 
 # --- settings -----------------------------------------------------------------------------------
+def model_choices(connection: sqlite3.Connection) -> dict[str, list[str]]:
+    out: dict[str, list[str]] = {}
+    for row in connection.execute("SELECT role, value FROM model_choices ORDER BY used_at DESC"):
+        out.setdefault(row["role"], []).append(row["value"])
+    return out
+
+
+def remember_model(connection: sqlite3.Connection, role: str, value: str) -> None:
+    connection.execute(
+        "INSERT INTO model_choices (role, value, used_at) VALUES (?, ?, ?) "
+        "ON CONFLICT(role, value) DO UPDATE SET used_at = excluded.used_at",
+        (role, value, time.time()),
+    )
+
+
+def forget_model(connection: sqlite3.Connection, role: str, value: str) -> None:
+    connection.execute("DELETE FROM model_choices WHERE role = ? AND value = ?", (role, value))
+
+
 def overrides(connection: sqlite3.Connection, scope_kind: str, scope_id: str, tool: str) -> dict[str, Any]:
     row = connection.execute(
         "SELECT * FROM settings WHERE scope_kind = ? AND scope_id = ? AND tool = ?", (scope_kind, scope_id, tool)

@@ -1,0 +1,225 @@
+<script setup lang="ts">
+import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
+
+const props = defineProps<{
+  value: string | null
+  fallback: string
+  codeDefault: string
+  remembered: string[]
+}>()
+const emit = defineEmits<{ pick: [value: string]; forget: [value: string] }>()
+
+const open = ref(false)
+const custom = ref('')
+const problem = ref('')
+const root = ref<HTMLElement | null>(null)
+const field = ref<HTMLInputElement | null>(null)
+
+const REF = /^[\w.-]+\/[\w.-]+@[0-9a-f]{40}(:.+)?$/
+
+function parts(value: string) {
+  if (!value) return { name: 'none', where: 'made on first load' }
+  const [head, files = ''] = value.split(/:(.*)/s, 2)
+  const [repo, commit = ''] = head.split('@')
+  const file = files
+    .split(',')
+    .map((f) => f.split('/').pop() ?? f)
+    .find((f) => f && !f.endsWith('.json'))
+  return { name: (file ?? repo.split('/').pop() ?? repo).replace(/\.(safetensors|pth|bin)$/, ''), where: `${repo} · ${commit.slice(0, 7)}` }
+}
+
+const current = computed(() => props.value ?? props.fallback)
+const shown = computed(() => parts(current.value))
+const options = computed(() => {
+  const all = [props.codeDefault, ...props.remembered.filter((v) => v !== props.codeDefault)]
+  if (current.value && !all.includes(current.value)) all.push(current.value)
+  return all
+})
+
+function choose(value: string) {
+  emit('pick', value)
+  open.value = false
+}
+
+function useCustom() {
+  const value = custom.value.trim()
+  if (!REF.test(value)) {
+    problem.value = 'org/repo@<40-character commit>, then :path/to/file for a single file'
+    return
+  }
+  custom.value = ''
+  problem.value = ''
+  choose(value)
+}
+
+async function toggle() {
+  open.value = !open.value
+  if (open.value) {
+    await nextTick()
+    field.value?.focus()
+  }
+}
+
+function outside(event: MouseEvent) {
+  if (open.value && root.value && !root.value.contains(event.target as Node)) open.value = false
+}
+document.addEventListener('mousedown', outside)
+onBeforeUnmount(() => document.removeEventListener('mousedown', outside))
+</script>
+
+<template>
+  <div ref="root" class="picker" @keydown.esc="open = false">
+    <button class="current" :class="{ open }" :title="current" @click="toggle">
+      <span class="name">{{ shown.name }}</span>
+      <span class="where">{{ shown.where }}</span>
+      <span class="caret">▾</span>
+    </button>
+    <div v-if="open" class="panel">
+      <div
+        v-for="option in options"
+        :key="option"
+        class="option"
+        :class="{ on: option === current }"
+        :title="option"
+        @click="choose(option)"
+      >
+        <div>
+          <span class="name">{{ parts(option).name }}</span>
+          <span class="where">{{ parts(option).where }}</span>
+        </div>
+        <span v-if="option === codeDefault" class="tag">default</span>
+        <button v-else-if="option && remembered.includes(option)" class="link" title="forget this model" @click.stop="emit('forget', option)">
+          ✕
+        </button>
+      </div>
+      <form class="custom" @submit.prevent="useCustom">
+        <input ref="field" v-model="custom" placeholder="org/repo@commit[:file] — paste another" spellcheck="false" />
+        <button type="submit" :disabled="!custom.trim()">Use</button>
+      </form>
+      <p v-if="problem" class="problem">{{ problem }}</p>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.picker {
+  position: relative;
+  min-width: 0;
+}
+
+.current {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto auto;
+  column-gap: var(--space-1);
+  text-align: left;
+  padding: 6px 10px;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-input);
+}
+
+.current:hover,
+.current.open {
+  border-color: var(--border-strong);
+}
+
+.current .name {
+  grid-column: 1;
+}
+
+.current .where {
+  grid-column: 1;
+}
+
+.current .caret {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+  color: var(--dim);
+}
+
+.name {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
+}
+
+.where {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
+}
+
+.panel {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  right: 0;
+  width: max(100%, 440px);
+  background: var(--bg-overlay);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-float);
+  padding: 4px;
+}
+
+.option {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 6px 8px;
+  border-radius: var(--radius-input);
+  cursor: pointer;
+}
+
+.option > div {
+  min-width: 0;
+}
+
+.option:hover {
+  background: var(--raised);
+}
+
+.option.on .name {
+  color: var(--accent);
+}
+
+.tag {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+.custom {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px;
+  padding: 6px 4px 2px;
+  margin-top: 4px;
+  border-top: 1px solid var(--border);
+}
+
+.custom input {
+  font-size: var(--text-xs);
+  text-align: left;
+}
+
+.problem {
+  margin: 4px;
+  font-size: 11px;
+  color: var(--status-error);
+}
+</style>

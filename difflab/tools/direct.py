@@ -17,10 +17,11 @@ kept, and a question that failed is asked afresh next time.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
@@ -31,7 +32,7 @@ from PIL import Image
 from difflab.core import context, models, ui
 from difflab.core.cache import cache
 from difflab.core.keys import key
-from difflab.core.settings import VlmSettings
+from difflab.core.settings import VlmSettings, model_identity
 from difflab.core.types import Frame
 from difflab.models.minimax_h3 import caption
 from difflab.models.qwenvl import QwenVL
@@ -42,7 +43,19 @@ from difflab.tools import ask_vlm
 
 # The director runs on the defaults, not a profile: its answers are cached under this model's name.
 DIRECTOR = VlmSettings()
-VLM = ask_vlm.spec(DIRECTOR.checkpoint)
+# The checkpoint a director or judge job asks with, as its settings chose it; the default outside one.
+MODEL: ContextVar[str] = ContextVar("director_model", default=DIRECTOR.checkpoint)
+
+
+@contextlib.contextmanager
+def using(checkpoint: str | None) -> Iterator[None]:
+    token = MODEL.set(checkpoint or DIRECTOR.checkpoint)
+    try:
+        yield
+    finally:
+        MODEL.reset(token)
+
+
 # A fresh re-plan's number: nonzero asks every question again, warm and on its own seeds, under its own
 # cache key. Zero leaves the key as it was, so the answers already kept stay found.
 TAKE: ContextVar[int] = ContextVar("director_take", default=0)
@@ -109,7 +122,7 @@ def ask(
     seed: int = DIRECTOR.seed,
 ) -> str:
     """One answer, uncached and unchecked: `ask_json` is the one that gates and keeps."""
-    vlm: QwenVL = models.registry.acquire(VLM)
+    vlm: QwenVL = models.registry.acquire(ask_vlm.spec(MODEL.get()))
     return vlm.ask(
         images,
         question,
@@ -196,7 +209,7 @@ def ask_json(
     seen = [hashlib.sha256(image.tobytes()).hexdigest() + f"{image.size}" for image in images]
     take = TAKE.get()
     asked_key = key(
-        "director", 1, model=DIRECTOR.checkpoint, system=system, question=question, images=seen, tokens=tokens,
+        "director", 1, model=model_identity(MODEL.get()), system=system, question=question, images=seen, tokens=tokens,
         temperature=temperature, **({"take": take} if take else {}),
     )  # fmt: skip
     kept, failed, marked = (cache.path(asked_key, suffix) for suffix in (".txt", ".failed", ".settled"))

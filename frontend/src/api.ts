@@ -368,6 +368,7 @@ export interface SettingField {
   high: number | null
   keyed: boolean
   advanced: boolean
+  role: string
 }
 
 export interface ToolInfo {
@@ -394,4 +395,8 @@ export const settingsImpact = (tool: string, scopeKind: string, scopeId: string,
     '/api/settings/impact',
     post({ scope_kind: scopeKind, scope_id: scopeId, tool, overrides }),
   )
+export const listModels = () => json<Record<string, string[]>>('/api/models')
+export const rememberModel = (role: string, value: string) => json<Record<string, string[]>>('/api/models', post({ role, value }))
+export const forgetModel = (role: string, value: string) =>
+  json<Record<string, string[]>>('/api/models', send('DELETE', { role, value }))
 export const outputUrl = (path: string) => `/output/${path}`

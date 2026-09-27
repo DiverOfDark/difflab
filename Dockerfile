@@ -51,7 +51,7 @@ COPY difflab ./difflab
 COPY --from=page /app/difflab/api/static ./difflab/api/static
 
 # Weights are fetched on first use into HF_HOME; mount a volume there or the first render downloads
-# ~160 GB again on every new pod.
+# ~96 GB again on every new pod.
 VOLUME ["/models", "/app/output"]
 
 EXPOSE 8765

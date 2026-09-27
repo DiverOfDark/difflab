@@ -405,6 +405,31 @@ async def put_settings(tool: str, request: Request) -> dict[str, Any]:
         raise HTTPException(400, str(problem)) from problem
 
 
+@app.get("/api/models")
+def list_models() -> dict[str, list[str]]:
+    """Per model role, what was chosen before, newest first."""
+    return settings.models()
+
+
+@app.post("/api/models")
+async def remember_model(request: Request) -> dict[str, list[str]]:
+    """`{"role": ..., "value": "org/repo@<commit>[:files]"}`: offered for that role from now on."""
+    body = await request.json()
+    try:
+        settings.remember(str(body.get("role", "")), str(body.get("value", "")).strip())
+    except ValueError as problem:
+        raise HTTPException(400, str(problem)) from problem
+    return settings.models()
+
+
+@app.delete("/api/models")
+async def forget_model(request: Request) -> dict[str, list[str]]:
+    """`{"role": ..., "value": ...}`: no longer offered. A setting still naming it keeps it."""
+    body = await request.json()
+    settings.forget(str(body.get("role", "")), str(body.get("value", "")))
+    return settings.models()
+
+
 @app.post("/api/settings/impact")
 async def settings_impact(request: Request) -> dict[str, Any]:
     """What saving these overrides would move, before they are saved."""
