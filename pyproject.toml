@@ -1,0 +1,137 @@
+[project]
+name = "difflab"
+version = "0.1.0"
+description = "Headless diffusers ports of the ComfyUI Qwen Image Edit and MiniMax H3 image-to-video workflows"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "accelerate>=1.15.0",
+    "av>=18.1.0",
+    "bitsandbytes>=0.50.2",
+    "causal-conv1d>=1.7.0",
+    "comfy-kitchen>=0.2.34",
+    "diffusers>=0.40.0",
+    "einops>=0.8.2",
+    "fastapi>=0.141.1",
+    "flash-linear-attention>=0.5.2",
+    "numpy>=2.5.3",
+    "pillow>=12.3.0",
+    "python-multipart>=0.0.32",
+    "regex>=2026.9.10",
+    "safetensors>=0.8.0",
+    "scipy>=1.18.1",
+    "sentencepiece>=0.2.2",
+    "torchao>=0.18.0",
+    "tqdm>=4.70.1",
+    "transformers>=5.17.0",
+    "uvicorn>=0.53.0",
+]
+
+# Everything is pixi's: Python and its packages from PyPI, and from conda-forge what is not a Python
+# package - the toolchain that compiles comfy-kitchen and causal-conv1d, and node for the page.
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["linux-64"]
+
+[tool.pixi.dependencies]
+python = "3.13.*"
+# 13.3 because that is what both extensions were built and measured with; torch's own runtime is 13.0.
+cuda-version = "13.3.*"
+cuda-nvcc = "*"
+cuda-cudart-dev = "*"
+cuda-cccl = "*"
+libcublas-dev = "*"
+libcusparse-dev = "*"
+libcusolver-dev = "*"
+# nvcc 13.3 rejects gcc 16, and mixing a system gcc with this one links against a sysroot libm the
+# system ld cannot resolve, so C, C++ and nvcc's host compiler are all this one.
+gcc_linux-64 = "14.*"
+gxx_linux-64 = "14.*"
+cmake = "*"
+ninja = "*"
+nodejs = ">=22.12"  # vite 8
+# causal-conv1d builds inside the environment, so its build requirements have to be in it.
+setuptools = "*"
+wheel = "*"
+packaging = "*"
+
+# The PyPI comfy-kitchen wheel carries cubins for sm_75/80/89/90a/100/120 but not sm_86, so the 3090
+# runs its sm_80 code: every int->float in the int8 attention loop compiles to I2F, which Ampere's
+# consumer parts run on the quarter-rate special-function unit. Built from the same 0.2.34 tag for
+# 86-real, those become full-rate I2FP on the ALU and attention is 17% faster (1585 ms against 1851 ms
+# per block, bit-identical output). toolchain.sh reads the card's architecture from nvidia-smi, and the
+# wheel cache does not key on it: after changing card, `pixi clean && pixi install`.
+[tool.pixi.pypi-dependencies]
+comfy-kitchen = { git = "https://github.com/Comfy-Org/comfy-kitchen", tag = "v0.2.34" }
+# Qwen-Image 2.1 is not in a release: QwenImage21Pipeline, its transformer and its VAE exist only on
+# main, and 0.41 is unreleased. Pinned to a commit like every checkpoint is, because "main" is not a
+# version - and because H3 and Qwen-Image-Edit ride on this and their key mappings were established
+# against one tree. 2.1 is wanted back some day, and it was pinned against this tree too.
+diffusers = { git = "https://github.com/huggingface/diffusers", rev = "8b3c707ebd3ec4881f4190cf42931da07eaf3b65" }
+
+# causal-conv1d has no wheel for this torch, so it builds from source against the environment's own torch.
+[tool.pixi.pypi-options]
+no-build-isolation = ["causal-conv1d"]
+
+[tool.pixi.activation]
+scripts = ["toolchain.sh"]
+env = { CAUSAL_CONV1D_FORCE_BUILD = "TRUE", MAX_JOBS = "4", CMAKE_GENERATOR = "Ninja" }
+
+[tool.pixi.environments]
+default = { features = ["dev"], solve-group = "default" }
+prod = { features = [], solve-group = "default" }
+
+[tool.pixi.tasks]
+page = "npm --prefix frontend install && npm --prefix frontend run build"
+serve = { cmd = "python main.py", depends-on = ["page"] }
+
+[dependency-groups]
+dev = [
+    "mypy>=2.3.1",
+    "ruff>=0.16.7",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py313"
+
+[tool.ruff.lint]
+select = [
+    "E", "W",  # pycodestyle
+    "F",       # pyflakes
+    "I",       # isort
+    "N",       # pep8-naming
+    "UP",      # pyupgrade
+    "B",       # bugbear
+    "C4",      # comprehensions
+    "SIM",     # simplify
+    "PTH",     # pathlib
+    "RUF",     # ruff-specific
+]
+allowed-confusables = ["×", "–"]  # typographic characters used on purpose (UI sizes, prose)
+
+# `setting()` wraps `dataclasses.field`; RUF009 cannot see that through the call.
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["difflab.core.settings.setting", "setting"]
+
+[tool.ruff.lint.per-file-ignores]
+# Verbatim prompt assets: long lines are part of the data.
+"difflab/prompts.py" = ["E501"]
+"difflab/models/minimax_h3/prompts.py" = ["E501"]
+"difflab/screenplay/words.py" = ["E501"]
+
+[tool.mypy]
+python_version = "3.13"
+files = ["difflab", "main.py"]
+strict = true
+ignore_missing_imports = true
+
+# Large, dynamically typed ML libraries: treat them as Any instead of analysing them
+# (their pipelines register components at runtime, which mypy cannot see).
+[[tool.mypy.overrides]]
+module = ["diffusers.*", "transformers.*", "accelerate.*", "safetensors.*", "av.*"]
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+module = "difflab.models.processors"
+disallow_subclassing_any = false  # subclasses transformers processors, which are Any to mypy

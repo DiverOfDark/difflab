@@ -1,0 +1,27 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+.pixi
+
+# IDE
+.idea/
+
+# Inputs and outputs
+samples/
+# personal photos, and the cached step results and director answers about them
+sources/
+cache/
+qwen_edit/
+video/
+output/
+
+# The built page (npm --prefix frontend run build) and what builds it
+frontend/node_modules
+difflab/api/static

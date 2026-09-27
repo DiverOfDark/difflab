@@ -1,0 +1,419 @@
+"""The gate every director prompt passes before it may render.
+
+The format's own rules live in `caption` (the Prompt IDE port and the label check), because a
+hand-written take needs them too; what is here is what the *director* needs on top. A problem marked
+`repairable` goes back to the model that made it with the message as the instruction; anything else
+is a bug in the compiler or in the plan.
+"""
+
+from __future__ import annotations
+
+import itertools
+import re
+
+from difflab.models.minimax_h3.caption import LABEL, Problem, body, label_rules, sections
+from difflab.screenplay import compiler as compose
+from difflab.screenplay import config, words
+
+VISUAL_MARKERS = ("fully_preserved", "partially_preserved", "attribute_transfer", "weak_reference")
+AUDIO_MARKERS = ("fully_copy", "partially_copy", "reference", "weak_reference")
+HYPE = re.compile(
+    r"\b(photorealistic|hyper-?real\w*|4k|8k|hdr|masterpiece|best quality|ultra[- ]realistic|cgi|octane|"
+    r"unreal engine|award[- ]winning|stunning|breathtaking)\b",
+    re.I,
+)
+META = re.compile(r"\b(chunk|segment|previous clip|next clip|stitch\w*|this prompt|part \d)\b", re.I)
+NEGATION = re.compile(r"\b(no|not|never|without|nothing|nobody|don't|doesn't)\b", re.I)
+PERSISTENCE = re.compile(r"\b(must not reappear|do not restore|do not regenerate|must not return|no cuts?)\b", re.I)
+WRITER_TIMING = re.compile(
+    r"\bAt \d|\[Shot|\b\d+(\.\d+)?\s*(s|sec|seconds)\b|\b(for the first|early in the clip|in the middle seconds|"
+    r"later in the clip|toward the end of the clip|in the final)\b",
+    re.I,
+)
+# A side from a person's own point of view: an 8B model mirrors it, and a take planned on a mirrored
+# room passes the hose across a table on the other side. "On his left wrist" is a place on his body,
+# not a side of the room, so BODY is excluded.
+BODY = (
+    r"(?:hands?|arm|forearm|wrists?|paws?|legs?|knee|foot|feet|shoulder|elbow|ear|eye|cheek|hip|thigh|palm|"
+    r"fingers?|sleeve)"
+)
+SIDE = re.compile(
+    rf"\b(?:to|on|at) (?:his|her|its|their) (?:left|right)(?: side)?\b(?! {BODY}\b)"
+    r"|\b(?:left|right) of (?:him|her|it|them)\b",
+    re.I,
+)
+PHASES = ("airlock", "build", "primary", "handoff", "reaction", "settle")
+QUIET = ("airlock", "settle")  # beats in which nothing new happens
+# Sounds a mouth makes, by word stem (`stem`): it opens for each one, so the mouth rule must list it.
+VOCAL = {"giggl": "giggle", "laugh": "laugh", "chuck": "chuckle", "meow": "meow", "exhal": "exhale", "sigh": "sigh",
+         "cough": "cough", "purr": "purr", "gasp": "gasp", "yawn": "yawn"}  # fmt: skip
+BREATHS = ("exhale", "yawn")  # shown, but not always heard: "a puff of smoke" is an exhale's sound
+SMILE = re.compile(r"\bsmil", re.I)
+# Words that say how a mouth moves rather than what it does: "her soft giggle" is matched on "giggle".
+MANNER = {"soft", "slow", "small", "short", "long", "single", "quiet", "gentle", "little", "brief", "light", "deep",
+          "loud", "faint", "their", "with", "from", "into", "onto", "once", "twice"}  # fmt: skip
+# Words ending in -s or -ing that are not verbs (`_verbish`).
+NOT_VERBS = {"across", "always", "towards", "afterwards", "perhaps", "sometimes", "whereas", "besides", "hers",
+             "during", "something", "nothing", "anything", "everything", "ceiling", "evening", "morning",
+             "building", "clothing", "seconds", "minutes", "photos", "pictures", "series"}  # fmt: skip
+
+
+def chunk_rules(text: str, labels: list[str], directive: str) -> list[Problem]:
+    """What difflab needs beyond the IDE for one compiled chunk."""
+    out = label_rules(text, labels)
+    definitions, main = body(text, "subject_definitions"), body(text, "detailed_description")
+    numbers = sorted({int(n) for n in re.findall(r"<Subject (\d+)>", definitions)})
+    if numbers != list(range(1, len(numbers) + 1)):
+        out.append(Problem("error", "subjects", f"<Subject N> must run 1..K without gaps, got {numbers}"))
+    if not body(text, "summary").startswith(directive):
+        out.append(Problem("error", "directive", f"summary must start with {directive}"))
+    for line in body(text, "retention_analysis").split("\n"):
+        visual = re.match(r"^<(?:Subject|Picture|Video)\s+\d+>[^:]*:\s*(\w+) - ", line)
+        audio = re.match(r"^<Audio\s+\d+>:\s*(\w+) - ", line)
+        good = (visual and visual.group(1) in VISUAL_MARKERS) or (audio and audio.group(1) in AUDIO_MARKERS)
+        if not good or re.search(r"\(S\d", line):
+            out.append(Problem("error", "retention", f"malformed retention line: {line[:60]}"))
+    for name, start, _, _ in sections(text)[1:]:
+        if not text[:start].endswith("\n\n"):
+            out.append(Problem("error", "layout", f"{name}: needs a blank line before it"))
+    for match in re.finditer(r"<d>", text):
+        if not re.search(r"\(S\d+\)[^<]*$", text[max(0, match.start() - 200) : match.start()]):
+            out.append(Problem("error", "speaker", "a <d> line needs its speaker's (Sx) ID before it"))
+    if re.search(r"\[Shot (?:[2-9]|\d\d+)\]", text):
+        out.append(Problem("error", "one_take", "a [Shot N>1] is a cut; one take is a lone [Shot 1]"))
+    for match in re.finditer(r"\b\d\d:\d\d\.\d\d\d\b", text):
+        out.append(Problem("error", "timestamp", f"{match.group(0)}: one take times its beats with words, not cuts"))
+    count = len(main.split())
+    (low, high), (floor, ceiling) = config.DIRECTOR_WORDS, config.DIRECTOR_WORDS_HARD
+    if not floor <= count <= ceiling:
+        out.append(Problem("error", "length", f"detailed_description has {count} words; write {low}-{high}", True))
+    elif not low <= count <= high:
+        out.append(Problem("warning", "length", f"detailed_description has {count} words; aim for {low}-{high}", True))
+    sound = body(text, "overall_soundscape")
+    sentences = len([s for s in re.split(r"(?<=[.!?])\s+", sound) if s.strip()])
+    if not 1 <= sentences <= 4 or "<d>" in sound:
+        out.append(
+            Problem("error", "soundscape", f"overall_soundscape: 1-4 sentences, no speech (has {sentences})", True)
+        )
+    music = body(text, "non_diegetic_music")
+    if music != "N/A" and not 1 <= len(re.split(r"(?<=[.!?])\s+", music)) <= 3:
+        out.append(Problem("error", "music", "non_diegetic_music is N/A or 1-3 sentences"))
+    for pattern, code, severity in (
+        (HYPE, "hype", "warning"),
+        (META, "meta", "error"),
+        (PERSISTENCE, "negation", "error"),
+    ):
+        out += [
+            Problem(severity, code, f"'{m.group(0)}' in detailed_description", True) for m in pattern.finditer(main)
+        ]
+    if len(NEGATION.findall(main)) > config.DIRECTOR_MAX_NEGATIONS:
+        out.append(
+            Problem(
+                "warning",
+                "negation",
+                f"more than {config.DIRECTOR_MAX_NEGATIONS} negations; say what happens instead",
+                True,
+            )
+        )
+    # With the words either side of it: the prompt is two thousand words across six sections, and
+    # "a placeholder survived" alone leaves the reader hunting for the brace that escaped compilation.
+    for found in re.finditer(r"\{[a-z_]+\}", text):
+        around = text[max(0, found.start() - 40) : found.end() + 40].replace("\n", " ")
+        out.append(Problem("error", "placeholder", f"{found.group(0)} survived compilation: ...{around}..."))
+    return out
+
+
+def writer_rules(prose: str, cast: set[str], actors: set[str] | None = None) -> list[Problem]:
+    """The writer's own mistakes, checked on its JSON before compiling. All repairable.
+
+    Each of `actors` must be named as its {id} in the beat's prose: that binds the action to its
+    <Subject N> and catches prose written for some other beat."""
+    out = [
+        Problem("error", "placeholder", f"{{{name}}} is not in this clip's cast", True)
+        for name in re.findall(r"\{([a-z_]+)\}", prose)
+        if name not in cast and name != "say"
+    ]
+    for actor in sorted((actors or set()) - set(re.findall(r"\{([a-z_]+)\}", prose))):
+        out.append(
+            Problem("error", "actor", f"this beat's action belongs to {{{actor}}}: name it as {{{actor}}}", True)
+        )
+    if LABEL.search(prose):
+        out.append(Problem("error", "labels", "write cast members as {id}; the labels are added for you", True))
+    if message := possessive(prose):
+        out.append(Problem("error", "possessive", message, True))
+    if WRITER_TIMING.search(prose):
+        out.append(
+            Problem("error", "timing", "no timing words, seconds or shot markers; timing is added for you", True)
+        )
+    if side := SIDE.search(prose):
+        out.append(Problem("error", "sides", f"say sides as sides of the frame, not '{side.group(0)}'", True))
+    return out
+
+
+def possessive(text: str) -> str | None:
+    """A possessive after braces, quoted with its rewrite: "write 'the fur of {cat}', not '{cat}'s fur'"."""
+    match = re.search(r"\{([a-z_]+)\}'s(?: (\w+))?", text)
+    if match is None:
+        return None
+    thing = match.group(2) or "hand"
+    return f"no possessive after braces: write 'the {thing} of {{{match.group(1)}}}', not '{match.group(0)}'"
+
+
+def tokens(text: str) -> list[str]:
+    return re.findall(r"[a-z]+", text.lower())
+
+
+def stem(word: str) -> str:
+    """ "giggles", "giggling", "giggle" -> "giggl": enough of a word to find it in another form."""
+    word = word.lower()
+    for suffix in ("ing", "ed", "s"):
+        if word.endswith(suffix) and len(word) - len(suffix) >= 3:
+            word = word[: -len(suffix)]
+            break
+    return (word.rstrip("e") if len(word) > 3 else word)[:5]
+
+
+def vocal(text: str) -> set[str]:
+    return {VOCAL[stem(word)] for word in tokens(text) if stem(word) in VOCAL}
+
+
+def vocal_rules(prose: list[str], sounds: str, mouths: tuple[str, ...]) -> list[Problem]:
+    """A chunk's mouth sounds against its mouth rule, both ways. All repairable, by the writer.
+
+    A giggle the rule allows but the prose never shows leaves a mouth open with nothing to do (H3
+    fills it with mumbling); one the prose shows but the rule forbids contradicts the rule."""
+    allowed, shown, heard = vocal(" ".join(mouths)), vocal(" ".join(prose)), vocal(sounds)
+    out = [
+        Problem("error", "mouths", f"the mouth rule allows '{sound}': show it in the beat where it happens", True)
+        for sound in sorted(allowed - shown)
+    ]
+    out += [
+        Problem("error", "mouths", f"the mouth rule allows '{sound}': put its sound in \"sounds\"", True)
+        for sound in sorted(allowed - heard - set(BREATHS))
+    ]
+    out += [
+        Problem("error", "mouths", f"'{sound}' is a mouth movement the mouth rule does not allow: leave it out", True)
+        for sound in sorted((shown | heard) - allowed)
+    ]
+    return out
+
+
+def _verbish(word: str) -> bool:
+    """An inflected verb, roughly: what an IDEA's events are told with ("blows", "jumps", "blowing")."""
+    if len(word) < 4 or word in NOT_VERBS:
+        return False
+    return (word.endswith("ing") and len(word) >= 6) or (word.endswith("s") and not word.endswith(("ss", "us", "is")))
+
+
+def story_rules(idea: str, story: list[tuple[str, int]], take: compose.Take) -> list[Problem]:
+    """The plan's map of the IDEA's actions to clips: every action is somewhere, with its own verb.
+
+    `story` is (event, clip), the clip counted from 1; an event is checked against the beats of the
+    clip it names, so a giggle moved to another clip goes back. A beat number is not asked for: the
+    writer miscounts beats. The IDEA's actions are found by their inflected verbs, clause by clause,
+    and a clause with a negation ("nobody speaks") is a rule, not an event. All repairable."""
+    out: list[Problem] = []
+    vocabulary = set(tokens(idea))
+    covered: set[str] = set()
+
+    def fail(message: str) -> None:
+        out.append(Problem("error", "story", message, True))
+
+    for event, clip in story:
+        verbs = {stem(word) for word in tokens(event) if _verbish(word)}
+        covered |= verbs
+        if not set(tokens(event)) <= vocabulary:
+            fail(f"story: '{event}' is not in the IDEA's own words; quote them")
+            continue
+        if not 1 <= clip <= len(take.chunks):
+            fail(f"story: '{event}' points to clip {clip}, which does not exist")
+            continue
+        beats = take.chunks[clip - 1].beats
+        moving = {stem(word) for beat in beats if beat.phase not in QUIET for word in tokens(beat.action)}
+        still = {stem(word) for beat in beats if beat.phase in QUIET for word in tokens(beat.action)}
+        missing = sorted(word for word in tokens(event) if _verbish(word) and stem(word) not in moving)
+        if missing and {stem(word) for word in missing} <= still:
+            fail(f"story: '{event}' happens in an airlock or settle beat of clip {clip}, which hold still: move it "
+                 "to a build, primary, handoff or reaction beat")  # fmt: skip
+        elif missing:
+            said = " and ".join(f"'{word}'" for word in missing)
+            fail(f"story: '{event}' is in clip {clip}, but no beat's action there says {said}: say it in the action "
+                 "of the beat that shows it, with the IDEA's own verb")  # fmt: skip
+    for part in re.split(r"[.;:,!?]|\band\b|\bthen\b|\bwhile\b", idea, flags=re.I):
+        verbs = {stem(word) for word in tokens(part) if _verbish(word)}
+        if verbs and not verbs & covered and not NEGATION.search(part):  # "nobody speaks" is not an event
+            said = " ".join(part.split())
+            fail(f"story: the IDEA's '{said}' is in no event; add it with the clip that shows it")
+    return out
+
+
+def plan_rules(take: compose.Take) -> list[Problem]:
+    """Timing, continuity and staging of the whole plan, before any prose is written. All repairable."""
+    out: list[Problem] = []
+    seconds = take.seconds
+    living = {m for m in take.members if take.cards[m].kind in compose.LIVING}
+
+    def fail(code: str, message: str) -> None:
+        out.append(Problem("error", code, message, True))
+
+    for index, chunk in enumerate(take.chunks):
+        clip = f"clip {index + 1}"
+        beats = list(chunk.beats)
+        unknown = {m for beat in beats for m in beat.who} | set(chunk.cast) | {chunk.camera_toward}
+        if unknown - set(take.members):
+            fail("cast", f"{clip}: {sorted(unknown - set(take.members))} are not cast ids {list(take.members)}")
+            continue
+        for beat in beats:
+            if beat.phase not in PHASES:
+                fail("phase", f"{clip}: '{beat.phase}' is not a phase; use one of {', '.join(PHASES)}")
+            if set(beat.who) - set(chunk.cast):
+                fail("cast", f"{clip}: every id in a beat's 'who' is in the clip's 'cast'")
+        if len(beats) < 3:
+            fail("beats", f"{clip}: write 3 to 5 beats")
+            continue
+        for beat in beats:
+            if beat.end - beat.start < config.DIRECTOR_BEAT_MIN - 0.01:
+                span = f"{beat.phase} beat {beat.start:g}-{beat.end:g} s"
+                fail(
+                    "beats",
+                    f"{clip}: the {span} is under {config.DIRECTOR_BEAT_MIN:g} second; lengthen it or merge it into "
+                    "the next one",
+                )
+        present = set(re.findall(r"\{([a-z_]+)\}", compose.opening(take, index)))
+        first = set(beats[0].who) | set(re.findall(r"\{([a-z_]+)\}", beats[0].action))
+        for member in sorted(first & (living - present)):
+            message = "is outside the frame when the clip starts (its opening does not name it), so it takes no part"
+            fail("entrance", f"{clip}: {{{member}}} {message} in the first beat and enters in a later one")
+        if abs(beats[0].start) > 0.01 or abs(beats[-1].end - seconds) > 0.3:
+            fail("coverage", f"{clip}: beats must run from 0 to {seconds:.2f}")
+        for a, b in itertools.pairwise(beats):
+            if abs(a.end - b.start) > 0.01:
+                fail("coverage", f"{clip}: beats must be contiguous ({a.end} then {b.start})")
+        airlock, settle = config.DIRECTOR_AIRLOCK[1], config.DIRECTOR_SETTLE[1]
+        if index > 0 and (beats[0].phase != "airlock" or beats[0].end - beats[0].start < airlock):
+            fail("airlock", f"{clip}: start with an airlock beat of at least {airlock:g} seconds")
+        if beats[-1].phase != "settle" or beats[-1].end - beats[-1].start < settle:
+            fail("settle", f"{clip}: end with a settle beat of at least {settle:g} seconds")
+        if any(beat.phase == "settle" for beat in beats[:-1]):
+            fail("settle", f"{clip}: only the last beat is a settle")
+        main = [beat for beat in beats if beat.phase in ("primary", "handoff")]
+        if not main:
+            fail("main_beat", f"{clip}: mark the beat that carries the clip's one main event as primary or handoff")
+        if len(main) > 1:
+            listed = ", ".join(f"{b.phase} {b.start:g}-{b.end:g} s" for b in main)
+            fail("main_beat", f"{clip} has {len(main)} main beats ({listed}): keep one as its main event and make the "
+                 "others build or reaction beats, or move one event into a neighbouring clip")  # fmt: skip
+        window, handoff = config.DIRECTOR_MAIN_BEAT_WINDOW, config.DIRECTOR_HANDOFF_MIN
+        for beat in main:
+            if not window[0] <= beat.start / seconds <= window[1]:
+                low, high = (fraction * seconds for fraction in window)
+                fail("main_beat", f"{clip}: its {beat.phase} beat starts at {beat.start:g} s; start it between "
+                     f"{low:.1f} and {high:.1f} s")  # fmt: skip
+            if beat.phase == "handoff" and beat.end - beat.start < handoff:
+                fail("handoff", f"{clip}: the handoff beat {beat.start:g}-{beat.end:g} s lasts under {handoff:g} "
+                     "seconds; give the reach, grip and release at least that long")  # fmt: skip
+        if chunk.camera_move not in words.CAMERA_MOVES:
+            fail("camera", f"{clip}: the camera move is one of {', '.join(words.CAMERA_MOVES)}")
+        if len(set(chunk.cast) & living) > config.DIRECTOR_MAX_LIVING:
+            fail("crowd", f"{clip}: at most {config.DIRECTOR_MAX_LIVING} people and animals on screen")
+        for member in set(re.findall(r"\{([a-z_]+)\}", compose.opening(take, index))) - set(chunk.cast):
+            fail("join", f"{clip}: {{{member}}} is in its opening arrangement, so it must be in its cast")
+        held = compose.references(take, index)
+        # A member no photograph shows has no crop by construction: its <Subject N> line carries it.
+        unseen = {m for m in chunk.cast if not take.cards[m].photographed}
+        for member in sorted(set(chunk.cast) - unseen - {m for key in held for m in take.refs[key].shows}):
+            fail("reference", f"{clip}: {{{member}}} has no clean picture here (a picture of it also shows someone "
+                 "who is not in this clip); keep that member on screen or leave the other one in the cast")  # fmt: skip
+        closing = set(re.findall(r"\{([a-z_]+)\}", chunk.closing))
+        # Each on-screen person or animal is restated with its traits at its first {id} in the chunk:
+        # the opening, a beat it moves in (the writer must name it there), or the closing.
+        named = present | closing | {m for beat in beats if beat.phase != "settle" for m in beat.who}
+        for member in sorted(set(chunk.cast) & living - named):
+            fail("drift", f"{clip}: {{{member}}} is on screen, but no beat moves it and neither the opening nor the "
+                 "closing names it: give it a part in a beat's 'who', or take it out of the cast")  # fmt: skip
+        objects = {m for m in chunk.cast if take.cards[m].kind == "object"}
+        for member in sorted(objects - closing):
+            fail("closing", f"{clip}: the closing says where {{{member}}} is and who holds it, naming it as "
+                 f"{{{member}}}")  # fmt: skip
+        after = set(take.chunks[index + 1].cast) if index + 1 < len(take.chunks) else set()
+        for member in sorted(set(chunk.cast) & after & living - closing):
+            fail("closing", f"{clip}: {{{member}}} is on screen in this clip and the next one, so the closing says "
+                 f"where it is, as {{{member}}}")  # fmt: skip
+        if closing - set(chunk.cast):
+            fail("closing", f"{clip}: the closing names {sorted(closing - set(chunk.cast))}, who are not in its cast")
+        if not closing & living <= set(chunk.faces_at_close):
+            fail("faces", f"{clip}: every person and animal in the closing needs its face visible")
+        # The breach and the count, not the rule: told it is nine words over, the writer cuts nine
+        # words; told the rule again, it writes the same sentence again, three times over.
+        words_in_closing = len(chunk.closing.split())
+        if words_in_closing > config.DIRECTOR_CLOSING_WORDS:
+            fail("closing", f"{clip}: the closing is {words_in_closing} words; at most "
+                 f"{config.DIRECTOR_CLOSING_WORDS}, so cut "
+                 f"{words_in_closing - config.DIRECTOR_CLOSING_WORDS} and keep every {{id}}")  # fmt: skip
+        if not closing:
+            fail("closing", f"{clip}: the closing names nobody; name each cast member on screen as {{id}}")
+        for text in (chunk.closing, *(beat.action for beat in beats)):
+            if wrong := possessive(text):
+                fail("possessive", f"{clip}: {wrong}")
+                break
+        for text in (chunk.closing, *(beat.action for beat in beats)):
+            if side := SIDE.search(text):
+                fail("sides", f"{clip}: say sides as sides of the frame ('at the left of the frame'), not "
+                     f"'{side.group(0)}'")  # fmt: skip
+                break
+        out += [Problem("error", "mouths", message, True) for message in _mouth_problems(take, index)]
+        if not chunk.irreversible_change.strip():
+            fail("change", f"{clip}: name the irreversible change")
+        for line in chunk.dialogue:
+            ends = line.start + len(line.line.split()) / config.DIRECTOR_WORDS_PER_SECOND
+            if line.start < airlock or ends > seconds - config.DIRECTOR_DIALOGUE_TAIL:
+                fail("dialogue", f"{clip}: a line starts after the airlock and ends "
+                     f"{config.DIRECTOR_DIALOGUE_TAIL:g} seconds before the clip does")  # fmt: skip
+    return out
+
+
+def _mouth_problems(take: compose.Take, index: int) -> list[str]:
+    """The plan's "mouths" against its beats, both ways. A smile keeps the lips closed, so it is not a
+    mouth movement; the settle beat does not count, since it is written from the closing."""
+    chunk, clip = take.chunks[index], f"clip {index + 1}"
+    moving = [beat for beat in chunk.beats if beat.phase != "settle"]
+    out = []
+    for entry in chunk.mouths:
+        if SMILE.search(entry):
+            out.append(f"{clip}: '{entry}' - a smile keeps the lips closed; leave it out of mouths")
+            continue
+        wanted = {stem(word) for word in tokens(entry) if len(word) >= 4 and word not in MANNER}
+        owner = tokens(entry)[0] if tokens(entry) and tokens(entry)[0] in ("his", "her", "its") else None
+        doers = [
+            beat
+            for beat in moving
+            if wanted & {stem(word) for word in tokens(beat.action)}
+            and (owner is None or any(take.cards[m].possessive == owner for m in beat.who))
+        ]
+        if wanted and not doers:
+            out.append(f"{clip}: mouths has '{entry}', but no beat's action has it done: add it to the beat where "
+                       "it happens, or leave it out of mouths")  # fmt: skip
+    listed = vocal(" ".join(chunk.mouths))
+    for sound in sorted(vocal(" ".join(beat.action for beat in moving)) - listed):
+        out.append(f"{clip}: a beat's action has a {sound}, which opens a mouth: list it in mouths ('her {sound}')")
+    return out
+
+
+def cross_chunk_rules(take: compose.Take, prompts: list[str]) -> list[Problem]:
+    """What must not drift between chunks: the style, the room and its light, the room sound, the cast."""
+    out: list[Problem] = []
+    env = next(m for m in take.members if take.cards[m].kind == "environment")
+    room = take.cards[env]
+    fixed = [
+        words.STYLE.split("{room}")[0],
+        f"with {room.short()}, lit by {compose.join(room.lights)}.",
+        take.ambience.strip().rstrip(".")[1:],
+    ]
+    for index, (chunk, prompt) in enumerate(zip(take.chunks, prompts, strict=True)):
+        wanted = fixed + [
+            f"the {take.cards[m].noun} with {take.cards[m].short()}"
+            for m in chunk.cast
+            if take.cards[m].kind in compose.LIVING
+        ]
+        out += [Problem("error", "drift", f"clip {index + 1} lost '{x[:48]}'") for x in wanted if x not in prompt]
+    return out

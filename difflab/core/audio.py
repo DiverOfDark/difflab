@@ -1,0 +1,47 @@
+"""Reading a soundtrack off a file, at the rate the audio VAE wants.
+
+The VAE is fixed at 32 kHz stereo, so that is what comes back regardless of what the file holds.
+"""
+
+from __future__ import annotations
+
+from fractions import Fraction
+from pathlib import Path
+
+import av
+import numpy as np
+import torch
+
+SAMPLE_RATE = 32000
+CHANNELS = 2
+
+
+def load_audio(path: str | Path, rate: int = SAMPLE_RATE) -> torch.Tensor | None:
+    """The file's soundtrack as `[2, samples]` float in [-1, 1], or `None` if it has none."""
+    with av.open(str(path)) as container:
+        if not container.streams.audio:
+            return None
+        stream = container.streams.audio[0]
+        resampler = av.audio.resampler.AudioResampler(format="fltp", layout="stereo", rate=rate)
+        chunks: list[np.ndarray] = []
+        for frame in container.decode(stream):
+            for resampled in resampler.resample(frame):
+                chunks.append(resampled.to_ndarray())
+        for resampled in resampler.resample(None):
+            chunks.append(resampled.to_ndarray())
+    if not chunks:
+        return None
+    waveform = torch.from_numpy(np.concatenate(chunks, axis=1)).float()
+    if waveform.shape[0] == 1:  # a mono file resampled to stereo can still come back single-planar
+        waveform = waveform.repeat(CHANNELS, 1)
+    return waveform[:CHANNELS].clamp(-1.0, 1.0)
+
+
+def trim_to_frames(waveform: torch.Tensor, frames: int, fps: int, rate: int = SAMPLE_RATE) -> torch.Tensor:
+    """A reference clip's frame count is trimmed to the grid the VAE encodes in, so its soundtrack has
+    to follow, or the two would describe different spans of the same moment."""
+    samples = int(Fraction(frames * rate, fps))
+    if waveform.shape[1] >= samples:
+        return waveform[:, :samples]
+    padding = torch.zeros(waveform.shape[0], samples - waveform.shape[1], dtype=waveform.dtype)
+    return torch.cat([waveform, padding], dim=1)

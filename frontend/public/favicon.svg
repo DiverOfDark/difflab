@@ -1,0 +1,19 @@
+<!--
+  The same mark the page wears in its top-left corner (App.vue): a film frame with its sprocket edge
+  filled and a play triangle inside it. It was a blue circle, which was the mark before the AppBahn
+  restyle and had been left behind by it, so the tab said one thing and the page another.
+
+  The colours are the accent and bg-base tokens resolved to hex, because a favicon is loaded on its
+  own and a var() has nothing to read: oklch(80% 0.16 80) and oklch(13% 0.01 260), converted once.
+
+  The ground is drawn rather than left transparent, because a tab strip can be any colour and an
+  amber outline on a light one disappears.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+  <rect width="24" height="24" rx="4" fill="#05070B" />
+  <rect x="1" y="4" width="22" height="16" rx="2" stroke="#F3B01D" stroke-width="1.5" />
+  <line x1="7" y1="4" x2="7" y2="20" stroke="#F3B01D" stroke-width="1.5" />
+  <line x1="17" y1="4" x2="17" y2="20" stroke="#F3B01D" stroke-width="1.5" />
+  <rect x="1" y="4" width="6" height="16" fill="#F3B01D" />
+  <path d="M10.5 9v6l4.5-3z" fill="#F3B01D" />
+</svg>
