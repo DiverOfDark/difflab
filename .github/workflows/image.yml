@@ -11,8 +11,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
-    # One nvcc at a time: a hosted runner has 2 cores and 7 GB, and a CUTLASS unit alone takes several.
+    runs-on: github-runner-difflab
     timeout-minutes: 360
     permissions:
       contents: read
@@ -28,12 +27,6 @@ jobs:
           - card: rtx5090
             arch: 120-real
     steps:
-      # The image is over 10 GB; a runner starts with 14 GB free.
-      - uses: jlumbroso/free-disk-space@v1.3.1
-        with:
-          tool-cache: true
-          large-packages: false
-
       - uses: actions/checkout@v4
 
       - uses: docker/setup-buildx-action@v3
@@ -78,7 +71,7 @@ jobs:
           push: true
           build-args: |
             COMFY_CUDA_ARCHS=${{ matrix.arch }}
-            MAX_JOBS=1
+            MAX_JOBS=6
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           # The last image for this card is the layer cache: every layer is in it, so an unchanged

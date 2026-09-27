@@ -21,8 +21,10 @@ FROM ghcr.io/prefix-dev/pixi:0.81.0
 
 ARG COMFY_CUDA_ARCHS=86-real
 ARG MAX_JOBS=4
+ARG NVCC_THREADS=4
 ENV COMFY_CUDA_ARCHS=${COMFY_CUDA_ARCHS} \
-    MAX_JOBS=${MAX_JOBS}
+    MAX_JOBS=${MAX_JOBS} \
+    NVCC_THREADS=${NVCC_THREADS}
 
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
