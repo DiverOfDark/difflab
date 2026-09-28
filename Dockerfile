@@ -46,9 +46,12 @@ ENV PYTHONUNBUFFERED=1 \
     HF_HOME=/models \
     DIFFLAB_HOST=0.0.0.0
 
-COPY main.py ./
-COPY difflab ./difflab
-COPY --from=page /app/difflab/api/static ./difflab/api/static
+# --link: the code is a layer of its own that does not need the environment under it unpacked. Without
+# it a code-only build pulled and extracted the 4.9 GB environment layer to put 1 MB on top (5.4 of its
+# 6.5 minutes on the home runner); with it the environment stays in the registry, referred to, not moved.
+COPY --link main.py ./
+COPY --link difflab ./difflab
+COPY --link --from=page /app/difflab/api/static ./difflab/api/static
 
 # Weights are fetched on first use into HF_HOME; mount a volume there or the first render downloads
 # ~96 GB again on every new pod.
