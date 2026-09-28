@@ -9,6 +9,10 @@ concurrency:
   group: image-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # The Dockerfile's default, repeated because the kernels cache is named by it.
+  ARCHS: 75-real;80-real;86-real;89;90a-real;100f;120f
+
 jobs:
   build:
     runs-on: github-runner-difflab
@@ -16,29 +20,19 @@ jobs:
     permissions:
       contents: read
       packages: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - card: rtx3090
-            arch: 86-real
-          - card: rtx4090
-            arch: 89-real
-          - card: rtx5090
-            arch: 120-real
     steps:
       - uses: actions/checkout@v4
 
       - uses: docker/setup-buildx-action@v3
 
       # The Dockerfile's kernels cache mount, carried between runs: a changed lock then re-downloads
-      # packages instead of recompiling comfy-kitchen and causal-conv1d for hours. About 1.6 GB a card.
+      # packages instead of recompiling comfy-kitchen and causal-conv1d for hours.
       - id: kernels
         uses: actions/cache@v4
         with:
           path: kernels-cache
-          key: kernels-${{ matrix.arch }}-${{ hashFiles('pixi.lock', 'toolchain.sh', 'ck-jobs.cmake') }}
-          restore-keys: kernels-${{ matrix.arch }}-
+          key: kernels-all-${{ hashFiles('pixi.lock', 'toolchain.sh', 'ck-jobs.cmake') }}
+          restore-keys: kernels-all-
 
       - uses: reproducible-containers/buildkit-cache-dance@v3
         with:
@@ -46,7 +40,7 @@ jobs:
             {
               "kernels-cache": {
                 "target": "/root/.cache/rattler/cache",
-                "id": "difflab-kernels-${{ matrix.arch }}"
+                "id": "difflab-kernels-${{ env.ARCHS }}"
               }
             }
           skip-extraction: ${{ steps.kernels.outputs.cache-hit }}
@@ -62,19 +56,22 @@ jobs:
         with:
           images: ghcr.io/diverofdark/difflab
           tags: |
-            type=raw,value=${{ matrix.card }}
-            type=sha,prefix=${{ matrix.card }}-
+            type=raw,value=latest
+            type=sha,prefix=
 
       - uses: docker/build-push-action@v6
         with:
           context: .
           push: true
+          # Seven architectures per CUTLASS unit: two at a time inside each of six nvcc jobs keeps it to
+          # twelve compilers, where causal-conv1d's hardcoded four would make it twenty-four.
           build-args: |
-            COMFY_CUDA_ARCHS=${{ matrix.arch }}
+            COMFY_CUDA_ARCHS=${{ env.ARCHS }}
             MAX_JOBS=6
+            NVCC_THREADS=2
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # The last image for this card is the layer cache: every layer is in it, so an unchanged
-          # environment is pulled rather than rebuilt.
-          cache-from: type=registry,ref=ghcr.io/diverofdark/difflab:${{ matrix.card }}
+          # The last image is the layer cache: every layer is in it, so an unchanged environment is
+          # referred to rather than rebuilt.
+          cache-from: type=registry,ref=ghcr.io/diverofdark/difflab:latest
           cache-to: type=inline

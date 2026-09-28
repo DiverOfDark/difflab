@@ -517,8 +517,9 @@ to localhost. Put it behind something, or set `DIFFLAB_HOST=127.0.0.1` and reach
 
 `DIFFLAB_HOST` and `DIFFLAB_PORT` are the only two knobs that read the environment, so a container
 can be configured without editing `config.py`. The `Dockerfile` builds the page and the package with the
-same `pyproject.toml` and `pixi.lock` and runs the server. A build has no card to ask, so comfy-kitchen's architecture is a
-build argument, `86-real` unless given: `docker build --build-arg COMFY_CUDA_ARCHS=89-real .` for a 4090.
+same `pyproject.toml` and `pixi.lock` and runs the server. One image serves every card from Turing to Blackwell (`ghcr.io/diverofdark/difflab:latest`): comfy-kitchen
+is compiled for its own release list plus `86-real`, so each card runs code built for it.
+`--build-arg COMFY_CUDA_ARCHS=89-real` builds for one card only, in a seventh of the kernel compile.
 
 ## Speed
 

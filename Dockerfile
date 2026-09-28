@@ -6,9 +6,10 @@
 # own build cache, and the environment layer is only rebuilt when the manifest, the lock or the toolchain
 # script changes.
 #
-# comfy-kitchen is compiled for one architecture: 86-real is a 3090, and another card needs
-# --build-arg COMFY_CUDA_ARCHS=<its compute capability without the dot>-real, or its attention kernels
-# will not load. An empty value builds comfy-kitchen's own list for every card, sm_86 on sm_80 code.
+# One image for every card: comfy-kitchen's own release list (its setup.py's Linux default - Turing to
+# Blackwell, with PTX at 89 for anything newer) plus 86-real, which the release leaves on sm_80 code: 17%
+# slower attention on a 3090. --build-arg COMFY_CUDA_ARCHS=<cc>-real builds for one
+# card only, in a seventh of the kernel compile.
 
 FROM node:22-slim AS page
 WORKDIR /app
@@ -19,7 +20,7 @@ RUN npm --prefix frontend run build
 
 FROM ghcr.io/prefix-dev/pixi:0.81.0
 
-ARG COMFY_CUDA_ARCHS=86-real
+ARG COMFY_CUDA_ARCHS=75-real;80-real;86-real;89;90a-real;100f;120f
 ARG MAX_JOBS=4
 ARG NVCC_THREADS=4
 ENV COMFY_CUDA_ARCHS=${COMFY_CUDA_ARCHS} \
