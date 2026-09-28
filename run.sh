@@ -1,5 +1,3 @@
 #!/bin/sh
-pushd frontend
-npm run build
-popd
-uv run main.py
+cd "$(dirname "$0")" || exit 1
+exec "$(command -v pixi || echo "$HOME/.pixi/bin/pixi")" run serve
