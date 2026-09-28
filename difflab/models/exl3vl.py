@@ -1,8 +1,4 @@
-"""Qwen3.8-27B as turboderp's EXL3 on ExLlamaV3, its MTP head (kept at `mtp_bits: 4`) drafting.
-
-Transformers over bitsandbytes NF4 decoded it at 17.7 tok/s on a 3090, a third of what reading 15 GB of
-weights per token allows; `config.VLM_DRAFT_TOKENS` has what this does.
-"""
+"""Qwen3.8-27B as turboderp's EXL3 on ExLlamaV3, its MTP head (kept at `mtp_bits: 4`) drafting."""
 
 import gc
 from collections.abc import Callable, Sequence

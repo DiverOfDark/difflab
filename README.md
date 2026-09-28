@@ -17,7 +17,7 @@ What it makes:
 ```
 difflab/
   core/        types (Frame, Clip) · settings kit · keys · cache · context · events · protocol · record · ui · hub · media
-  models/      qwenvl · qwen_edit_aio · convrot · offload · video_io · esrgan · rife · tae · latent_upscaler
+  models/      exl3vl · qwen_edit_aio · convrot · offload · video_io · esrgan · rife · tae · latent_upscaler
                minimax_h3/ (the port, its settings, and caption: the Ref2VA format)
   tools/       edit_image · ask_vlm · write_prompt · render_chunk · handoff · assemble · enlarge_latents
                enlarge_pixels · retime · grade · judge · compose_keyframe
@@ -112,7 +112,7 @@ pixi run serve   # install everything into .pixi/, build the page, serve it at h
 ```
 
 Needs [pixi](https://pixi.sh), an NVIDIA driver, a CUDA GPU (developed on an RTX 3090, 24 GB) and ~32 GB of free RAM. Nothing else is taken from the system.
-`causal-conv1d` and `exllamav3` have no wheel for this torch, so they build from source, and `comfy-kitchen` is built for this machine's card only (see [Speed](#speed)). They need a CUDA 13.3 toolkit and a gcc nvcc 13.3 accepts (14; it rejects 16), so pixi installs both from conda-forge, with Python, node for the page and every PyPI package, into `.pixi/`, locked together in `pixi.lock` (the `[tool.pixi.*]` tables in `pyproject.toml`). `toolchain.sh` points the builds at the toolchain and reads the card's architecture from `nvidia-smi`. For PyCharm, the interpreter is `.pixi/envs/default/bin/python`. The `causal-conv1d` build takes about 8 minutes; pixi prints nothing while it runs unless asked, with `RUST_LOG=uv_build_frontend=debug pixi install`. It and `flash-linear-attention` are the fast kernels for Qwen3.8's linear-attention layers.
+`exllamav3` has no wheel for this torch, so it builds from source, and `comfy-kitchen` is built for this machine's card only (see [Speed](#speed)). They need a CUDA 13.3 toolkit and a gcc nvcc 13.3 accepts (14; it rejects 16), so pixi installs both from conda-forge, with Python, node for the page and every PyPI package, into `.pixi/`, locked together in `pixi.lock` (the `[tool.pixi.*]` tables in `pyproject.toml`). `toolchain.sh` points the builds at the toolchain and reads the card's architecture from `nvidia-smi`. For PyCharm, the interpreter is `.pixi/envs/default/bin/python`. pixi prints nothing while a source build runs unless asked, with `RUST_LOG=uv_build_frontend=debug pixi install`.
 
 ## Development
 
@@ -131,10 +131,9 @@ mypy treats the large, dynamically typed ML libraries (diffusers, transformers, 
 | Editor: transformer + text encoder + VAE (single-file AIO, v18 = the original graph's file) | HF `Phr00t/Qwen-Image-Edit-Rapid-AIO` @ `691024f4`, `v18/Qwen-Rapid-AIO-SFW-v18.safetensors` |
 | Newer AIO revision (set `edit_image`'s model setting to it) | the same repo, `v23/Qwen-Rapid-AIO-SFW-v23.safetensors` |
 | The VLM, which sees and writes every prompt (4.0 bpw EXL3 of HF `Qwen/Qwen3.8-27B`, MTP head kept) | HF `turboderp/Qwen3.8-27B-exl3` @ `113cf7ab` |
-| The same VLM for transformers (NF4 of the original @ `1d4bf0f2`) | HF `Qwen/Qwen3.8-27B` @ `1d4bf0f2` |
 | Editor tokenizer (not stored in the AIO) | HF `Qwen/Qwen-Image` @ `75e0b4be`, `tokenizer/*` |
 
-Every model is named by where it comes from, pinned to a commit (`core/hub.py`): a Hugging Face repo (`Checkpoint`, `HubFile`), or, for the one file not on the Hub, a GitHub raw URL checked by sha256 (`UrlFile`, cached under `~/.cache/difflab`). The first fetch of everything is about 96 GB. The VLM's default is a 4-bit EXL3, which ExLlamaV3 runs with its MTP head drafting ahead, at 70-100 tok/s on a 3090 against NF4's 17.7 on transformers. Any other checkpoint goes to transformers: a 4-bit one as published, an unquantized one quantized to NF4 as it loads, reading all of it every time. Each of them downloads into the HF cache the first time its model loads, then leaves a marker file there, so later loads never touch the network. That fetch is the only download difflab does: every `from_pretrained` call gets a local path plus `local_files_only=True`.
+Every model is named by where it comes from, pinned to a commit (`core/hub.py`): a Hugging Face repo (`Checkpoint`, `HubFile`), or, for the one file not on the Hub, a GitHub raw URL checked by sha256 (`UrlFile`, cached under `~/.cache/difflab`). The first fetch of everything is about 96 GB. The VLM is a 4-bit EXL3, which ExLlamaV3 runs in-process with its MTP head drafting ahead, at 70-100 tok/s on a 3090 (`config.VLM_DRAFT_TOKENS`); its checkpoint setting takes EXL3 checkpoints only. Each of them downloads into the HF cache the first time its model loads, then leaves a marker file there, so later loads never touch the network. That fetch is the only download difflab does: every `from_pretrained` call gets a local path plus `local_files_only=True`.
 
 ## Usage
 
@@ -211,7 +210,7 @@ Measured on that machine (2026-09-16):
 |---|---|
 | `LoadImage` / `ImagePass` | `imaging.load_image`: PIL, EXIF-transposed, RGB |
 | `LoadVideo` → `GetVideoComponents` → `Frame Select(0)` (dangling in the graph) | `imaging.load_video_frame(path, 0)` via `av` |
-| `AILab_QwenVL` (Qwen-VL, 4-bit, flash_attention_2, max_tokens 2048, keep_model_loaded) | `qwenvl.QwenVL`: `Qwen3VLForConditionalGeneration`, bitsandbytes 4-bit (nf4, bf16 compute), flash-attn if installed else SDPA, `max_new_tokens=2048`, temperature 0.7 / top_p 0.8 / top_k 20, seeded. Stays resident. |
+| `AILab_QwenVL` (Qwen-VL, 4-bit, flash_attention_2, max_tokens 2048, keep_model_loaded) | `exl3vl.Exl3VL`: Qwen3.8-27B as 4.0 bpw EXL3 on ExLlamaV3 with MTP drafting, `max_new_tokens=2048`, temperature 0.7 / top_p 0.8 / top_k 20, seeded. Stays resident. |
 | `StringConcatenate` (system prompt + rough idea) | Chat template: system = `prompts.VLM_SYSTEM_PROMPT`, user = image + idea |
 | `CheckpointLoaderSimple` (AIO) | `qwen_edit_aio.load_transformer / load_text_encoder / load_vae`, directly from the `.safetensors` |
 | `ImageScaleToTotalPixels` (2 MP, lanczos, steps 1) | `imaging.resize_to_megapixels`: `scale = sqrt(2e6 / (w*h))`, LANCZOS |
@@ -237,13 +236,13 @@ Measured on that machine (2026-09-16):
 
 ## Determinism
 
-The same seed and the same input give the same output. The edit noise comes from a seeded CPU generator, and the VLM is seeded with `transformers.set_seed`.
+The same seed and the same input give the same output. The edit noise comes from a seeded CPU generator, and the VLM by its job's seed.
 
 Verified 2026-09-16:
 - A manual-prompt edit repeated in a separate process, with a different offload setup, was **pixel-identical**.
 - The full workflow run twice in separate processes gave the same VLM instruction. The two images differ by at most 1/255 on a few pixels (mean 0.01/255) and look identical. The first run decoded under VRAM pressure (before the text encoder was streamed), so cuDNN chose different conv algorithms, which round differently.
 
-Caveats: expect last-bit differences whenever memory pressure or a different GPU/driver changes the cuDNN algorithm choice. bitsandbytes 4-bit and flash-attn kernels are not guaranteed bit-exact across GPUs or drivers either. The runs above used SDPA on one GPU.
+Caveats: expect last-bit differences whenever memory pressure or a different GPU/driver changes the cuDNN algorithm choice. ExLlamaV3's kernels are not guaranteed bit-exact across GPUs or drivers either. The runs above used SDPA on one GPU.
 
 ## Offline proof
 
@@ -518,9 +517,10 @@ to localhost. Put it behind something, or set `DIFFLAB_HOST=127.0.0.1` and reach
 
 `DIFFLAB_HOST` and `DIFFLAB_PORT` are the only two knobs that read the environment, so a container
 can be configured without editing `config.py`. The `Dockerfile` builds the page and the package with the
-same `pyproject.toml` and `pixi.lock` and runs the server. One image serves every card from Turing to Blackwell (`ghcr.io/diverofdark/difflab:latest`): comfy-kitchen
-is compiled for its own release list plus `86-real`, so each card runs code built for it.
-`--build-arg COMFY_CUDA_ARCHS=89-real` builds for one card only, in a seventh of the kernel compile.
+same `pyproject.toml` and `pixi.lock` and runs the server. One image serves every card from Ampere to Blackwell (`ghcr.io/diverofdark/difflab:latest`): comfy-kitchen
+is compiled for its own release list less Turing plus `86-real`, and exllamav3 for the same cards, so each card runs
+code built for it. `--build-arg COMFY_CUDA_ARCHS=89-real --build-arg TORCH_CUDA_ARCH_LIST=8.9` builds for one card only,
+in a sixth of the kernel compile.
 
 ## Speed
 

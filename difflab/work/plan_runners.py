@@ -18,7 +18,6 @@ from difflab import config, store
 from difflab.core import context, media, ui
 from difflab.core.cache import cache
 from difflab.core.keys import Key, key
-from difflab.core.settings import model_identity
 from difflab.core.types import Frame
 from difflab.models.minimax_h3.settings import VideoSettings
 from difflab.screenplay import checks, compiler, crops, words
@@ -47,7 +46,7 @@ def _fingerprint() -> dict[str, Any]:
         if name.isupper() and not name.startswith(("JUDGE_", "COMPOSE_", "IDEA_"))
     }
     settings = {name: value for name, value in vars(knobs).items() if name.startswith("DIRECTOR_")}
-    return {"model": model_identity(direct.MODEL.get()), "prompts": prompts, "knobs": settings}
+    return {"model": direct.MODEL.get(), "prompts": prompts, "knobs": settings}
 
 
 def _taken(inputs: dict[str, Any]) -> dict[str, int]:

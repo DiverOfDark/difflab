@@ -6,10 +6,10 @@
 # own build cache, and the environment layer is only rebuilt when the manifest, the lock or the toolchain
 # script changes.
 #
-# One image for every card: comfy-kitchen's own release list (its setup.py's Linux default - Turing to
-# Blackwell, with PTX at 89 for anything newer) plus 86-real, which the release leaves on sm_80 code: 17%
-# slower attention on a 3090. --build-arg COMFY_CUDA_ARCHS=<cc>-real with
-# TORCH_CUDA_ARCH_LIST=<c.c> builds for one card only, in a seventh of the kernel compile.
+# One image for every card from Ampere to Blackwell: comfy-kitchen's own release list (its setup.py's Linux
+# default, with PTX at 89 for anything newer) less Turing, where exllamav3 is experimental, plus 86-real,
+# which the release leaves on sm_80 code: 17% slower attention on a 3090. --build-arg COMFY_CUDA_ARCHS=<cc>-real with
+# TORCH_CUDA_ARCH_LIST=<c.c> builds for one card only, in a sixth of the kernel compile.
 
 FROM node:22-slim AS page
 WORKDIR /app
@@ -20,9 +20,9 @@ RUN npm --prefix frontend run build
 
 FROM ghcr.io/prefix-dev/pixi:0.81.0
 
-ARG COMFY_CUDA_ARCHS=75-real;80-real;86-real;89;90a-real;100f;120f
+ARG COMFY_CUDA_ARCHS=80-real;86-real;89;90a-real;100f;120f
 # The same cards for exllamav3, in torch's spelling, which has no family ("f") targets.
-ARG TORCH_CUDA_ARCH_LIST=7.5;8.0;8.6;8.9+PTX;9.0;10.0;12.0
+ARG TORCH_CUDA_ARCH_LIST=8.0;8.6;8.9+PTX;9.0;10.0;12.0
 ARG MAX_JOBS=4
 ARG NVCC_THREADS=4
 ENV COMFY_CUDA_ARCHS=${COMFY_CUDA_ARCHS} \

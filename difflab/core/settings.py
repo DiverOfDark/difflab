@@ -58,11 +58,7 @@ class Settings:
         return {f.name: getattr(self, f.name) for f in dataclasses.fields(self)}
 
     def key_part(self) -> dict[str, Any]:
-        return {
-            f.name: model_identity(getattr(self, f.name)) if f.metadata.get("role") else getattr(self, f.name)
-            for f in dataclasses.fields(self)
-            if f.metadata.get("keyed", True)
-        }
+        return {f.name: getattr(self, f.name) for f in dataclasses.fields(self) if f.metadata.get("keyed", True)}
 
     @classmethod
     def schema(cls) -> list[dict[str, Any]]:
@@ -139,21 +135,8 @@ def _coerce(value: Any, kind: str) -> Any:
 
 
 # The one language model, which sees and writes: Qwen3.8-27B, vision tower and MTP head kept,
-# as turboderp's 4.0 bpw EXL3 - 16.5 GB, run by ExLlamaV3 at 70-100 tok/s where NF4 on transformers
-# made 17.7 (config.VLM_DRAFT_TOKENS). Its answers are keyed apart from NF4's: different weights.
+# as turboderp's 4.0 bpw EXL3 (16.5 GB).
 VLM = "turboderp/Qwen3.8-27B-exl3@113cf7ab958054860e43fb7f3063b1af19171095"
-# The NF4 `qwenvl` makes of the 52 GB original, 19 GB to fetch and nothing to quantize; what runs where
-# ExLlamaV3 does not, since it is transformers throughout.
-VLM_NF4 = "Qwen/Qwen3.8-27B@1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0"
-# Checkpoints holding the same weights, and the one name every key gives them. The NF4 is the cache
-# `qwenvl` writes from the original, uploaded as written (sha256 6640f8b2... on both sides), and the
-# original was the default every answer and plan until 2026-09-28 was keyed under: mapping it here is
-# what keeps those found.
-SAME_MODEL = {VLM_NF4: "Qwen/Qwen3.8-27B@1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0"}
-
-
-def model_identity(checkpoint: Any) -> Any:
-    return SAME_MODEL.get(checkpoint, checkpoint)
 
 
 @dataclass(frozen=True)

@@ -1,13 +1,13 @@
-"""Image-only Qwen-VL processors.
+"""Image-only Qwen-VL processor.
 
 transformers requires a video processor, which needs torchvision (not a dependency: without it
 `transformers.BaseVideoProcessor` is a dummy that can't be instantiated). Only still images are
-ever passed here, so these subclasses accept `video_processor=None`.
+ever passed here, so this subclass accepts `video_processor=None`.
 """
 
 from typing import Any
 
-from transformers import ProcessorMixin, Qwen2VLProcessor, Qwen3VLProcessor
+from transformers import ProcessorMixin, Qwen2VLProcessor
 
 
 class _AcceptNoVideo(ProcessorMixin):
@@ -19,7 +19,3 @@ class _AcceptNoVideo(ProcessorMixin):
 
 class ImageOnlyQwen2VLProcessor(_AcceptNoVideo, Qwen2VLProcessor):
     """Editor text encoder (Qwen2.5-VL) processor."""
-
-
-class ImageOnlyQwen3VLProcessor(_AcceptNoVideo, Qwen3VLProcessor):
-    """Prompt-engineer VLM (Qwen3-VL) processor."""

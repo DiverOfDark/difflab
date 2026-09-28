@@ -21,36 +21,13 @@ INPUT_IMAGE = PROJECT_DIR / "samples/input.jpg"
 INPUT_VIDEO = PROJECT_DIR / "samples/input.mp4"
 
 
-# CUDA graphs, measured and turned down. Decoding looks launch-bound - 54 ms a token
-# against the ~16 ms the 15.1 GiB of weights each token reads would take at the card's bandwidth - and
-# CUDA graphs do capture that: a bench on the 3090 measured 18.4 tok/s eager against
-# 22.5 tok/s compiled, with zero graph breaks. bitsandbytes traces cleanly; that was never the problem.
-#
-# The problem is the static cache a captured graph requires. It is read whole on every step
-# (`StaticLayer.get_mask_sizes` returns `max_cache_len`, not the length in use) and costs a measured
-# 2.56 us per allocated token - dead linear from 2k to 24k, and about 25 GB/s effective, so it is the
-# GQA expansion and a materialized mask dropping SDPA onto its math backend rather than bandwidth:
-#
-#     dynamic, eager   18.4 tok/s      static 8k, compiled   16.6 tok/s
-#     static 2k, eager 17.9 tok/s      static 24k, compiled   9.8 tok/s
-#     static 2k, compiled 22.5 tok/s
-#
-# The two cross at about 5,900 allocated tokens and the director lives above that: one card call is a
-# thousand image tokens plus its system prompt plus 2,048 new, and a plan repair carries an 8k answer
-# back into its question. Sized for the worst call, compiling halves the director's speed; sized at
-# 4,096 it gains 9%; the 2,048 that gains 22% does not hold a single real call. So: off. Turn it on
-# only alongside a cache that reads its used length, or a stage that is known to stay short.
-VLM_COMPILE = False
-VLM_CACHE_TOKENS = 4096  # only read when VLM_COMPILE is on; the largest size that still gains
-
-# An EXL3 checkpoint runs on ExLlamaV3 (`models/exl3vl.py`) instead. A plan repair carries an 8k answer
-# back into its question, and 16 full-attention layers of 4 KV heads at 256 cost 64 KiB a token, so a
-# 16k cache is 1 GiB on the card.
+# The VLM (`models/exl3vl.py`). A plan repair carries an 8k answer back into its question, and 16
+# full-attention layers of 4 KV heads at 256 cost 64 KiB a token, so a 16k cache is 1 GiB on the card.
 VLM_CONTEXT_TOKENS = 16384
 # MTP proposals per step. Measured on the 3090 (tok/s, sampled at 0.7/0.8/20; a card call with one
 # photo, a survey with two, 2k tokens of prose): none 36 / 36 / 36, 2 drafts 71 / 75 / 67, 3 drafts
-# 80 / 88 / 74, 4 drafts 85 / 97 / 70, 5 drafts 96 / 114 / 68. Minified JSON is what the director
-# asks for and keeps accepting further out; prose stops gaining at 3. Each draft is another
+# 80 / 88 / 74, 4 drafts 85 / 97 / 70, 5 drafts 96 / 114 / 68. JSON, which is all the director
+# asks for, keeps accepting further out; prose stops gaining at 3. Each draft is another
 # linear-attention state held per slot, ~150 MB.
 VLM_DRAFT_TOKENS = 4
 VLM_RECURRENT_CACHE_BYTES = 1024**3  # host RAM, for reusing a prefix's linear-attention state

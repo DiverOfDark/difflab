@@ -7,14 +7,11 @@ requires-python = ">=3.13"
 dependencies = [
     "accelerate>=1.15.0",
     "av>=18.1.0",
-    "bitsandbytes>=0.50.2",
-    "causal-conv1d>=1.7.0",
     "comfy-kitchen>=0.2.34",
     "diffusers>=0.40.0",
     "einops>=0.8.2",
     "exllamav3>=1.5.3",
     "fastapi>=0.141.1",
-    "flash-linear-attention>=0.5.2",
     "numpy>=2.5.3",
     "pillow>=12.3.0",
     "python-multipart>=0.0.32",
@@ -29,7 +26,7 @@ dependencies = [
 ]
 
 # Everything is pixi's: Python and its packages from PyPI, and from conda-forge what is not a Python
-# package - the toolchain that compiles comfy-kitchen and causal-conv1d, and node for the page.
+# package - the toolchain that compiles comfy-kitchen and exllamav3, and node for the page.
 [tool.pixi.workspace]
 channels = ["conda-forge"]
 # glibc 2.31 because pixi assumes 2.28 unless told, and llguidance ships only 2.31 wheels: below it,
@@ -54,7 +51,7 @@ gxx_linux-64 = "14.*"
 cmake = "*"
 ninja = "*"
 nodejs = ">=22.12"  # vite 8
-# causal-conv1d builds inside the environment, so its build requirements have to be in it.
+# exllamav3 builds inside the environment, so its build requirements have to be in it.
 setuptools = "*"
 wheel = "*"
 packaging = "*"
@@ -72,16 +69,15 @@ comfy-kitchen = { git = "https://github.com/Comfy-Org/comfy-kitchen", tag = "v0.
 # version - and because H3 and Qwen-Image-Edit ride on this and their key mappings were established
 # against one tree. 2.1 is wanted back some day, and it was pinned against this tree too.
 diffusers = { git = "https://github.com/huggingface/diffusers", rev = "8b3c707ebd3ec4881f4190cf42931da07eaf3b65" }
-# Its wheels stop at torch 2.13, so it compiles against this environment's 2.14.
 exllamav3 = { git = "https://github.com/turboderp-org/exllamav3", tag = "v1.5.3" }
 
-# causal-conv1d has no wheel for this torch, so it builds from source against the environment's own torch.
+# exllamav3's wheels stop at torch 2.13, so it builds from source against the environment's own 2.14.
 [tool.pixi.pypi-options]
-no-build-isolation = ["causal-conv1d", "exllamav3"]
+no-build-isolation = ["exllamav3"]
 
 [tool.pixi.activation]
 scripts = ["toolchain.sh"]
-env = { CAUSAL_CONV1D_FORCE_BUILD = "TRUE", CMAKE_GENERATOR = "Ninja" }
+env = { CMAKE_GENERATOR = "Ninja" }
 
 [tool.pixi.environments]
 default = { features = ["dev"], solve-group = "default" }

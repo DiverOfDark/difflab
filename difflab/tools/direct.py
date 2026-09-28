@@ -6,7 +6,7 @@ a tool of its own: survey (one call, all photos), ground (one per photo), cut_cr
 (one per photo), opening (the frame, then one call per pair of hands and one per mouth), tidy (one
 per member), arrange (one call), plan_shots (one call for the whole chapter), write_shot (one per
 shot), and the compiler and its checks (code; what the gate finds goes back to the model that wrote
-it). One model does every step: Qwen3.8 27B (NF4, `models/qwenvl.py`), shown the photos
+it). One model does every step: Qwen3.8 27B (EXL3, `models/exl3vl.py`), shown the photos
 for the first four stages and only text after them, so every visual fact a later stage uses is one
 it wrote down.
 
@@ -32,8 +32,9 @@ from PIL import Image
 from difflab.core import context, models, ui
 from difflab.core.cache import cache
 from difflab.core.keys import key
-from difflab.core.settings import VlmSettings, model_identity
+from difflab.core.settings import VlmSettings
 from difflab.core.types import Frame
+from difflab.models.exl3vl import Exl3VL
 from difflab.models.minimax_h3 import caption
 from difflab.screenplay import compiler as compose
 from difflab.screenplay import config as h3
@@ -121,7 +122,7 @@ def ask(
     seed: int = DIRECTOR.seed,
 ) -> str:
     """One answer, uncached and unchecked: `ask_json` is the one that gates and keeps."""
-    vlm: ask_vlm.Vlm = models.registry.acquire(ask_vlm.spec(MODEL.get()))
+    vlm: Exl3VL = models.registry.acquire(ask_vlm.spec(MODEL.get()))
     return vlm.ask(
         images,
         question,
@@ -209,7 +210,7 @@ def ask_json(
     seen = [hashlib.sha256(image.tobytes()).hexdigest() + f"{image.size}" for image in images]
     take = TAKE.get()
     asked_key = key(
-        "director", 1, model=model_identity(MODEL.get()), system=system, question=question, images=seen, tokens=tokens,
+        "director", 1, model=MODEL.get(), system=system, question=question, images=seen, tokens=tokens,
         temperature=temperature, **({"take": take} if take else {}),
     )  # fmt: skip
     kept, failed, marked = (cache.path(asked_key, suffix) for suffix in (".txt", ".failed", ".settled"))

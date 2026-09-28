@@ -2,7 +2,6 @@
 
 import logging
 import os
-import warnings
 
 # Block streaming allocates and frees the same large shapes every step; without expandable segments
 # the allocator strands gigabytes between them (3 GB reserved-but-unused at the 0.8 MP OOM).
@@ -17,4 +16,3 @@ from huggingface_hub.utils.tqdm import disable_progress_bars
 
 disable_progress_bars()
 logging.getLogger("torch.utils._pytree").setLevel(logging.ERROR)  # torchao's enum registration chatter
-warnings.filterwarnings("ignore", message=r"inner dimension .* not aligned", module="bitsandbytes")
