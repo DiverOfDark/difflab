@@ -35,7 +35,6 @@ from difflab.core.keys import key
 from difflab.core.settings import VlmSettings, model_identity
 from difflab.core.types import Frame
 from difflab.models.minimax_h3 import caption
-from difflab.models.qwenvl import QwenVL
 from difflab.screenplay import compiler as compose
 from difflab.screenplay import config as h3
 from difflab.screenplay import words
@@ -122,7 +121,7 @@ def ask(
     seed: int = DIRECTOR.seed,
 ) -> str:
     """One answer, uncached and unchecked: `ask_json` is the one that gates and keeps."""
-    vlm: QwenVL = models.registry.acquire(ask_vlm.spec(MODEL.get()))
+    vlm: ask_vlm.Vlm = models.registry.acquire(ask_vlm.spec(MODEL.get()))
     return vlm.ask(
         images,
         question,

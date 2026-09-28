@@ -43,6 +43,18 @@ INPUT_VIDEO = PROJECT_DIR / "samples/input.mp4"
 VLM_COMPILE = False
 VLM_CACHE_TOKENS = 4096  # only read when VLM_COMPILE is on; the largest size that still gains
 
+# An EXL3 checkpoint runs on ExLlamaV3 (`models/exl3vl.py`) instead. A plan repair carries an 8k answer
+# back into its question, and 16 full-attention layers of 4 KV heads at 256 cost 64 KiB a token, so a
+# 16k cache is 1 GiB on the card.
+VLM_CONTEXT_TOKENS = 16384
+# MTP proposals per step. Measured on the 3090 (tok/s, sampled at 0.7/0.8/20; a card call with one
+# photo, a survey with two, 2k tokens of prose): none 36 / 36 / 36, 2 drafts 71 / 75 / 67, 3 drafts
+# 80 / 88 / 74, 4 drafts 85 / 97 / 70, 5 drafts 96 / 114 / 68. Minified JSON is what the director
+# asks for and keeps accepting further out; prose stops gaining at 3. Each draft is another
+# linear-attention state held per slot, ~150 MB.
+VLM_DRAFT_TOKENS = 4
+VLM_RECURRENT_CACHE_BYTES = 1024**3  # host RAM, for reusing a prefix's linear-attention state
+
 # ComfyUI Image Saver Simple.
 OUT_DIR = OUTPUT_DIR / "images"
 VIDEO_DIR = OUTPUT_DIR / "videos"

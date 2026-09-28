@@ -112,7 +112,7 @@ pixi run serve   # install everything into .pixi/, build the page, serve it at h
 ```
 
 Needs [pixi](https://pixi.sh), an NVIDIA driver, a CUDA GPU (developed on an RTX 3090, 24 GB) and ~32 GB of free RAM. Nothing else is taken from the system.
-`causal-conv1d` has no wheel for this torch, so it builds from source, and `comfy-kitchen` is built for this machine's card only (see [Speed](#speed)). Both need a CUDA 13.3 toolkit and a gcc nvcc 13.3 accepts (14; it rejects 16), so pixi installs both from conda-forge, with Python, node for the page and every PyPI package, into `.pixi/`, locked together in `pixi.lock` (the `[tool.pixi.*]` tables in `pyproject.toml`). `toolchain.sh` points the builds at the toolchain and reads the card's architecture from `nvidia-smi`. For PyCharm, the interpreter is `.pixi/envs/default/bin/python`. The `causal-conv1d` build takes about 8 minutes; pixi prints nothing while it runs unless asked, with `RUST_LOG=uv_build_frontend=debug pixi install`. It and `flash-linear-attention` are the fast kernels for Qwen3.8's linear-attention layers.
+`causal-conv1d` and `exllamav3` have no wheel for this torch, so they build from source, and `comfy-kitchen` is built for this machine's card only (see [Speed](#speed)). They need a CUDA 13.3 toolkit and a gcc nvcc 13.3 accepts (14; it rejects 16), so pixi installs both from conda-forge, with Python, node for the page and every PyPI package, into `.pixi/`, locked together in `pixi.lock` (the `[tool.pixi.*]` tables in `pyproject.toml`). `toolchain.sh` points the builds at the toolchain and reads the card's architecture from `nvidia-smi`. For PyCharm, the interpreter is `.pixi/envs/default/bin/python`. The `causal-conv1d` build takes about 8 minutes; pixi prints nothing while it runs unless asked, with `RUST_LOG=uv_build_frontend=debug pixi install`. It and `flash-linear-attention` are the fast kernels for Qwen3.8's linear-attention layers.
 
 ## Development
 
@@ -130,10 +130,11 @@ mypy treats the large, dynamically typed ML libraries (diffusers, transformers, 
 |---|---|
 | Editor: transformer + text encoder + VAE (single-file AIO, v18 = the original graph's file) | HF `Phr00t/Qwen-Image-Edit-Rapid-AIO` @ `691024f4`, `v18/Qwen-Rapid-AIO-SFW-v18.safetensors` |
 | Newer AIO revision (set `edit_image`'s model setting to it) | the same repo, `v23/Qwen-Rapid-AIO-SFW-v23.safetensors` |
-| The VLM, which sees and writes every prompt (NF4 of HF `Qwen/Qwen3.8-27B` @ `1d4bf0f2`) | HF `Qwen/Qwen3.8-27B` @ `1d4bf0f2` |
+| The VLM, which sees and writes every prompt (4.0 bpw EXL3 of HF `Qwen/Qwen3.8-27B`, MTP head kept) | HF `turboderp/Qwen3.8-27B-exl3` @ `113cf7ab` |
+| The same VLM for transformers (NF4 of the original @ `1d4bf0f2`) | HF `Qwen/Qwen3.8-27B` @ `1d4bf0f2` |
 | Editor tokenizer (not stored in the AIO) | HF `Qwen/Qwen-Image` @ `75e0b4be`, `tokenizer/*` |
 
-Every model is named by where it comes from, pinned to a commit (`core/hub.py`): a Hugging Face repo (`Checkpoint`, `HubFile`), or, for the one file not on the Hub, a GitHub raw URL checked by sha256 (`UrlFile`, cached under `~/.cache/difflab`). The first fetch of everything is about 96 GB. The VLM's default is its 4-bit copy rather than the 52 GB original; an unquantized checkpoint is quantized to 4-bit as it loads, reading all of it every time. Each of them downloads into the HF cache the first time its model loads, then leaves a marker file there, so later loads never touch the network. That fetch is the only download difflab does: every `from_pretrained` call gets a local path plus `local_files_only=True`.
+Every model is named by where it comes from, pinned to a commit (`core/hub.py`): a Hugging Face repo (`Checkpoint`, `HubFile`), or, for the one file not on the Hub, a GitHub raw URL checked by sha256 (`UrlFile`, cached under `~/.cache/difflab`). The first fetch of everything is about 96 GB. The VLM's default is a 4-bit EXL3, which ExLlamaV3 runs with its MTP head drafting ahead, at 70-100 tok/s on a 3090 against NF4's 17.7 on transformers. Any other checkpoint goes to transformers: a 4-bit one as published, an unquantized one quantized to NF4 as it loads, reading all of it every time. Each of them downloads into the HF cache the first time its model loads, then leaves a marker file there, so later loads never touch the network. That fetch is the only download difflab does: every `from_pretrained` call gets a local path plus `local_files_only=True`.
 
 ## Usage
 
