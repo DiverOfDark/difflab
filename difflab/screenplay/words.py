@@ -285,9 +285,10 @@ WRITE_BEAT = "{number}. [{phase}, about {length:.1f} seconds, acting: {who}] {ac
 
 # Asked of every JSON answer the director wants. A third of every token it decodes used to be
 # indentation and code fences - 9,887 tokens of the measured run's answers against 6,535 minified -
-# and at a flat ~17.7 tokens per second that whitespace is minutes, not bytes.
+# and at a flat ~17.7 tokens per second that whitespace is minutes, not bytes. The space after ":" and ","
+# is not asked away: `exl3vl.ANY_JSON` requires it, since masking it out emptied every answer.
 COMPACT = """\
-Write the JSON minified: one line, no code fence, no line breaks, no indentation, and no space after any ":" or ",". Only the shape is compact; leave every word of every value exactly as you would otherwise have written it."""
+Write the JSON on one line: no code fence, no line breaks, no indentation. Only the shape is compact; leave every word of every value exactly as you would otherwise have written it."""
 
 REPAIR = """\
 {question}

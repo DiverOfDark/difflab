@@ -202,7 +202,7 @@ def ask_json(
     rules may have changed since it was written. A question that stopped the director outright is
     counted there instead, and the next run samples it afresh with new seeds.
 
-    Every question asks for minified JSON (`words.COMPACT`), here rather than in each of the eleven
+    Every question asks for one-line JSON (`words.COMPACT`), here rather than in each of the eleven
     prompts so a repair carries it too: the director is decode-bound, and the whitespace of a
     pretty-printed answer is a third of what it waits for.
     """
