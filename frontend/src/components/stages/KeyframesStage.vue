@@ -81,12 +81,17 @@ const bring = (s: ShotInfo, photos: string[]) => {
   if (last) props.act(`keyframe ${s.id}`, () => patchShot(s.id, { keyframe: last })).then(() => (own.value = []))
 }
 
+const landable = (s: ShotInfo) => s.position > 0 && s.keyframe.source !== 'chained'
+const landed = (s: ShotInfo) => landable(s) && s.keyframe.landed
+const setLanded = (s: ShotInfo, on: boolean) => props.act(`keyframe ${s.id}`, () => patchShot(s.id, { landed: on }))
+
 const impact = computed(() => {
   const s = shot.value
   if (!s) return ''
   const next = props.shots[index.value + 1]
   const tail = next?.chained ? ' and the chained shot after it' : ''
-  return `Changing this frame makes the clip behind it stale${tail}; nothing else moves. A frame costs seconds, the clip ~minutes.`
+  const before = landed(s) ? `, the clip before it, which ends on it,` : ''
+  return `Changing this frame makes the clip behind it stale${before}${tail}; nothing else moves. A frame costs seconds, the clip ~minutes.`
 })
 </script>
 
@@ -161,6 +166,26 @@ const impact = computed(() => {
                 {{ busy === 'opening' ? 'saving…' : 'Save' }}
               </button>
             </div>
+          </div>
+        </section>
+
+        <section v-if="landable(shot)" class="card">
+          <div class="head slim">
+            <h5>The join</h5>
+            <span class="mono dim small">{{ shotId(chapter, shots[index - 1]) }} → {{ shotId(chapter, shot) }}</span>
+          </div>
+          <div class="body">
+            <label class="land">
+              <input type="checkbox" :checked="shot.keyframe.landed" :disabled="!!busy" @change="setLanded(shot, ($event.target as HTMLInputElement).checked)" />
+              the shot before ends on this frame
+            </label>
+            <span class="note">
+              {{
+                shot.keyframe.landed
+                  ? 'Its last frame is pinned to this picture and its motion carries into this shot, so the join does not jump. A hard landing can freeze or morph its last half second.'
+                  : 'The shot before ends wherever the model takes it, and this one opens fresh on this frame: a cut.'
+              }}
+            </span>
           </div>
         </section>
 
@@ -244,7 +269,7 @@ const impact = computed(() => {
         <div class="text">
           <span class="action">{{ s.action || '—' }}</span>
           <span v-if="s.keyframe.review" class="review">{{ s.keyframe.review }}</span>
-          <span class="meta mono"><span>{{ s.keyframe.source }}{{ s.keyframe.pinned ? ' · pinned' : '' }}</span><span>{{ s.seconds }} s</span></span>
+          <span class="meta mono"><span>{{ s.keyframe.source }}{{ landed(s) ? ' · landed' : '' }}{{ s.keyframe.pinned ? ' · pinned' : '' }}</span><span>{{ s.seconds }} s</span></span>
         </div>
         <div class="acts mono">
           <button class="link" @click="emit('go', 'prompts', s.id)">prompt</button>
@@ -387,6 +412,18 @@ const impact = computed(() => {
   padding: var(--space-1) var(--space-2);
   border-bottom: 1px solid var(--border);
   font-size: var(--text-xs);
+}
+
+.land {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+}
+
+.land input {
+  width: auto;
+  accent-color: var(--accent);
 }
 
 .check .dot {

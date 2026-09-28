@@ -73,6 +73,12 @@ the same crops in every shot, the only one of the three that fights drift. `tool
 first two right after a shot decodes, `tools/assemble` joins the chunks at the handoff frames, and
 `screenplay/planner` writes the jobs in that order.
 
+A shot whose keyframe is composed or given is not a chain link but a picture of its own, and by
+default the shot before **lands** on it: H3's `last_image` keyframe pins that shot's final frame to
+the picture, its caption says so as `<Picture 2>`, and its tail crosses into the new shot as a
+handoff's would. The planner composes every keyframe before any clip for it. Turned off on the
+Keyframes screen, the join is a cut: the shot before ends where the model takes it, no tail crosses.
+
 ### The director
 
 The VLM is never asked to write a whole caption: a local model gets the prose right and the
@@ -95,7 +101,8 @@ the version it was given rather than starting over, and the user adopts one as t
 ### What is in a chunk key
 
 A chunk is cached by its opening frame's pixels, its caption's exact text, its `VideoSettings`, its
-reference pixels, its motion tail and any source excerpt. Shot k+1 opens on shot k's handoff frame,
+reference pixels, its motion tail, any source excerpt and the frame it lands on, which is keyed only
+when there is one. Shot k+1 opens on shot k's handoff frame,
 so one changed byte in a caption re-renders that shot and every shot chained after it. Nothing
 checks that automatically; when editing `chunk_key`, watch the cache.
 

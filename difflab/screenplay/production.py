@@ -75,15 +75,18 @@ def add_shot(
 
 def update_shot(shot_id: int, **changes: Any) -> store.Shot:
     """`prompt`, `keyframe` (a path, `composed`, `opening` for the planner's cut of the first photo, or
-    "" to chain again), `seed`, the plan's `closing`, `cast`, `camera_move`, `camera_toward` and
-    `dialogue`, and the shot's own columns. A plan edit pins the shot and recompiles its prompt at once,
-    and a closing the next shot's too, since it opens on it."""
+    "" to chain again), `landed` (whether the shot before ends on that keyframe), `seed`, the plan's
+    `closing`, `cast`, `camera_move`, `camera_toward` and `dialogue`, and the shot's own columns. A plan
+    edit pins the shot and recompiles its prompt at once, and a closing the next shot's too, since it
+    opens on it; a keyframe change recompiles the shot and the one before, since whether that one lands
+    on it and whether a tail crosses are both in their words."""
     with store.connect() as connection, store.transaction(connection):
         shot = store.shot(connection, shot_id)
         if shot is None:
             raise LookupError(f"no shot {shot_id}")
         chapter = store.chapter(connection, shot.chapter_id)
         assert chapter is not None
+        joined = False
         if "prompt" in changes:
             store.set_prompt(connection, shot_id, str(changes.pop("prompt")).strip())
         if "keyframe" in changes:
@@ -99,6 +102,10 @@ def update_shot(shot_id: int, **changes: Any) -> store.Shot:
                 store.provide_keyframe(connection, shot_id, store.relative(_under_output(str(given))))
             else:
                 store.chain_keyframe(connection, shot_id)
+            joined = True
+        if "landed" in changes:
+            store.land_keyframe(connection, shot_id, bool(changes.pop("landed")))
+            joined = True
         if "seed" in changes:
             store.set_clip_seed(connection, shot_id, int(changes.pop("seed")))
         planned = {name: changes.pop(name) for name in PLAN_FIELDS if name in changes}
@@ -106,6 +113,13 @@ def update_shot(shot_id: int, **changes: Any) -> store.Shot:
             _edit_plan(connection, chapter, shot, **planned)
         if changes:
             store.update_shot(connection, shot_id, **changes)
+        if joined:
+            production = store.production(connection, chapter.production_id)
+            assert production is not None
+            shots = store.shots_of(connection, chapter.id)
+            for one in shots[max(0, shot.position - 1) : shot.position + 1]:
+                if one.plan.get("beats"):
+                    recompile(connection, production, chapter, one.id)
         store.touch_production(connection, chapter.production_id)
         updated = store.shot(connection, shot_id)
         assert updated is not None
@@ -196,9 +210,9 @@ def _edit_plan(connection: Any, chapter: store.Chapter, shot: store.Shot, **plan
     move, toward = plan.get("camera_move", ""), plan.get("camera_toward", "")
     dialogue = " / ".join(f"{line['who']}: {line['line']}" for line in plan.get("dialogue", []))
     store.update_shot(connection, shot.id, plan=plan, camera=f"{move} → {toward}", dialogue=dialogue, pinned=True)
-    _recompile(connection, production, chapter, shot.id)
+    recompile(connection, production, chapter, shot.id)
     if "closing" in planned and following is not None:
-        _recompile(connection, production, chapter, following.id)  # it opens on this closing
+        recompile(connection, production, chapter, following.id)  # it opens on this closing
 
 
 def _said(plan: dict[str, Any]) -> str:
@@ -208,7 +222,7 @@ def _said(plan: dict[str, Any]) -> str:
     return " ".join([*parts, *(str(plan.get(k, "")) for k in ("closing", "summary", "sounds"))])
 
 
-def _recompile(connection: Any, production: store.Production, chapter: store.Chapter, shot_id: int) -> None:
+def recompile(connection: Any, production: store.Production, chapter: store.Chapter, shot_id: int) -> None:
     """The prompt compiled again from the shot's plan as it now stands - code, no model - as
     `compile_shot` would; a plan it cannot compile leaves the prompt stale for a re-plan to write."""
     shots = store.shots_of(connection, chapter.id)
@@ -242,7 +256,7 @@ def recompile_casting(connection: Any, member_id: int) -> None:
     for chapter in store.chapters_of(connection, production.id):
         for shot in store.shots_of(connection, chapter.id):
             if member.slug in shot.plan.get("cast", []):
-                _recompile(connection, production, chapter, shot.id)
+                recompile(connection, production, chapter, shot.id)
 
 
 def _stale(connection: Any, shots: Iterable[store.Shot], prompts: bool = True) -> dict[str, int]:
@@ -692,6 +706,7 @@ def _shot(connection: Any, shot: store.Shot) -> dict[str, Any]:
             "source": keyframe.source,
             "provided": keyframe.provided,
             "note": keyframe.note,
+            "landed": keyframe.landed,
         },
         "prompt": {
             **_made(prompt),

@@ -390,6 +390,9 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         )
         """,
     ),
+    # A composed or provided keyframe the shot before it ends on, as its last frame, so the join does
+    # not jump. Off, that shot ends where the model takes it and this one opens fresh, without its tail.
+    ("ALTER TABLE keyframes ADD COLUMN landed INTEGER NOT NULL DEFAULT 1",),
 )
 
 SCHEMA_VERSION = len(MIGRATIONS)

@@ -28,7 +28,7 @@ def _with_prose(take: compose.Take, index: int, data: Any) -> compose.Take:
 
 
 def _directive(take: compose.Take, index: int) -> str:
-    return "[video continuation" if take.tail and index else "[keyframe completion + reference generation]"
+    return "[video continuation" if compose.carried(take, index) else "[keyframe completion + reference generation]"
 
 
 def chunk_problems(take: compose.Take, index: int) -> list[caption.Problem]:

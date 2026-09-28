@@ -193,7 +193,7 @@ export interface ShotInfo {
   chained: boolean
   /** Its plan was edited by hand: a re-plan leaves it as written. */
   pinned: boolean
-  keyframe: MadeThing & { source: string; provided: string | null; note: string }
+  keyframe: MadeThing & { source: string; provided: string | null; note: string; landed: boolean }
   prompt: MadeThing & { text: string; written_by: string; pictures: string[]; checks: { severity: string; code: string; message: string }[] }
   clip: MadeThing & { seed: number; handoff: number | null }
   plan: Record<string, unknown>

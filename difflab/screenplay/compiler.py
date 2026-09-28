@@ -6,9 +6,10 @@ directive, which picture anchors a frame and which only donates a face, the sent
 identical in every chunk - so the models write only prose and facts and this module writes the rest.
 
 Labels come from the chunk's own reference list in difflab's presentation order: `<Picture 1>` is the
-opening (or handoff) frame, the crops follow from `<Picture 2>`, then `<Audio 1>` and `<Video 1>` for
-the tail (see `text_encoder.encode`). Chunk k+1 opens on chunk k's closing arrangement word for word,
-because a contradiction at a join renders as the union of both arrangements.
+opening (or handoff) frame, `<Picture 2>` the frame it ends on when it lands on the next shot's
+keyframe, the crops follow, then `<Audio 1>` and `<Video 1>` for the tail (see `text_encoder.encode`).
+Chunk k+1 opens on chunk k's closing arrangement word for word, because a contradiction at a join
+renders as the union of both arrangements.
 
 No model is loaded here, so a plan recompiles instantly.
 """
@@ -153,13 +154,15 @@ class Take:
     budget: int  # reference rows a chunk may hold (config.DIRECTOR_REFERENCE_ROWS)
     chunks: tuple[Chunk, ...] = ()
     story: tuple[tuple[str, int], ...] = ()  # the IDEA's actions: (its words, the clip from 1)
+    tails: tuple[bool, ...] = ()  # per chunk, whether it carries the one before's tail; empty is `tail` after the first
+    lands: tuple[bool, ...] = ()  # per chunk, whether it ends on the next one's keyframe
 
 
 @dataclass(frozen=True)
 class Presentation:
     """The labels difflab's text encoder announces for one chunk, in order."""
 
-    pictures: tuple[str, ...]  # a ref key per <Picture i>; index 0 is the opening or handoff frame
+    pictures: tuple[str, ...]  # a ref key per <Picture i>: the keyframes (KEYFRAMES) first, then crops
     tail: bool
 
     def picture(self, key: str) -> str:
@@ -188,6 +191,34 @@ def join(items: list[str] | tuple[str, ...]) -> str:
 
 def opening(take: Take, index: int) -> str:
     return take.opening if index == 0 else take.chunks[index - 1].closing
+
+
+KEYFRAMES = ("opening", "handoff", "closing")  # a Presentation's keys that are frames of the clip, not crops
+
+
+def carried(take: Take, index: int) -> bool:
+    return take.tails[index] if take.tails else take.tail and index > 0
+
+
+def lands(take: Take, index: int) -> bool:
+    return bool(take.lands) and take.lands[index]
+
+
+def joins(
+    keyframes: list[store.Keyframe], shots: list[store.Shot], tail: bool
+) -> tuple[tuple[bool, ...], tuple[bool, ...]]:
+    """`(tails, lands)` for a chapter. A shot ends on the next one's composed or provided keyframe
+    unless that keyframe is set not to be landed on; the motion then runs into it, so the tail crosses
+    too. Into a keyframe nothing landed on it would drag the old motion into a picture it never reaches."""
+    landed = tuple(
+        index + 1 < len(keyframes) and keyframes[index + 1].source != store.CHAINED and keyframes[index + 1].landed
+        for index in range(len(keyframes))
+    )
+    tails = tuple(
+        index > 0 and tail and shot.chained and (keyframes[index].source == store.CHAINED or landed[index - 1])
+        for index, shot in enumerate(shots)
+    )
+    return tails, landed
 
 
 def references(take: Take, index: int) -> tuple[str, ...]:
@@ -320,7 +351,7 @@ def _upper(text: str) -> str:
 def definition(take: Take, member: str, subject: str, shown: Presentation) -> str:
     """One `<Subject N>` line: the member, the pictures it comes from and what each gives, its traits."""
     card = take.cards[member]
-    held = [key for key in shown.pictures[1:] if member in take.refs[key].shows]
+    held = [key for key in shown.pictures if key not in KEYFRAMES and member in take.refs[key].shows]
 
     def cite(keys: list[str]) -> str:
         return join([shown.picture(key) for key in keys])
@@ -366,8 +397,9 @@ def compile_chunk(take: Take, index: int) -> Compiled:
     say = words.SENTENCES
     chunk = take.chunks[index]
     refs = references(take, index)
-    tail = take.tail and index > 0
-    shown = Presentation(("opening" if index == 0 else "handoff", *refs), tail)
+    tail = carried(take, index)
+    landing = lands(take, index)
+    shown = Presentation(("opening" if index == 0 else "handoff", *(("closing",) if landing else ()), *refs), tail)
     cast = [m for m in take.members if m in chunk.cast]
     subject = {m: f"<Subject {i + 1}>" for i, m in enumerate(cast)}
     speakers = {line.who: f"S{i + 1}" for i, line in enumerate(chunk.dialogue)}
@@ -380,6 +412,8 @@ def compile_chunk(take: Take, index: int) -> Compiled:
     definitions.append(
         say["first_frame"].format(arrangement=_lower(_sentence(labels_only(opening(take, index), False))))
     )
+    if landing:
+        definitions.append(say["last_frame"].format(arrangement=_lower(_sentence(labels_only(chunk.closing, False)))))
     if tail:
         definitions += [say["video"], say["audio"]]
 
@@ -390,6 +424,7 @@ def compile_chunk(take: Take, index: int) -> Compiled:
         for part in (
             directive,
             say["lead_continued" if tail else "lead"].format(room=subject[env]),
+            say["lead_lands"] if landing else "",
             labels_only(chunk.summary.strip(), False),
             say["audio_role"] if tail else "",
         )
@@ -398,7 +433,8 @@ def compile_chunk(take: Take, index: int) -> Compiled:
 
     # retention_analysis
     retention = [say["retain"].format(subject=subject[m], traits=take.cards[m].retain()) for m in cast]
-    retention += [say["retain_frame"]] + ([say["retain_video"], say["retain_audio"]] if tail else [])
+    retention += [say["retain_frame"]] + ([say["retain_last"]] if landing else [])
+    retention += [say["retain_video"], say["retain_audio"]] if tail else []
 
     # detailed_description
     expand = Expander(take, subject, speakers)
@@ -468,7 +504,7 @@ def compile_chunk(take: Take, index: int) -> Compiled:
     body.append(say["mouths"].format(actions=mouths) if mouths else say["mouths_none"])
     settle = chunk.beats[-1]
     body.append(
-        say["settle"].format(
+        say["settle_lands" if landing else "settle"].format(
             timing=words.TIMING["settle"].format(seconds=spoken(settle.end - settle.start)),
             arrangement=_lower(_sentence(expand(chunk.closing))),
             shot="two-shot" if len(living) == 2 else "shot",
@@ -610,6 +646,8 @@ def take_of(connection: sqlite3.Connection, production: store.Production, chapte
     references = store.refs_of_production(connection, production.id)
     manifest = production.manifest
     shots = store.shots_of(connection, chapter.id)
+    tail = bool(manifest.get("tail", True))
+    tails, landed = joins([store.keyframe_of(connection, shot.id) for shot in shots], shots, tail)
     return Take(
         title=production.title,
         members=tuple(member.slug for member in members),
@@ -618,8 +656,10 @@ def take_of(connection: sqlite3.Connection, production: store.Production, chapte
         opening=str(manifest.get("opening_arrangement", "")),
         ambience=str(manifest.get("ambience", "")),
         seconds=float(manifest.get("seconds", 0.0)),
-        tail=bool(manifest.get("tail", True)),
+        tail=tail,
         budget=int(manifest.get("budget", config.DIRECTOR_REFERENCE_ROWS)),
         chunks=tuple(chunk_of(shot.plan) for shot in shots),
         story=tuple((str(event), int(clip)) for event, clip in manifest.get("story", [])),
+        tails=tails,
+        lands=landed,
     )

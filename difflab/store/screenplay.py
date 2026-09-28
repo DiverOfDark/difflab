@@ -246,6 +246,11 @@ def compose_keyframe(connection: sqlite3.Connection, shot_id: int, seed: int | N
     return keyframe_of(connection, shot_id)
 
 
+def land_keyframe(connection: sqlite3.Connection, shot_id: int, landed: bool) -> Keyframe:
+    connection.execute("UPDATE keyframes SET landed = ? WHERE shot_id = ?", (int(landed), shot_id))
+    return keyframe_of(connection, shot_id)
+
+
 def set_prompt(connection: sqlite3.Connection, shot_id: int, text: str, written_by: str = "hand") -> Prompt:
     """Text written by hand is pinned: no tool rewrites it."""
     pinned = written_by == "hand"

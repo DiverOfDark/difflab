@@ -107,6 +107,14 @@ def condition(
     return latent, canvas
 
 
+def condition_last(
+    frame: Frame, settings: VideoSettings, geometry: pipeline.Geometry
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """The frame a clip ends on, cover-cropped onto the canvas as diffusers crops `last_image`: a
+    stretched one would be a different arrangement from the picture the next shot opens on."""
+    return condition(frame.crop_to_aspect(geometry.width / geometry.height), settings, geometry)
+
+
 def encode_references(
     frames: Sequence[Frame],
     settings: VideoSettings | None = None,
@@ -196,12 +204,15 @@ def encode(
     canvas: torch.Tensor | None,
     references: Sequence[text_encoder.PresentedReference] = (),
     settings: VideoSettings | None = None,
+    last_canvas: torch.Tensor | None = None,
 ) -> text_encoder.Conditioning:
-    """References are presented after the first frame as `<Picture 2>`, `<Video 1>` and so on, so a
-    prompt can name them."""
+    """References are presented after the keyframes as `<Picture 2>` (or 3, after a last frame),
+    `<Video 1>` and so on, so a prompt can name them."""
     model = models.registry.acquire(text_encoder_spec(settings or VideoSettings()))
     with ui.step("Encoding prompt") as detail:
-        encoded = text_encoder.encode(model, text_encoder.load_tokenizer(), prompt, canvas, references=references)
+        encoded = text_encoder.encode(
+            model, text_encoder.load_tokenizer(), prompt, canvas, references=references, last_image=last_canvas
+        )
         detail(f"{encoded.embeds.shape[1]} rows")
     return encoded
 
@@ -214,6 +225,7 @@ def sample(
     prompt: str = "",
     references: Sequence[pipeline.Reference] = (),
     on_step: Callable[[int, torch.Tensor, torch.Tensor], None] | None = None,
+    last_latent: torch.Tensor | None = None,
 ) -> Latents:
     """The denoising loop. ~78% of a render.
 
@@ -251,6 +263,7 @@ def sample(
                 schedule=settings.schedule,
                 references=references,
                 on_step=step_done if previewer is not None or on_step is not None else None,
+                last_frame_latent=last_latent,
             )
         finally:
             for hook in hooks:
@@ -319,13 +332,14 @@ def render(
     reference_audio: Sequence[torch.Tensor] = (),
     canvas_from: Frame | None = None,
     finish: Finish = decoded,
+    closing: Frame | None = None,
 ) -> Clip:
     """All the stages, for when you just want the clip.
 
     `frame` alone is `fl2va`: the clip opens on it. `references` (stills) and `reference_clips` (motion)
     are `ref2va`: they steer the clip while leaving it free to open anywhere, and the canvas comes from
     `canvas_from` or the first reference. Any combination is legal, and a first frame plus a reference
-    is what a chained long video wants.
+    is what a chained long video wants. `closing` is the frame the clip ends on.
 
     `upscale.upscaled(2.0)` as `finish` enlarges the latents first, so the extra pixels are drawn by
     H3's own VAE rather than guessed at afterwards.
@@ -346,9 +360,13 @@ def render(
             references, settings, geometry, reference_clips, reference_audio
         )
 
+    last_latent, last_canvas = condition_last(closing, settings, geometry) if closing is not None else (None, None)
+
     ui.stage("encoding")
-    conditioning = encode(prompt, canvas, presented, settings)
-    latents = sample(conditioning, first_latent, geometry, settings, prompt, encoded_references)
+    conditioning = encode(prompt, canvas, presented, settings, last_canvas)
+    latents = sample(
+        conditioning, first_latent, geometry, settings, prompt, encoded_references, last_latent=last_latent
+    )
     return finish(latents)
 
 
@@ -360,10 +378,12 @@ def chunk_key(
     tail: Clip | None = None,
     clips: Sequence[Clip] = (),
     clip_scale: float = 1.0,
+    closing: Frame | None = None,
 ) -> Key:
     """What identifies a chunk: its opening, prompt, settings, references, tail and any reference
     clips - pictures by their pixels, never by their paths, so renaming a photo renders nothing again.
-    A part added here moves every chunk, which is what the version is for."""
+    A part added here moves every chunk, which is what the version is for; `closing` is keyed only
+    when given, so it moved none."""
     return key(
         "render_chunk",
         1,
@@ -374,6 +394,7 @@ def chunk_key(
         tail=tail.frames if tail is not None else None,
         clips=[clip.frames for clip in clips],
         clip_scale=clip_scale,
+        **({"closing": closing.pixels} if closing is not None else {}),
     )
 
 
@@ -388,6 +409,7 @@ def cached_latents(
     clips: Sequence[Clip] = (),
     clip_scale: float = 1.0,
     canvas_from: Frame | None = None,
+    closing: Frame | None = None,
 ) -> Latents:
     """One chunk's latents, read back when this exact opening, prompt and history already ran - so a
     workflow that samples the same thing twice pays once, and a run that dies resumes where it stopped.
@@ -396,7 +418,7 @@ def cached_latents(
     deterministic - and they are small: a 15 s chunk is about 17 MB against gigabytes once it has been
     decoded at 2 MP.
     """
-    made = chunk_key(opening, prompt, settings, references, tail, clips, clip_scale)
+    made = chunk_key(opening, prompt, settings, references, tail, clips, clip_scale, closing)
     # Without a keyframe there is nothing to plan the canvas from, so the shape comes from a frame
     # that is only ever measured: ref2va fixes no opening, and that is the whole point of using it.
     shape = opening or canvas_from
@@ -411,8 +433,9 @@ def cached_latents(
         # in every chunk, which is what `Reel.check` refuses to let drift.
         held = [*clips, *([tail] if tail else [])]
         encoded, presented = encode_references(references, settings, geometry, held, clip_scale=clip_scale)
-        conditioning = encode(prompt, canvas, presented, settings)
-        sampled = sample(conditioning, first_latent, geometry, settings, prompt, encoded, on_step)
+        last_latent, last_canvas = condition_last(closing, settings, geometry) if closing is not None else (None, None)
+        conditioning = encode(prompt, canvas, presented, settings, last_canvas)
+        sampled = sample(conditioning, first_latent, geometry, settings, prompt, encoded, on_step, last_latent)
         return {"video": sampled.video, "audio": sampled.audio}
 
     store = cache if cache is not None else default_cache

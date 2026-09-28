@@ -1,5 +1,5 @@
 """A run from a chapter: one `render_shot` job per shot, each opening on the handoff of the one
-before, and one `assemble` at the end.
+before or on its own keyframe - which the shot before then ends on - and one `assemble` at the end.
 
 Every shot gets a job whether or not its clip is made: a chained shot's key is not known until the
 shot before it has rendered, so it is the worker that finds the artifact already there and skips.
@@ -16,8 +16,11 @@ from typing import Any
 
 from difflab import store
 from difflab.core.settings import Continuity, JudgeSettings
+from difflab.screenplay import compiler, settings, words
 from difflab.screenplay import config as knobs
-from difflab.screenplay import settings
+from difflab.screenplay import production as productions
+
+_LAST_FRAME = words.SENTENCES["last_frame"].split(":")[0]
 
 
 def check(connection: Any, shots: list[store.Shot], production: store.Production | None = None) -> list[str]:
@@ -25,6 +28,16 @@ def check(connection: Any, shots: list[store.Shot], production: store.Production
     problems = []
     if not shots:
         problems.append("the chapter has no shots")
+    _, lands = compiler.joins([store.keyframe_of(connection, shot.id) for shot in shots], shots, True)
+    for shot, landing in zip(shots, lands, strict=True):
+        text = store.prompt_of(connection, shot.id).text
+        if text.strip() and landing != (_LAST_FRAME in text):
+            problems.append(
+                f"shot {shot.position + 1} {'ends' if landing else 'no longer ends'} on shot {shot.position + 2}'s "
+                f"keyframe, and its prompt, written by hand, {'does not say' if landing else 'still says'} so: "
+                f"{'add' if landing else 'drop'} “{_LAST_FRAME}: …”, or turn the landing "
+                f"{'off' if landing else 'on'}"
+            )
     for shot in shots:
         keyframe = store.keyframe_of(connection, shot.id)
         prompt = store.prompt_of(connection, shot.id)
@@ -58,6 +71,14 @@ def render_chapter(chapter_id: int, asked_by: str = "person") -> str:
         production = store.production(connection, chapter.production_id)
         assert production is not None
         shots = store.shots_of(connection, chapter_id)
+        # A prompt compiled before its shot's join changed - a landing added, one turned off - says the
+        # wrong pictures; the compiler's own are brought up to date here, a hand-written one is `check`'s.
+        _, lands = compiler.joins([store.keyframe_of(connection, shot.id) for shot in shots], shots, True)
+        for shot, landing in zip(shots, lands, strict=True):
+            prompt = store.prompt_of(connection, shot.id)
+            if shot.plan.get("beats") and not prompt.pinned and landing != (_LAST_FRAME in prompt.text):
+                productions.recompile(connection, production, chapter, shot.id)
+        shots = store.shots_of(connection, chapter_id)
         problems = check(connection, shots, production)
         if problems:
             raise ValueError(problems[0])
@@ -88,16 +109,15 @@ def render_chapter(chapter_id: int, asked_by: str = "person") -> str:
         verdicts, _ = settings.effective("judge", production.id)
         assert isinstance(verdicts, JudgeSettings)
         editor, _ = settings.effective("edit_image", production.id)
-        previous: int | None = None
-        clip_jobs: list[int] = []
-        for shot in shots:
-            keyframe = store.keyframe_of(connection, shot.id)
-            prompt = store.prompt_of(connection, shot.id)
-            clip = store.clip_of(connection, shot.id)
+        keyframes = [store.keyframe_of(connection, shot.id) for shot in shots]
+        tails, lands = compiler.joins(keyframes, shots, carries)
+        # Every composed keyframe before any clip: the shot before one ends on it, and the editor is
+        # loaded once rather than between clips.
+        openings: list[Any] = []
+        for shot, keyframe in zip(shots, keyframes, strict=True):
             cast = [str(m) for m in shot.plan.get("cast", [])]
             judged = verdicts.gate > 0 and bool(cast or shot.action)
             arrangement = _arrangement(production, shots, shot.position)
-            opening: Any
             if keyframe.source == store.COMPOSED:
                 seed = keyframe.seed if keyframe.seed is not None else int(video["seed"]) + 1000 + shot.position
                 composed = store.add_job(
@@ -122,16 +142,26 @@ def render_chapter(chapter_id: int, asked_by: str = "person") -> str:
                         label=f"shot {shot.position + 1}: judge the keyframe", settings=verdicts.data(),
                         for_kind="keyframe", for_id=keyframe.id,
                     )  # fmt: skip
-                opening = _output(composed.id, "frame")
+                openings.append(_output(composed.id, "frame"))
                 if shot.position == 0:
-                    anchor = opening  # the chapter's colour is the composed frame's; unused when the anchor is off
+                    anchor = openings[0]  # the chapter's colour is the composed frame's; unused when the anchor is off
             elif keyframe.source == store.PROVIDED:
-                opening = keyframe.provided
+                openings.append(keyframe.provided)
             else:
-                opening = _output(previous, "frame")
-            tail = _output(previous, "tail") if shot.chained and previous is not None and carries else None
+                openings.append(None)
+
+        previous: int | None = None
+        clip_jobs: list[int] = []
+        for shot, keyframe in zip(shots, keyframes, strict=True):
+            prompt = store.prompt_of(connection, shot.id)
+            clip = store.clip_of(connection, shot.id)
+            cast = [str(m) for m in shot.plan.get("cast", [])]
+            judged = verdicts.gate > 0 and bool(cast or shot.action)
+            opening = openings[shot.position] if openings[shot.position] is not None else _output(previous, "frame")
+            tail = _output(previous, "tail") if tails[shot.position] else None
             inputs = {
                 "opening": opening,
+                "closing": openings[shot.position + 1] if lands[shot.position] else None,
                 "prompt": prompt.text,
                 "tail": tail,
                 "anchor": anchor,

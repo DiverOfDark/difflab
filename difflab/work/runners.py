@@ -116,6 +116,7 @@ def run_render_shot(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
     continuity = Continuity(**settings["continuity"])
     prompt = str(inputs["prompt"])
     opening = _frame(inputs["opening"])
+    closing = _frame(inputs["closing"]) if inputs.get("closing") else None
     tail = handoff.load_tail(_path(inputs["tail"])) if inputs.get("tail") else None
     strength = continuity.color_anchor
     anchor = _frame(inputs["anchor"]) if inputs.get("anchor") and strength else None
@@ -123,8 +124,10 @@ def run_render_shot(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
     position = int(inputs.get("position", 0))
     clips, scale = _excerpt(inputs.get("source"), opening, video)
 
-    chunk = render_chunk.chunk_key(opening, prompt, video, references, tail, clips, scale)
-    at = handoff.handoff_key(chunk, continuity.handoff_window, continuity.tail_frames, anchor, strength)
+    chunk = render_chunk.chunk_key(opening, prompt, video, references, tail, clips, scale, closing)
+    # A shot that ends on the next one's keyframe is cut on its very last frame, the one pinned to it.
+    window = 1 if closing is not None else continuity.handoff_window
+    at = handoff.handoff_key(chunk, window, continuity.tail_frames, anchor, strength)
     latents_file, mp4, soundtrack = cache.path(chunk, ".pt"), cache.path(chunk, ".mp4"), cache.path(chunk, ".audio.pt")
     frame_file, tail_file, _ = handoff.files(at)
     outputs: dict[str, Any] = {
@@ -156,13 +159,21 @@ def run_render_shot(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
     previews.target(position, f"shot{position + 1}")
     try:
         latents = render_chunk.cached_latents(
-            opening, prompt, video, references, tail, clips=clips, clip_scale=scale, canvas_from=opening
+            opening,
+            prompt,
+            video,
+            references,
+            tail,
+            clips=clips,
+            clip_scale=scale,
+            canvas_from=opening,
+            closing=closing,
         )
     finally:
         previews.target(None, "clip")
     clip = render_chunk.decode(latents)
     with ui.step("Handoff") as detail:
-        made = handoff.handoff(clip, continuity.handoff_window, continuity.tail_frames, anchor, strength)
+        made = handoff.handoff(clip, window, continuity.tail_frames, anchor, strength)
         handoff.save(made, at)
         carried = f" · {len(made.tail)} frames of tail" if made.tail is not None else ""
         detail(f"frame {made.cut + 1} of {len(clip)}{carried}")

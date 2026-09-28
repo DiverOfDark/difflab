@@ -347,6 +347,7 @@ class Keyframe(Made):
     note: str
     seed: int | None
     provided: str | None
+    landed: bool  # the shot before ends on it; meaningless for a chained one
 
     @classmethod
     def of(cls, row: sqlite3.Row) -> Keyframe:
@@ -357,6 +358,7 @@ class Keyframe(Made):
             note=_text(row["note"]),
             seed=_whole(row["seed"]),
             provided=None if row["provided"] is None else _text(row["provided"]),
+            landed=bool(row["landed"]),
         )
 
 

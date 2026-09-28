@@ -1,6 +1,6 @@
 """Canvas and frame arithmetic, the packed sequence, and the few-step sampling loop.
 
-The sequence the DiT sees is `[text | first-frame rows | reference rows | audio | video]`. Each row carries a modality
+The sequence the DiT sees is `[text | keyframe rows | reference rows | audio | video]`. Each row carries a modality
 tag (video 0, text 1, audio 2), a `(t, h, w)` rotary coordinate and a timestep index, which is how one
 forward pass serves rows at different noise levels: the first-frame rows are pinned just short of
 clean at t=0.999 and are never denoised, the video and audio rows follow their own schedules (flow
@@ -182,6 +182,18 @@ def unpack_audio(rows: torch.Tensor, geometry: Geometry, channels: int = 32) -> 
     return stereo.permute(2, 0, 1).unsqueeze(0)
 
 
+def last_anchor_time(origin: float, latent_frames: int) -> float:
+    """Where a last keyframe sits: the final pixel frame's time, three rescales past the last latent's own.
+
+    Summed pairwise by numpy, as diffusers' `build_packed_sequence` does for `"last"`; a sequential sum
+    differs in the last ulp from 16 latent frames on.
+    """
+    spans = np.ones(latent_frames, dtype=np.float64) * _ROPE_FRAME_RESCALE
+    for offset in range(len(_ROPE_FRAMES_PER_LATENT)):
+        spans[offset :: len(_ROPE_FRAMES_PER_LATENT)] *= _ROPE_FRAMES_PER_LATENT[offset]
+    return float(origin + spans.sum() - _ROPE_FRAME_RESCALE)
+
+
 def video_time_spans(latent_frames: int) -> list[float]:
     """The rotary time each latent frame of a clip occupies: `5/3 * (1, 4, 4, 4, 4)`, cycling."""
     return [
@@ -271,6 +283,7 @@ def build_reference_layout(
     geometry: Geometry,
     references: Sequence[Reference],
     first_frame: bool = False,
+    last_frame: bool = False,
     patch_size: tuple[int, int, int] = PATCH_SIZE,
     audio_channels: int = AUDIO_CHANNELS,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, int, int]:
@@ -288,6 +301,9 @@ def build_reference_layout(
     subject stops drifting. The keyframe shares the target streams' origin, which is why it is placed
     only once every reference span has been counted.
 
+    `last_frame` pins the clip's end the same way, at the target's final frame; its rows follow the
+    first frame's, the order diffusers packs `fl2va`'s two keyframes in.
+
     Reference and keyframe rows alike are video rows that are never denoised, so the returned
     condition-row count covers both and the sampler leaves them alone.
     """
@@ -296,7 +312,7 @@ def build_reference_layout(
     num_text_tokens = int(text_token_tags.shape[0])
     reference_rows = [reference.rows(patch_h, patch_w) for reference in references]
     reference_audio_rows = [reference.audio_rows(audio_channels) for reference in references]
-    keyframe_rows = rows_per_frame if first_frame else 0
+    keyframe_rows = rows_per_frame * (int(first_frame) + int(last_frame))
     num_condition_rows = keyframe_rows + sum(reference_rows)
     num_audio_condition_rows = sum(reference_audio_rows)
     num_audio_rows = geometry.audio_latents * audio_channels
@@ -322,11 +338,12 @@ def build_reference_layout(
     origin = float(num_text_tokens) + sum(reference.span for reference in references)
     row = num_text_tokens
 
-    if first_frame:
-        # The keyframe is the clip's own frame 0, so it sits at the target origin, not before it.
-        position_ids[row : row + keyframe_rows, 0] = origin
-        position_ids[row : row + keyframe_rows, 1:] = target_grid
-        row += keyframe_rows
+    # A keyframe is one of the clip's own frames, so it sits on the target's clock, not before it.
+    for anchored, time in ((first_frame, origin), (last_frame, last_anchor_time(origin, geometry.latent_frames))):
+        if anchored:
+            position_ids[row : row + rows_per_frame, 0] = time
+            position_ids[row : row + rows_per_frame, 1:] = target_grid
+            row += rows_per_frame
 
     # Reference rows in sequence order. A block's soundtrack packs immediately before its own video
     # rows and shares their origin, so the two halves of one reference describe the same moment.
@@ -525,12 +542,14 @@ def sample(
     device: str | torch.device = app_config.DEVICE,
     on_step: Callable[[int, torch.Tensor, torch.Tensor], None] | None = None,
     references: Sequence[Reference] = (),
+    last_frame_latent: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Run the loop and return `(video latents [1, 24, T, h, w], audio latents [1, 32, 2, T40])`.
 
     With a `first_frame_latent` alone this is `fl2va`: the clip opens on that exact frame. With
     `references` it is `ref2va`, where the references sit in the model's past and steer the clip
-    without fixing its opening. Both together is legal and is what a chained long video wants.
+    without fixing its opening. Both together is legal and is what a chained long video wants. A
+    `last_frame_latent` pins the clip's end to that frame as well, as diffusers' `last_image` does.
 
     `on_step(index, video, audio)` is called after every step with the model's current guess at the
     finished clip - the denoised estimate, in the same shapes as the result. That is what a preview
@@ -538,23 +557,28 @@ def sample(
     """
     target = torch.device(device)
     generator = torch.Generator("cpu").manual_seed(seed)
-    if first_frame_latent is None and not references:
-        raise ValueError("give a first_frame_latent (fl2va), references (ref2va), or both")
+    if first_frame_latent is None and last_frame_latent is None and not references:
+        raise ValueError("give a first or last frame latent (fl2va), references (ref2va), or both")
 
+    keyframes = [latent for latent in (first_frame_latent, last_frame_latent) if latent is not None]
     if references:
         layout = build_reference_layout(
-            conditioning.tags, geometry, references, first_frame=first_frame_latent is not None
+            conditioning.tags,
+            geometry,
+            references,
+            first_frame=first_frame_latent is not None,
+            last_frame=last_frame_latent is not None,
         )
-        # Order matters: the layout puts the keyframe first, then each reference's audio before its
+        # Order matters: the layout puts the keyframes first, then each reference's audio before its
         # own video rows, so the latents have to be gathered in exactly that order.
-        condition_latents = [reference.latent for reference in references if reference.latent is not None]
-        if first_frame_latent is not None:
-            condition_latents.insert(0, first_frame_latent)
+        condition_latents = [
+            *keyframes,
+            *(reference.latent for reference in references if reference.latent is not None),
+        ]
         audio_condition_latents = [
             reference.audio_latent for reference in references if reference.audio_latent is not None
         ]
     else:
-        assert first_frame_latent is not None  # guaranteed above
         layout = MiniMaxH3PrepareLayoutStep.build_packed_sequence(
             text_token_tags=conditioning.tags,
             num_latent_frames=geometry.latent_frames,
@@ -565,9 +589,13 @@ def sample(
             audio_channels=AUDIO_CHANNELS,
             audio_tag=AUDIO_TAG,
             video_tag=VIDEO_TAG,
-            keyframe_anchors=("first",),
+            keyframe_anchors=tuple(
+                anchor
+                for anchor, latent in (("first", first_frame_latent), ("last", last_frame_latent))
+                if latent is not None
+            ),
         )
-        condition_latents = [first_frame_latent]
+        condition_latents = keyframes
         audio_condition_latents = []
     (
         position_ids,

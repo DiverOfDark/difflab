@@ -282,18 +282,19 @@ def encode(
     image: torch.Tensor | None,
     device: str | torch.device = app_config.DEVICE,
     references: Sequence[PresentedReference] = (),
+    last_image: torch.Tensor | None = None,
 ) -> Conditioning:
     """Build the H3 presentation and run it.
 
-        fl2va:  `"<Picture 1>: " <vision> <prompt>`
+        fl2va:  `"<Picture 1>: " <vision> <prompt>`, and `"<Picture 2>: " <vision>` before the prompt for a last frame
         ref2va: per reference, in order, then the prompt:
                   image -> `"<Picture i>: " <vision>`
                   video -> `"<Video k>: "` then `"<T.T seconds>" <vision of 2 frames>` per pair
 
     No chat template and no special tokens — each text segment is tokenized on its own, exactly as
     ComfyUI does, and the vision embeddings are spliced between the vision start/end tokens. The
-    ordinals are 1-based and counted per kind, with `image` taking `<Picture 1>` when it is given, so a
-    prompt can address the references as `<Picture 2>`, `<Video 1>` and so on.
+    ordinals are 1-based and counted per kind, with `image` taking `<Picture 1>` and `last_image` the
+    next, so a prompt can address the references after them as `<Picture 3>`, `<Video 1>` and so on.
     """
     device = torch.device(device)
     inner = cast(nn.Module, model.model)
@@ -335,7 +336,7 @@ def encode(
         spans.append(VisionSpan(start=start, size=vision_embeds.shape[0], grid=grid))
 
     with torch.inference_mode():
-        items = [PresentedReference.image(image)] if image is not None else []
+        items = [PresentedReference.image(frame) for frame in (image, last_image) if frame is not None]
         items.extend(references)
         ordinals = {"image": 0, "video": 0, "audio": 0}
         for item in items:
