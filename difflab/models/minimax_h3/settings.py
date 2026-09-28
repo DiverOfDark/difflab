@@ -9,6 +9,8 @@ from difflab.core.settings import Settings, VlmSettings, setting
 
 # How a ref2va reference is sized, as `pipeline.reference_size` reads it.
 ReferenceSize = Literal["match", "max"]
+Sampler = Literal["er_sde", "euler"]
+Schedule = Literal["beta57", "shifted"]
 
 # ComfyUI's repackaging of MiniMax-H3: the pruned int8 DiTs, their turbo LoRAs and the two VAEs.
 COMFY = "Comfy-Org/MiniMax-H3@7e75982b97cd5a41d2dcfa1904ee88d0686d6fd1"
@@ -65,7 +67,7 @@ class VideoSettings(Settings):
     )
     seed: int = setting(336100010134930, "seed", "a take hangs off this; chunk k uses seed + k", advanced=True)
     steps: int = setting(
-        8, "steps", "8 reproduces the graph, 4 the spec; the LoRA was trained for 4", low=1, high=50, advanced=True
+        5, "steps", "4-6 with er_sde and beta57; the LoRA was trained for 4", low=1, high=50, advanced=True
     )
     reference_size: ReferenceSize = setting(
         "match",
@@ -74,7 +76,20 @@ class VideoSettings(Settings):
         choices=("match", "max"),
         advanced=True,
     )
-    # MiniMaxH3SigmaShift + BasicScheduler beta + euler, no CFG.
+    sampler: Sampler = setting(
+        "er_sde",
+        "sampler",
+        "er_sde adds fresh noise each step; euler is the reference's",
+        choices=("er_sde", "euler"),
+        advanced=True,
+    )
+    schedule: Schedule = setting(
+        "beta57",
+        "schedule",
+        "beta57 spends more steps at both ends; shifted is the reference's linear grid",
+        choices=("beta57", "shifted"),
+        advanced=True,
+    )
     shift_video: float = setting(12.0, "video shift", "flow shift of the video schedule", low=0, advanced=True)
     shift_audio: float = setting(3.0, "audio shift", "flow shift of the audio schedule", low=0, advanced=True)
     previews: bool = setting(True, "previews", "each step's guess at the clip, on the page", keyed=False)

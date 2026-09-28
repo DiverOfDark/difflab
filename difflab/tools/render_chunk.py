@@ -247,6 +247,8 @@ def sample(
                 seed=settings.seed,
                 shift_video=settings.shift_video,
                 shift_audio=settings.shift_audio,
+                sampler=settings.sampler,
+                schedule=settings.schedule,
                 references=references,
                 on_step=step_done if previewer is not None or on_step is not None else None,
             )

@@ -14,6 +14,8 @@ import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
+import numpy as np
+import scipy.stats
 import torch
 from diffusers import MiniMaxH3Scheduler, MiniMaxH3Transformer3DModel
 from diffusers.modular_pipelines.minimax_h3.before_denoise import (
@@ -409,8 +411,16 @@ def build_row_timesteps(
     return unique, inverse
 
 
+def beta_sigmas(steps: int, shift: float, alpha: float = 0.5, beta: float = 0.7) -> torch.Tensor:
+    """ComfyUI's `beta_scheduler` over `ModelSamplingDiscreteFlow`'s 1000-entry table; RES4LYF's beta57 is
+    alpha 0.5, beta 0.7."""
+    ts = np.rint(scipy.stats.beta.ppf(1 - np.linspace(0, 1, steps, endpoint=False), alpha, beta) * 999)
+    t = torch.unique_consecutive(torch.from_numpy(ts)).double().add(1).div(1000)
+    return torch.cat([shift * t / (1 + (shift - 1) * t), t.new_zeros(1)]).float()
+
+
 def make_schedulers(
-    steps: int, shift_video: float, shift_audio: float
+    steps: int, shift_video: float, shift_audio: float, schedule: str = "beta57"
 ) -> tuple[MiniMaxH3Scheduler, MiniMaxH3Scheduler]:
     """Two rectified-flow schedules over the same grid, one per modality.
 
@@ -419,9 +429,62 @@ def make_schedulers(
     """
     video = MiniMaxH3Scheduler(shift=shift_video)
     audio = MiniMaxH3Scheduler(shift=shift_audio)
-    video.set_timesteps(steps + 1)
-    audio.set_timesteps(steps + 1)
+    if schedule == "beta57":
+        video.set_timesteps(sigmas=beta_sigmas(steps, shift_video))
+        audio.set_timesteps(sigmas=beta_sigmas(steps, shift_audio))
+    else:
+        video.set_timesteps(steps + 1)
+        audio.set_timesteps(steps + 1)
     return video, audio
+
+
+class ErSde:
+    """ComfyUI's `sample_er_sde` (VP ER-SDE-Solver-3, arXiv 2309.06169) on a rectified-flow schedule."""
+
+    INTEGRATION_POINTS = 200
+
+    def __init__(self, sigmas: torch.Tensor, generator: torch.Generator, max_stage: int = 3):
+        # ComfyUI's offset_first_sigma_for_snr: sigma 1 has an infinite lambda.
+        self.sigmas = sigmas.double().cpu().clamp(max=1 - 1e-4)
+        self.sigmas[-1] = 0.0
+        self.lambdas = self.sigmas / (1 - self.sigmas)
+        self.generator = generator
+        self.max_stage = max_stage
+        self.old_denoised: torch.Tensor | None = None
+        self.old_denoised_d: torch.Tensor | None = None
+
+    @staticmethod
+    def noise_scaler(x: torch.Tensor) -> torch.Tensor:
+        return x * ((x**0.3).exp() + 10.0)
+
+    def step(self, index: int, x: torch.Tensor, denoised: torch.Tensor) -> torch.Tensor:
+        sigma_s, sigma_t = self.sigmas[index], self.sigmas[index + 1]
+        if sigma_t == 0:
+            return denoised
+        lambdas, scaler = self.lambdas, self.noise_scaler
+        lambda_s, lambda_t = lambdas[index], lambdas[index + 1]
+        alpha_s, alpha_t = 1 - sigma_s, 1 - sigma_t
+        r = scaler(lambda_t) / scaler(lambda_s)
+        x = float(alpha_t / alpha_s * r) * x + float(alpha_t * (1 - r)) * denoised
+
+        stage = min(self.max_stage, index + 1)
+        if stage >= 2:
+            dt = lambda_t - lambda_s
+            step = -dt / self.INTEGRATION_POINTS
+            positions = lambda_t + torch.arange(self.INTEGRATION_POINTS, dtype=torch.float64) * step
+            scaled = scaler(positions)
+            denoised_d = (denoised - self.old_denoised) / float(lambda_s - lambdas[index - 1])
+            x = x + float(alpha_t * (dt + (1 / scaled).sum() * step * scaler(lambda_t))) * denoised_d
+            if stage >= 3:
+                s_u = ((positions - lambda_s) / scaled).sum() * step
+                denoised_u = (denoised_d - self.old_denoised_d) / float((lambda_s - lambdas[index - 2]) / 2)
+                x = x + float(alpha_t * (dt**2 / 2 + s_u * scaler(lambda_t))) * denoised_u
+            self.old_denoised_d = denoised_d
+        self.old_denoised = denoised
+
+        spread = (lambda_t**2 - lambda_s**2 * r**2).clamp(min=0).sqrt()
+        noise = torch.randn(x.shape, generator=self.generator, dtype=torch.float32).to(x.device)
+        return x + float(alpha_t * spread) * noise
 
 
 def pack_audio(latents: torch.Tensor) -> torch.Tensor:
@@ -457,6 +520,8 @@ def sample(
     seed: int,
     shift_video: float,
     shift_audio: float,
+    sampler: str = "er_sde",
+    schedule: str = "beta57",
     device: str | torch.device = app_config.DEVICE,
     on_step: Callable[[int, torch.Tensor, torch.Tensor], None] | None = None,
     references: Sequence[Reference] = (),
@@ -533,7 +598,10 @@ def sample(
     audio_condition = [pack_audio(latent.float().cpu()) for latent in audio_condition_latents]
     audio_latents = torch.cat([*audio_condition, pack_audio(audio_noise)], dim=0).to(target)
 
-    video_scheduler, audio_scheduler = make_schedulers(steps, shift_video, shift_audio)
+    video_scheduler, audio_scheduler = make_schedulers(steps, shift_video, shift_audio, schedule)
+    if sampler == "er_sde":
+        video_sde = ErSde(video_scheduler.sigmas, generator)
+        audio_sde = ErSde(audio_scheduler.sigmas, generator)
     prompt_embeds = conditioning.embeds.to(target)
     layout_kwargs = {
         "token_tags": token_tags.to(target),
@@ -565,26 +633,32 @@ def sample(
                 return_dict=False,
                 **layout_kwargs,
             )
+            # The velocity points data-ward, so the clean estimate is x_t + (1 - t) * v (see the scheduler).
+            video_x0 = latents[condition_rows:] + (1 - float(timestep)) * noise_pred[0, condition_rows:].float()
+            audio_x0 = (
+                audio_latents[audio_condition_rows:]
+                + (1 - float(audio_timestep)) * audio_noise_pred[0, audio_condition_rows:].float()
+            )
             if on_step is not None:
-                # The velocity points data-ward, so the clean estimate is x_t + (1 - t) * v (see the scheduler).
-                video_x0 = latents[condition_rows:] + (1 - float(timestep)) * noise_pred[0, condition_rows:].float()
-                audio_x0 = (
-                    audio_latents[audio_condition_rows:]
-                    + (1 - float(audio_timestep)) * audio_noise_pred[0, audio_condition_rows:].float()
-                )
                 estimate = (
                     unpatchify(video_x0.float().cpu(), geometry),
                     unpack_audio(audio_x0.float().cpu(), geometry),
                 )
-            latents[condition_rows:] = video_scheduler.step(
-                noise_pred[0, condition_rows:].float(), timestep, latents[condition_rows:], return_dict=False
-            )[0]
-            audio_latents[audio_condition_rows:] = audio_scheduler.step(
-                audio_noise_pred[0, audio_condition_rows:].float(),
-                audio_timestep,
-                audio_latents[audio_condition_rows:],
-                return_dict=False,
-            )[0]
+            if sampler == "er_sde":
+                latents[condition_rows:] = video_sde.step(index, latents[condition_rows:].float(), video_x0)
+                audio_latents[audio_condition_rows:] = audio_sde.step(
+                    index, audio_latents[audio_condition_rows:].float(), audio_x0
+                )
+            else:
+                latents[condition_rows:] = video_scheduler.step(
+                    noise_pred[0, condition_rows:].float(), timestep, latents[condition_rows:], return_dict=False
+                )[0]
+                audio_latents[audio_condition_rows:] = audio_scheduler.step(
+                    audio_noise_pred[0, audio_condition_rows:].float(),
+                    audio_timestep,
+                    audio_latents[audio_condition_rows:],
+                    return_dict=False,
+                )[0]
         if on_step is not None:
             on_step(index, *estimate)
 
