@@ -150,6 +150,7 @@ class QwenVL:
         system: str | None = None,
         title: str = "Qwen3.8",
         echo: bool = True,
+        as_json: bool = False,  # unconstrained here: `Exl3VL` is the one that masks to JSON
     ) -> str:
         """Ask anything about one image, several, or none; the answer streams into a panel.
 

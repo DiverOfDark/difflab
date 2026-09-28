@@ -133,6 +133,7 @@ def ask(
         top_k=DIRECTOR.top_k,
         seed=seed,
         echo=False,  # JSON for the gate, not for reading: the tally line shows where we are
+        as_json=True,
     )
 
 

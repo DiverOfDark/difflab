@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import torch
-from exllamav3 import Cache, Config, Generator, Job, Model, Tokenizer
+from exllamav3 import Cache, Config, Generator, Job, LLGuidanceFilter, Model, Tokenizer
 from exllamav3.generator.sampler import ArgmaxSampler, ComboSampler
 from PIL import Image
 from transformers import AutoTokenizer
@@ -21,6 +21,15 @@ from difflab.core.hub import Checkpoint
 
 # The chat template writes this for every image; the vision model's alias brings its own start and end.
 IMAGE_SLOT = "<|vision_start|><|image_pad|><|vision_end|>"
+
+# Sampled free at 0.7, 3 to 6 answers in 20 ran on past their closing bracket with ", {" to the token
+# cap; masked to JSON, 0 in the same 20, since stopping is the only token left once the value closes.
+# The separators are the model's own: forced minified (no whitespace at all), every seed answered
+# `{"members":[]}`, the prefix `"members":[` being one it never writes and `]` its likeliest sequel.
+ANY_JSON = {
+    "type": ["object", "array"],
+    "x-guidance": {"whitespace_flexible": False, "item_separator": ", ", "key_separator": ": "},
+}
 
 
 class Exl3VL:
@@ -89,6 +98,7 @@ class Exl3VL:
         system: str | None = None,
         title: str = "Qwen3.8",
         echo: bool = True,
+        as_json: bool = False,
     ) -> str:
         """Several images are announced as "Picture 1: ", "Picture 2: " in order; temperature=0 is greedy."""
         parts = self.load()
@@ -117,6 +127,7 @@ class Exl3VL:
             sampler=sampler,
             seed=seed,
             embeddings=embeddings,
+            filters=[LLGuidanceFilter(tokenizer, eos_after_completed=True, json_schema=ANY_JSON)] if as_json else None,
         )
         generator = parts["generator"]
         generator.enqueue(job)
