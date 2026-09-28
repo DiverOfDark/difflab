@@ -8,6 +8,7 @@ import { useRouter } from 'vue-router'
 import type { Job } from '../api'
 import DeliverScreen from '../components/DeliverScreen.vue'
 import RenderScreen from '../components/RenderScreen.vue'
+import { madeNoFiles } from '../run'
 import { record, run, state, watch_ } from '../store'
 
 const props = defineProps<{ id: string }>()
@@ -15,6 +16,7 @@ const router = useRouter()
 const held = ref<'render' | 'deliver' | null>(null)
 
 const natural = computed(() => (run.value && run.value.status !== 'live' ? 'deliver' : 'render'))
+const finished = computed(() => (run.value && madeNoFiles(run.value) && record.value?.jobs.length ? 'results' : 'deliver'))
 const screen = computed(() => held.value ?? natural.value)
 
 watch(
@@ -49,7 +51,7 @@ function again(spec: Job) {
   <div class="switch">
     <button :class="{ on: screen === 'render' }" @click="held = 'render'">render</button>
     <button :class="{ on: screen === 'deliver' }" :disabled="!run || run.status === 'live'" @click="held = 'deliver'">
-      deliver
+      {{ finished }}
     </button>
     <span class="mono muted">{{ id }}</span>
   </div>

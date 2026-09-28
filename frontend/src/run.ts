@@ -385,6 +385,9 @@ export function refreshStatus(run: RunState): void {
   }
 }
 
+/** A run of VLM jobs writes words, not files: a player, chunks and a finish would all be empty. */
+export const madeNoFiles = (run: RunState) => !run.finalVideo && !run.artifacts.length && !run.items.length
+
 export function currentIndex(run: RunState): number {
   return run.items.findIndex((it) => it.state === 'running')
 }

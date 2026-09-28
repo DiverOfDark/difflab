@@ -5,7 +5,8 @@
  */
 import { computed, ref } from 'vue'
 import { runFile, type Job, type RunRecord } from '../api'
-import { duration, type Item, type RunState } from '../run'
+import { duration, madeNoFiles, type Item, type RunState } from '../run'
+import JobResults from './JobResults.vue'
 
 const props = defineProps<{ run: RunState; record: RunRecord | null }>()
 const emit = defineEmits<{ again: [spec: Job] }>()
@@ -34,6 +35,8 @@ const outputs = computed<Output[]>(() => {
       out.push({ path: made.path, name: made.name, desc: made.media, meta: '', media: made.media })
   return out
 })
+
+const textual = computed(() => madeNoFiles(props.run) && jobs.value.length > 0)
 
 const chosen = ref(0)
 const current = computed<Output | null>(() => outputs.value[chosen.value] ?? null)
@@ -92,6 +95,20 @@ const sampled = computed<{ seed: number; megapixels: number } | null>(() => {
   return j.video
 })
 
+const model = computed(() => {
+  const found = jobs.value.find((j) => typeof j.settings?.checkpoint === 'string')
+  const checkpoint = found ? String(found.settings.checkpoint) : ''
+  return checkpoint.split('@')[0].split('/').pop() ?? ''
+})
+
+const textFacts = computed<[string, string][]>(() => [
+  ['RUN', props.run.id],
+  ['JOBS', `${jobs.value.filter((j) => j.state === 'done' || j.state === 'skipped').length} / ${jobs.value.length}`],
+  ['ELAPSED', duration(props.run.elapsed)],
+  ['MODEL', model.value || '—'],
+  ['STATUS', props.run.status],
+])
+
 const facts = computed<[string, string][]>(() => [
   ['RUN', props.run.id],
   ['CHUNKS', String(props.run.items.length)],
@@ -103,7 +120,37 @@ const facts = computed<[string, string][]>(() => [
 </script>
 
 <template>
-  <main class="screen deliver">
+  <main v-if="textual" class="screen deliver">
+    <section class="stack">
+      <div class="top">
+        <div class="named">
+          <span class="label" :class="run.status === 'done' ? 'ready' : 'bad'"
+            >● {{ run.status }} · {{ jobs.length }} jobs · {{ duration(run.elapsed) }}</span
+          >
+          <h3>{{ run.title }}</h3>
+        </div>
+        <router-link v-if="record?.production != null" :to="`/productions/${record.production}`" class="button"
+          >Open production</router-link
+        >
+      </div>
+      <div v-if="run.error" class="band error">{{ run.error }}</div>
+      <JobResults :jobs="jobs" />
+    </section>
+
+    <aside class="stack">
+      <div class="card">
+        <div class="head"><h5>Run</h5></div>
+        <div class="knobs">
+          <div v-for="[k, v] in textFacts" :key="k" class="fact">
+            <span class="label">{{ k }}</span>
+            <span class="mono">{{ v }}</span>
+          </div>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <main v-else class="screen deliver">
     <section class="stack">
       <div class="top">
         <div class="named">
@@ -362,8 +409,18 @@ const facts = computed<[string, string][]>(() => [
   flex-wrap: wrap;
 }
 
-/* A real link, so the browser saves the file rather than the page fetching and revoking a blob. */
 a.button {
+  display: inline-block;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-btn);
+  padding: 7px 14px;
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  text-decoration: none;
+}
+
+/* A real link, so the browser saves the file rather than the page fetching and revoking a blob. */
+a.primary.button {
   display: inline-block;
   border: 1px solid var(--accent);
   border-radius: var(--radius-btn);
@@ -418,6 +475,11 @@ a.button {
   text-align: right;
   font-size: var(--text-xs);
   color: var(--muted);
+}
+
+.fact .mono {
+  text-align: right;
+  overflow-wrap: anywhere;
 }
 
 .fact {
