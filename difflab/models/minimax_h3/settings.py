@@ -129,8 +129,7 @@ class VideoPromptSettings(VlmSettings):
     )
     # The node leaves top_k unset, so Qwen's generation_config default of 20 applies.
     top_k: int = setting(20, "top k", "rarely worth moving", low=0, advanced=True)
-    # The graph's seed, -458385857301790, masked to the unsigned 32 bits transformers takes.
-    seed: int = setting(-458385857301790 & 0xFFFFFFFF, "seed", "its own, apart from the video seed", advanced=True)
+    seed: int = setting(-1, "seed", "-1 draws a new one each call; a fixed one repeats the words", advanced=True)
 
 
 @dataclass(frozen=True)

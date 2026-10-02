@@ -43,6 +43,8 @@ from difflab.tools import ask_vlm
 
 # The director runs on the defaults, not a profile: its answers are cached under this model's name.
 DIRECTOR = VlmSettings()
+# Fixed, not the settings' -1: an answer is kept by its question, and a repair or a re-run counts up from here.
+SEED = 42
 # The checkpoint a director or judge job asks with, as its settings chose it; the default outside one.
 MODEL: ContextVar[str] = ContextVar("director_model", default=DIRECTOR.checkpoint)
 
@@ -119,7 +121,7 @@ def ask(
     title: str,
     tokens: int,
     temperature: float = 0.0,
-    seed: int = DIRECTOR.seed,
+    seed: int = SEED,
     schema: dict[str, Any] | None = None,
 ) -> str:
     """One answer, uncached and unchecked: `ask_json` is the one that gates and keeps."""
@@ -221,7 +223,7 @@ def ask_json(
     failures = int(failed.read_text(encoding="utf-8")) if cache.enabled and failed.exists() else 0
     best: tuple[int, Any, list[caption.Problem], str] | None = None
     problems: list[caption.Problem] = []
-    asked = question
+    asked, before = question, None
     for attempt in range(repairs + 1):
         heading = title if not attempt else f"{title} · repair {attempt}"
         cached = not attempt and cache.enabled and kept.exists()
@@ -231,8 +233,13 @@ def ask_json(
         else:
             fresh = attempt or failures or take
             warmth = max(temperature, h3.DIRECTOR_REPAIR_TEMPERATURE) if fresh else temperature
-            seed = (DIRECTOR.seed + attempt + failures * (repairs + 1) + take * 1000) % 2**32  # the sampler's range
+            seed = (SEED + attempt + failures * (repairs + 1) + take * 1000) % 2**32  # the sampler's range
             raw = ask(system, asked, images, heading, tokens, warmth, seed, schema)
+            # Shown its answer and told to keep what the issues do not name, the model has copied all
+            # 2,185 characters of it back on a new seed; the same words fail the same way.
+            if raw.strip() == before:
+                ui.note(f"{title}: the repair gave back the same answer; keeping the best so far")
+                break
         try:
             data = parse_json(raw)
         except ValueError as error:
@@ -262,7 +269,7 @@ def ask_json(
             break
         issues = "\n".join(f"- {message}" for message in fixable)
         ui.note(f"{title}: asking again - " + "; ".join(fixable))
-        asked = words.REPAIR.format(question=question, answer=raw.strip(), issues=issues)
+        asked, before = words.REPAIR.format(question=question, answer=raw.strip(), issues=issues), raw.strip()
     left = best[2] if best else problems
     if best is not None and settle:
         context.current().settled.append(f"{title}: " + "; ".join(p.message for p in left))

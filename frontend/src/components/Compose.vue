@@ -241,7 +241,7 @@ const groups = computed(() => {
         },
         {
           key: 'seed',
-          hint: 'Its own, apart from the video seed: re-rolling the clip should not rewrite the words.',
+          hint: '-1 draws a new one each time. A fixed one keeps the words when the clip is re-rolled.',
           ...num(
             () => vlm.seed,
             (n) => (vlm.seed = n),

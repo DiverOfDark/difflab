@@ -13,6 +13,7 @@ owns it is what carries the version.
 from __future__ import annotations
 
 import dataclasses
+import random
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import Any, Literal, Self, get_args, get_origin, get_type_hints
@@ -150,11 +151,14 @@ class VlmSettings(Settings):
         0.8, "top p", "Qwen's own recommendation is 0.8 with temperature 0.7", low=0, high=1, advanced=True
     )
     top_k: int = setting(20, "top k", "rarely worth moving", low=0, advanced=True)
-    seed: int = setting(42, "seed", "its own, apart from the video seed", advanced=True)
+    seed: int = setting(-1, "seed", "-1 draws a new one each call; a fixed one repeats the words", advanced=True)
 
     def generation(self) -> dict[str, Any]:
-        """What `QwenVL.ask` takes: everything but the checkpoint, which chose the model."""
-        return {name: value for name, value in self.data().items() if name != "checkpoint"}
+        """What `Exl3VL.ask` takes: everything but the checkpoint, which chose the model."""
+        chosen = {name: value for name, value in self.data().items() if name != "checkpoint"}
+        if chosen["seed"] < 0:
+            chosen["seed"] = random.randrange(2**32)
+        return chosen
 
 
 @dataclass(frozen=True)
