@@ -21,6 +21,7 @@ from difflab.core.keys import key
 from difflab.core.settings import Continuity
 from difflab.models.minimax_h3.settings import VideoSettings
 from difflab.screenplay import captions, production, settings
+from difflab.screenplay import config as knobs
 
 WORDS_PER_CHAPTER = 600  # a text with no headings: about one chapter of five 12 s shots' worth of story
 HEADING = re.compile(r"^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$", re.M)
@@ -30,41 +31,46 @@ def from_idea(
     slug: str,
     idea: str,
     photos: list[str | Path],
-    shots: int,
+    take_seconds: float,
     title: str = "",
     aspect: float | None = None,
     video: VideoSettings | None = None,
     continuity: Continuity | None = None,
 ) -> store.Production:
-    """`photos[0]` is where the chapter opens; the rest show the cast. `shots` is how many the
-    director writes, each as long as the production's render settings say."""
+    """`photos[0]` is where the chapter opens; the rest show the cast. The director fills `take_seconds`
+    with as many shots as the idea needs, none longer than the production's render length."""
     if not idea.strip():
         raise ValueError("an idea, in your own words: what happens")
     kept = _photos(photos)
-    if shots < 1:
-        raise ValueError("at least one shot")
+    _long_enough(take_seconds)
     made = production.create(slug, title, video, continuity)
-    return _begun(made.id, "idea", production.lines(idea), {"photos": kept, "shots": shots, "aspect": aspect})
+    return _begun(
+        made.id, "idea", production.lines(idea), {"photos": kept, "take_seconds": take_seconds, "aspect": aspect}
+    )
+
+
+def _long_enough(take_seconds: float) -> None:
+    if take_seconds < knobs.DIRECTOR_CLIP_MIN:
+        raise ValueError(f"at least {knobs.DIRECTOR_CLIP_MIN:g} seconds: one shot")
 
 
 def from_text(
     slug: str,
     text: str,
     photos: list[str | Path],
-    shots: int,
+    take_seconds: float,
     title: str = "",
     aspect: float | None = None,
     video: VideoSettings | None = None,
     continuity: Continuity | None = None,
 ) -> store.Production:
-    """One chapter per heading, or per 600 words without any; each is planned from its own text with
-    `shots` shots. The photographs are the whole production's."""
+    """One chapter per heading, or per 600 words without any; each is planned from its own text into
+    `take_seconds` of shots. The photographs are the whole production's."""
     parts = chapters_of(text)
     if not parts:
         raise ValueError("a text to make chapters of")
     kept = _photos(photos)
-    if shots < 1:
-        raise ValueError("at least one shot per chapter")
+    _long_enough(take_seconds)
     made = production.create(slug, title, video, continuity)
     with store.connect() as connection, store.transaction(connection):
         first = store.chapters_of(connection, made.id)[0]
@@ -73,7 +79,7 @@ def from_text(
                 connection.execute("UPDATE chapters SET title = ?, story = ? WHERE id = ?", (heading, story, first.id))
             else:
                 store.add_chapter(connection, made.id, heading, story)
-    return _begun(made.id, "text", text.strip(), {"photos": kept, "shots": shots, "aspect": aspect})
+    return _begun(made.id, "text", text.strip(), {"photos": kept, "take_seconds": take_seconds, "aspect": aspect})
 
 
 def chapters_of(text: str) -> list[tuple[str, str]]:

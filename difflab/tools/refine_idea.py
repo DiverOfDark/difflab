@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -40,11 +41,20 @@ def _draft(data: Any) -> Draft:
     )
 
 
-def refine(idea: str, frames: list[Frame], count: int, seconds: float, previous: str = "", feedback: str = "") -> Draft:
-    """The first rewrite of `idea`, or `previous` revised by `feedback`. `direct.TAKE` is the round."""
+def refine(
+    idea: str, frames: list[Frame], total: float, longest: float, previous: str = "", feedback: str = ""
+) -> Draft:
+    """The first rewrite of `idea`, or `previous` revised by `feedback`. `direct.TAKE` is the round.
+
+    `total` is the most the film may last; a beat is one shot of DIRECTOR_CLIP_MIN to `longest` seconds."""
     beat_words = h3.IDEA_BEAT_WORDS[0]
     pictures = f"{len(frames)} photograph{'s' if len(frames) != 1 else ''}"
-    shape = {"count": count, "seconds": seconds, "beat_words": beat_words, "pictures": pictures}
+    shortest = h3.DIRECTOR_CLIP_MIN
+    fewest, fullest = 1, max(1, math.floor(total / shortest))
+    shape = {
+        "total": round(total), "shortest": shortest, "longest": round(longest, 1), "least": fewest, "most": fullest,
+        "beat_words": beat_words, "pictures": pictures,
+    }  # fmt: skip
     if previous:
         question = words.IDEA_REVISE_USER.format(
             idea=idea.strip(), previous=previous.strip(), feedback=feedback.strip() or "Another pass.", **shape
@@ -55,8 +65,9 @@ def refine(idea: str, frames: list[Frame], count: int, seconds: float, previous:
     def gate(data: Any) -> list[caption.Problem]:
         draft = _draft(data)
         out = []
-        if len(draft.beats) != count:
-            out.append(direct.problem(f'"beats" has exactly {count} entries, one per shot'))
+        if not fewest <= len(draft.beats) <= fullest:
+            out.append(direct.problem(f'"beats" has {len(draft.beats)} entries; {fewest} to {fullest} fit the LENGTH, '
+                                      "one per main event"))  # fmt: skip
         for number, beat in enumerate(draft.beats, 1):
             length = len(beat.split())
             if not length:

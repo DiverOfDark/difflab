@@ -16,6 +16,7 @@ from typing import Any
 
 from difflab import store
 from difflab.core.settings import Continuity, JudgeSettings
+from difflab.models.minimax_h3.settings import VideoSettings
 from difflab.screenplay import compiler, settings, words
 from difflab.screenplay import config as knobs
 from difflab.screenplay import production as productions
@@ -289,20 +290,21 @@ def plan_production(
             raise LookupError(f"no production {production_id}")
         chapters = store.chapters_of(connection, production_id)
         photos = [str(p) for p in production.manifest.get("photos", [])]
-        count = int(production.manifest.get("shots", 0) or 0)
+        video, _ = settings.effective("render_chunk", production_id)
+        assert isinstance(video, VideoSettings)
+        total = productions.take_seconds(production.manifest, video.duration)
         aspect = production.manifest.get("aspect")
         problems = []
         if not production.story.strip():
             problems.append("a plan needs a story: the idea the production is made from")
         if not photos:
             problems.append("a plan needs photographs: the first is where the chapter opens")
-        if count < 1:
-            problems.append("a plan needs how many shots to write")
+        if total < knobs.DIRECTOR_CLIP_MIN:
+            problems.append(f"a plan needs a length of at least {knobs.DIRECTOR_CLIP_MIN:g} seconds to fill")
         if chapter_position >= len(chapters):
             problems.append(f"the production has {len(chapters)} chapter(s), not {chapter_position + 1}")
         if problems:
             raise ValueError(problems[0])
-        video, _ = settings.effective("render_chunk", production_id)
         continuity, _ = settings.effective("handoff", production_id)
         assert isinstance(continuity, Continuity)
         chapter = chapters[chapter_position]
@@ -367,12 +369,12 @@ def plan_production(
             },
             "write the opening sentence",
         )
-        planned = add(
+        add(
             "plan_shots",
             {
                 "chapter": chapter.id,
                 "idea": idea,
-                "count": count,
+                "take_seconds": total,
                 "cards": _output(tidied, "cards"),
                 "arrangement": _output(arranged, "arrangement"),
                 "seconds": _output(cut, "seconds"),
@@ -382,21 +384,7 @@ def plan_production(
                 **taken,
                 **cast,
             },
-            f"plan {count} shots",
+            f"plan {total:g} seconds of shots",
             {"video": video.data()},
         )
-        written = [
-            add(
-                "write_shot",
-                {"chapter": chapter.id, "position": i, "planned": _output(planned, "chunks"), **taken},
-                f"write shot {i + 1}",
-            )
-            for i in range(count)
-        ]
-        for i in range(count):
-            add(
-                "compile_shot",
-                {"chapter": chapter.id, "position": i, "written": [_output(job, "summary") for job in written]},
-                f"compile shot {i + 1}",
-            )
     return run_id

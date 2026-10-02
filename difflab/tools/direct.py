@@ -120,6 +120,7 @@ def ask(
     tokens: int,
     temperature: float = 0.0,
     seed: int = DIRECTOR.seed,
+    schema: dict[str, Any] | None = None,
 ) -> str:
     """One answer, uncached and unchecked: `ask_json` is the one that gates and keeps."""
     vlm: Exl3VL = models.registry.acquire(ask_vlm.spec(MODEL.get()))
@@ -135,6 +136,7 @@ def ask(
         seed=seed,
         echo=False,  # JSON for the gate, not for reading: the tally line shows where we are
         as_json=True,
+        schema=schema,
     )
 
 
@@ -188,6 +190,7 @@ def ask_json(
     temperature: float = 0.0,
     settle: bool = True,
     repairs: int = h3.DIRECTOR_REPAIRS,
+    schema: dict[str, Any] | None = None,
 ) -> Any:
     """Ask, check, and on failure ask again with the gate's own messages as the instructions.
 
@@ -211,7 +214,7 @@ def ask_json(
     take = TAKE.get()
     asked_key = key(
         "director", 1, model=MODEL.get(), system=system, question=question, images=seen, tokens=tokens,
-        temperature=temperature, **({"take": take} if take else {}),
+        temperature=temperature, **({"take": take} if take else {}), **({"schema": schema} if schema else {}),
     )  # fmt: skip
     kept, failed, marked = (cache.path(asked_key, suffix) for suffix in (".txt", ".failed", ".settled"))
     was_settled = cache.enabled and marked.exists()
@@ -229,7 +232,7 @@ def ask_json(
             fresh = attempt or failures or take
             warmth = max(temperature, h3.DIRECTOR_REPAIR_TEMPERATURE) if fresh else temperature
             seed = (DIRECTOR.seed + attempt + failures * (repairs + 1) + take * 1000) % 2**32  # the sampler's range
-            raw = ask(system, asked, images, heading, tokens, warmth, seed)
+            raw = ask(system, asked, images, heading, tokens, warmth, seed, schema)
         try:
             data = parse_json(raw)
         except ValueError as error:

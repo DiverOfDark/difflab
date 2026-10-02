@@ -39,12 +39,12 @@ def improve(
         if not source.strip():
             raise ValueError("an idea to improve, in your own words")
         photos = [str(p) for p in made.manifest.get("photos", [])]
-        count = int(made.manifest.get("shots", 0) or 0)
-        if count < 1:
-            raise ValueError("the production does not say how many shots to write")
         video, _ = settings.effective("render_chunk", production_id)
         assert isinstance(video, VideoSettings)
         seconds = float(made.manifest.get("seconds") or video.duration)
+        total = production.take_seconds(made.manifest, seconds)
+        if total <= 0:
+            raise ValueError("the production does not say how long the film is")
         run_id = store.next_run_id(connection, datetime.now().strftime("%Y-%m-%d-%H%M%S"))
         drafted = store.add_idea(
             connection, production_id, source, feedback if previous else "", revises if previous else None, run_id
@@ -56,8 +56,9 @@ def improve(
         )  # fmt: skip
         job = store.add_job(
             connection, run_id, "refine_idea",
-            {"production": production_id, "round": drafted.round, "idea": source, "photos": photos, "count": count,
-             "seconds": round(seconds, 2), "previous": previous.story if previous else "", "feedback": feedback},
+            {"production": production_id, "round": drafted.round, "idea": source, "photos": photos,
+             "take_seconds": round(total, 1), "seconds": round(seconds, 2),
+             "previous": previous.story if previous else "", "feedback": feedback},
             label=f"revise round {revises}" if previous else f"rewrite the idea, round {drafted.round}",
             settings=settings.for_job("refine_idea", production_id),
         )  # fmt: skip

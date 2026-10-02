@@ -23,6 +23,14 @@ OPENING_NOTE = "the opening frame"  # what the planner writes on the keyframe it
 ASPECTS = (0.25, 4.0)  # width over height a canvas may be given
 
 
+def take_seconds(manifest: dict[str, Any], longest: float) -> float:
+    """How long the director makes a chapter: as given, or a production from before it chose the count
+    as its shot count times the render length."""
+    if given := float(manifest.get("take_seconds") or 0):
+        return given
+    return int(manifest.get("shots", 0) or 0) * longest
+
+
 def create(
     slug: str,
     title: str = "",

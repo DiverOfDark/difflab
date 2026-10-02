@@ -9,12 +9,38 @@ from dataclasses import replace
 from typing import Any
 
 from difflab.core import ui
+from difflab.models.exl3vl import ANY_JSON
 from difflab.models.minimax_h3 import caption
 from difflab.screenplay import checks as lint
 from difflab.screenplay import compiler as compose
 from difflab.screenplay import config as h3
 from difflab.screenplay import words
 from difflab.tools import direct
+
+PROSE = {"type": "string", "maxLength": h3.DIRECTOR_WRITE_CHARS}
+
+
+def shape(count: int) -> dict[str, Any]:
+    """The writer's answer with exactly `count` beats: a beat cut off at the cap once closed the array after it."""
+    beats = {"type": "array", "items": PROSE, "minItems": count, "maxItems": count}
+    return {
+        **ANY_JSON,
+        "type": "object",
+        "properties": {"beats": beats, "summary": PROSE, "sounds": PROSE},
+        "required": ["beats", "summary", "sounds"],
+        "additionalProperties": False,
+    }
+
+
+def trimmed(text: str) -> str:
+    """`text` cut to the whole sentences that fit DIRECTOR_WRITE_WORDS; the first is kept whatever its length."""
+    sentences = [s for s in re.split(r"(?<=[.!?])\s+", text.strip()) if s]
+    kept = sentences[:1]
+    for sentence in sentences[1:]:
+        if len(" ".join([*kept, sentence]).split()) > h3.DIRECTOR_WRITE_WORDS or sentence[-1] not in ".!?":
+            break
+        kept.append(sentence)
+    return " ".join(kept)
 
 
 def _with_prose(take: compose.Take, index: int, data: Any) -> compose.Take:
@@ -81,6 +107,7 @@ def write_one(take: compose.Take, index: int) -> compose.Take:
         to_write = [beat for beat in planned.beats if beat.phase != "settle"]
         if len(data["beats"]) != len(to_write):
             return [direct.problem(f'"beats" has exactly {len(to_write)} strings, one per listed beat')]
+        data["beats"] = [trimmed(str(text)) for text in data["beats"]]  # `ask_json` returns this same dict
         where = f"write · chunk {index + 1}"
         living = {m for m in planned.cast if direct.member_card(before.cards, m, where).kind in compose.LIVING}
         found = [
@@ -91,6 +118,14 @@ def write_one(take: compose.Take, index: int) -> compose.Take:
         found += lint.writer_rules(str(data["summary"]), set(planned.cast)) + lint.writer_rules(
             str(data["sounds"]), set(planned.cast)
         )
+        # A {say} with no line behind it reached the compiler as a KeyError on the speaker, which the
+        # repair read as "does not fit the shape" and could not fix: a giggle written as {woman} {say}.
+        for number, (beat, text) in enumerate(zip(to_write, data["beats"], strict=True), 1):
+            lines = sum(beat.start <= line.start < beat.end for line in planned.dialogue)
+            if str(text).count("{say}") != lines:
+                found.append(direct.problem(f"beat {number} has {lines} line(s) of dialogue, so write {{say}} "
+                                            f"{lines} time(s) there; a laugh, giggle or sigh is written as the "
+                                            "motion and sound it is, with no {say}"))  # fmt: skip
         if not set(re.findall(r"\{([a-z_]+)\}", str(data["summary"]))) & living:
             found.append(direct.problem('the "summary" names the members who act as {id}, in braces'))
         prose = [str(text) for text in [*data["beats"], data["summary"]]]
@@ -99,7 +134,7 @@ def write_one(take: compose.Take, index: int) -> compose.Take:
 
     data = direct.ask_json(
         words.WRITE_SYSTEM, question, [], gate, f"write · chunk {index + 1}",
-        h3.DIRECTOR_WRITE_TOKENS, h3.DIRECTOR_WRITE_TEMPERATURE,
+        h3.DIRECTOR_WRITE_TOKENS, h3.DIRECTOR_WRITE_TEMPERATURE, schema=shape(len(written)),
     )  # fmt: skip
     return _with_prose(take, index, data)
 

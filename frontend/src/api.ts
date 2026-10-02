@@ -296,7 +296,8 @@ export interface Ingest {
   source: string
   instruction: string
   photos: string[]
-  shots: number
+  /** Seconds the director fills with as many shots as the story needs; per chapter for a text. */
+  take_seconds: number
   /** Width over height of the canvas; null takes the first photo's own. */
   aspect: number | null
   clip_scale: number
@@ -323,8 +324,8 @@ export const resolveConflict = (conflictId: number, resolution: string) =>
   json<Production>(`/api/conflicts/${conflictId}/resolve`, post({ resolution }))
 export const ingest = (form: Ingest) => {
   const common = { slug: form.slug, title: form.title, photos: form.photos, video: form.video, continuity: form.continuity, aspect: form.aspect }
-  if (form.kind === 'idea') return json<Production>('/api/ingest/idea', post({ ...common, idea: form.idea, shots: form.shots }))
-  if (form.kind === 'text') return json<Production>('/api/ingest/text', post({ ...common, text: form.text, shots: form.shots }))
+  if (form.kind === 'idea') return json<Production>('/api/ingest/idea', post({ ...common, idea: form.idea, take_seconds: form.take_seconds }))
+  if (form.kind === 'text') return json<Production>('/api/ingest/text', post({ ...common, text: form.text, take_seconds: form.take_seconds }))
   return json<Production>(
     '/api/ingest/video',
     post({ ...common, source: form.source, instruction: form.instruction, clip_scale: form.clip_scale }),

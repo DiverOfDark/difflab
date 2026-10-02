@@ -278,7 +278,7 @@ async def reroll_shot(shot_id: int, request: Request) -> dict[str, Any]:
 
 @app.post("/api/ingest/idea")
 async def ingest_idea(request: Request) -> dict[str, Any]:
-    """A production from an idea and photographs: one chapter of `shots` shots, the first photo where
+    """A production from an idea and photographs: one chapter of `take_seconds`, the first photo where
     it opens. `video` and `continuity` are partial settings over the code defaults."""
     body = await request.json()
     try:
@@ -288,7 +288,7 @@ async def ingest_idea(request: Request) -> dict[str, Any]:
             str(body.get("slug", "")).strip(),
             str(body.get("idea", "")),
             [str(p) for p in body.get("photos") or []],
-            int(body.get("shots") or 0),
+            float(body.get("take_seconds") or 0),
             title=str(body.get("title", "")).strip(),
             aspect=None if body.get("aspect") in (None, "") else float(body["aspect"]),
             video=video,
@@ -310,7 +310,7 @@ async def ingest_text(request: Request) -> dict[str, Any]:
             str(body.get("slug", "")).strip(),
             str(body.get("text", "")),
             [str(p) for p in body.get("photos") or []],
-            int(body.get("shots") or 0),
+            float(body.get("take_seconds") or 0),
             title=str(body.get("title", "")).strip(),
             aspect=None if body.get("aspect") in (None, "") else float(body["aspect"]),
             video=video,

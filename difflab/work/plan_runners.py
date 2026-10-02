@@ -22,6 +22,7 @@ from difflab.core.types import Frame
 from difflab.models.minimax_h3.settings import VideoSettings
 from difflab.screenplay import checks, compiler, crops, words
 from difflab.screenplay import config as knobs
+from difflab.screenplay import settings as chosen
 from difflab.screenplay.production import OPENING_NOTE
 from difflab.tools import cards, cut_crops, direct, ground, opening, plan_shots, refine_idea, survey, write_shot
 from difflab.work import Skipped
@@ -371,8 +372,41 @@ def run_arrange(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, A
 
 
 def run_plan_shots(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
+    outputs = _plan_shots(inputs, settings)
+    _write_and_compile(inputs, len(outputs["chunks"]))
+    return outputs
+
+
+def _write_and_compile(inputs: dict[str, Any], count: int) -> None:
+    """The run's write and compile jobs, one each per shot the plan chose: the run could not know how
+    many when it was queued. A plan job reused by key still adds them, since its run has none."""
+    ctx = context.current()
     production_id, chapter_id = int(inputs["production"]), int(inputs["chapter"])
-    idea, count = str(inputs["idea"]), int(inputs["count"])
+    with store.connect() as connection, store.transaction(connection):
+        if ctx.run_id is None or ctx.job_id is None:
+            return
+        if any(job.tool == "write_shot" for job in store.jobs_of(connection, ctx.run_id)):
+            return
+        common = {"production": production_id, "chapter": chapter_id}
+        written = [
+            store.add_job(
+                connection, ctx.run_id, "write_shot",
+                {**common, "position": i, "planned": {"from_job": ctx.job_id, "output": "chunks"}, **_taken(inputs)},
+                label=f"write shot {i + 1}", settings=chosen.for_job("write_shot", production_id),
+            ).id
+            for i in range(count)
+        ]  # fmt: skip
+        for i in range(count):
+            store.add_job(
+                connection, ctx.run_id, "compile_shot",
+                {**common, "position": i, "written": [{"from_job": job, "output": "summary"} for job in written]},
+                label=f"compile shot {i + 1}", settings=chosen.for_job("compile_shot", production_id),
+            )  # fmt: skip
+
+
+def _plan_shots(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
+    production_id, chapter_id = int(inputs["production"]), int(inputs["chapter"])
+    idea, total = str(inputs["idea"]), float(inputs["take_seconds"])
     members = _members(inputs["members"])
     identities = {str(k): dict(v) for k, v in inputs["cards"].items()}
     arrangement = str(inputs["arrangement"])
@@ -386,7 +420,7 @@ def run_plan_shots(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str
     photos = [str(p) for p in production.manifest.get("photos", [])]
     refs = compiler.refs_of(references, rows, photos)
     made = key(
-        "plan_shots", 1, production=production_id, chapter=chapter_id, idea=idea, count=count,
+        "plan_shots", 2, production=production_id, chapter=chapter_id, idea=idea, take_seconds=total,
         members=inputs["members"],
         cards=identities, refs={k: dataclasses.asdict(r) for k, r in refs.items()}, arrangement=arrangement,
         seconds=seconds, tail=tail, budget=budget, **_taken(inputs), **_fingerprint(),
@@ -405,7 +439,7 @@ def run_plan_shots(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str
         budget=budget,
     )
     with _take(inputs):
-        planned = plan_shots.plan(base, idea, count)
+        planned = plan_shots.plan(base, idea, total)
     chunks = [compiler.plan_of(chunk) for chunk in planned.chunks]
     _manifest(
         production_id, ambience=planned.ambience, story=[list(event) for event in planned.story], seconds=seconds,
@@ -425,10 +459,10 @@ def run_plan_shots(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str
                     plan = shot.plan  # the same beats: the prose written for them stays
                 store.update_shot(
                     connection, shot.id, plan=plan, action=chunk.purpose, camera=camera, dialogue=dialogue,
-                    seconds=seconds,
+                    seconds=chunk.seconds,
                 )  # fmt: skip
             else:
-                shot = store.add_shot(connection, chapter_id, seconds, action=chunk.purpose, camera=camera)
+                shot = store.add_shot(connection, chapter_id, chunk.seconds, action=chunk.purpose, camera=camera)
                 store.update_shot(connection, shot.id, plan=plan, dialogue=dialogue)
                 store.set_clip_seed(connection, shot.id, video.seed + shot.position)
             first = store.keyframe_of(connection, shot.id)
@@ -436,7 +470,10 @@ def run_plan_shots(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str
             if position == 0 and not by_hand:
                 store.provide_keyframe(connection, shot.id, str(inputs["opening"]), note=OPENING_NOTE)
         for extra in existing[len(chunks) :]:
-            store.delete_shot(connection, extra.id)
+            if extra.pinned:
+                ui.note(f"shot {extra.position + 1} is pinned, so it stays after the plan's {len(chunks)} shots")
+            else:
+                store.delete_shot(connection, extra.id)
     return {
         "chunks": chunks,
         "ambience": planned.ambience,
@@ -516,7 +553,7 @@ def run_refine_idea(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
     frames = [_frame(p) for p in inputs["photos"]]
     with _take({"take": round_}):  # every round samples anew; the same round asked again is cached
         draft = refine_idea.refine(
-            str(inputs["idea"]), frames, int(inputs["count"]), float(inputs["seconds"]),
+            str(inputs["idea"]), frames, float(inputs["take_seconds"]), float(inputs["seconds"]),
             str(inputs.get("previous") or ""), str(inputs.get("feedback") or ""),
         )  # fmt: skip
     story = draft.story()

@@ -24,13 +24,15 @@ const form = ref<Ingest>({
   source: '',
   instruction: '',
   photos: [],
-  shots: 5,
+  take_seconds: 60,
   aspect: null,
   clip_scale: 0.5,
   video: { duration: 12, megapixels: 0.4, steps: 8 },
   continuity: { tail_seconds: 0.25, handoff_window: 6, crossfade: 0.25 },
 })
 const autoPlan = ref(true)
+// `screenplay.config.DIRECTOR_CLIP_MIN`: the shortest shot the director may choose.
+const CLIP_MIN = 6
 
 const KINDS = [
   { id: 'idea', label: 'IDEA', placeholder: 'What happens, in your own words. The director plans one chapter from it.' },
@@ -65,18 +67,19 @@ const problems = computed(() => {
   if (f.kind === 'video' && !f.source.trim()) out.push('the video to redo: a path under output/')
   if (f.kind === 'video' && !f.instruction.trim()) out.push('what should be different about it')
   if (f.kind !== 'video' && !f.photos.length) out.push('at least one photograph: the first is where it opens')
-  if (f.kind !== 'video' && f.shots < 1) out.push('at least one shot')
+  if (f.kind !== 'video' && f.take_seconds < CLIP_MIN) out.push(`at least ${CLIP_MIN} seconds: one shot`)
   return out
 })
 
 const estimate = computed(() => {
   const f = form.value
   const ch = f.kind === 'text' ? chapters.value.length : 1
-  const shots = f.kind === 'video' ? null : ch * f.shots
+  const fewest = ch
+  const most = ch * Math.max(1, Math.floor(f.take_seconds / CLIP_MIN))
   return [
     { k: 'CHAPTERS', v: String(ch) },
-    { k: 'SHOTS', v: shots === null ? 'by the source' : String(shots) },
-    { k: 'FILM', v: shots === null ? 'as the source' : seconds(shots * f.video.duration) },
+    { k: 'SHOTS', v: f.kind === 'video' ? 'by the source' : fewest === most ? String(most) : `${fewest}–${most}, by the director` },
+    { k: 'FILM', v: f.kind === 'video' ? 'as the source' : `up to ${seconds(ch * f.take_seconds)}` },
     { k: 'PHOTOS', v: String(f.photos.length) },
     { k: 'CANVAS', v: f.kind === 'video' || f.aspect === null ? 'as the first photo' : canvasFor(f.aspect, f.video.megapixels).join('×') },
   ]
@@ -220,10 +223,10 @@ const discard = () => {
         </template>
         <div class="stacked ruled">
           <label v-if="form.kind !== 'video'">
-            <span class="eyebrow">shots{{ form.kind === 'text' ? ' per chapter' : '' }}</span>
-            <input v-model.number="form.shots" type="number" min="1" max="40" />
+            <span class="eyebrow">length · s{{ form.kind === 'text' ? ' per chapter' : '' }}</span>
+            <input v-model.number="form.take_seconds" type="number" :min="CLIP_MIN" max="600" />
           </label>
-          <label><span class="eyebrow">shot length · s</span><input v-model.number="form.video.duration" type="number" min="1" max="15" /></label>
+          <label><span class="eyebrow">longest shot · s</span><input v-model.number="form.video.duration" type="number" min="1" max="15" /></label>
           <label v-if="form.kind !== 'video'">
             <span class="eyebrow">aspect</span>
             <select v-model="form.aspect">

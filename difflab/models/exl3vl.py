@@ -95,8 +95,10 @@ class Exl3VL:
         title: str = "Qwen3.8",
         echo: bool = True,
         as_json: bool = False,
+        schema: dict[str, Any] | None = None,
     ) -> str:
-        """Several images are announced as "Picture 1: ", "Picture 2: " in order; temperature=0 is greedy."""
+        """Several images are announced as "Picture 1: ", "Picture 2: " in order; temperature=0 is greedy.
+        `schema` narrows `as_json` from any JSON to that shape."""
         parts = self.load()
         shown = [images] if isinstance(images, Image.Image) else list(images or ())
         tokenizer = parts["tokenizer"]
@@ -116,6 +118,8 @@ class Exl3VL:
         sampler = (
             ComboSampler(temperature=temperature, top_p=top_p, top_k=top_k) if temperature > 0 else ArgmaxSampler()
         )
+        masked = schema or ANY_JSON
+        shape = [LLGuidanceFilter(tokenizer, eos_after_completed=True, json_schema=masked)] if as_json else None
         job = Job(
             input_ids=tokenizer.encode(prompt, encode_special_tokens=True, embeddings=embeddings),
             max_new_tokens=max_new_tokens,
@@ -123,7 +127,7 @@ class Exl3VL:
             sampler=sampler,
             seed=seed,
             embeddings=embeddings,
-            filters=[LLGuidanceFilter(tokenizer, eos_after_completed=True, json_schema=ANY_JSON)] if as_json else None,
+            filters=shape,
         )
         generator = parts["generator"]
         generator.enqueue(job)

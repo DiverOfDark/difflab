@@ -139,6 +139,7 @@ class Chunk:
     dialogue: tuple[Line, ...] = ()
     summary: str = ""  # writer
     sounds: str = ""  # writer
+    seconds: float = 0.0  # on H3's frame grid; 0 in a plan from before the director chose lengths: `Take.seconds`
 
 
 @dataclass(frozen=True)
@@ -149,7 +150,7 @@ class Take:
     refs: dict[str, Ref]  # every clean crop, in the order a chunk presents the ones it holds
     opening: str  # chunk 1's opening arrangement, from the opening frame
     ambience: str  # a noun phrase of room sound, the same in every chunk
-    seconds: float  # effective chunk length on H3's 17n+5 frame grid (12 s -> 12.25)
+    seconds: float  # the longest chunk, on H3's 17n+5 frame grid (12 s -> 12.25); `length` is one chunk's
     tail: bool  # Continuity.tail_seconds > 0: chunks after the first carry <Audio 1> and <Video 1>
     budget: int  # reference rows a chunk may hold (config.DIRECTOR_REFERENCE_ROWS)
     chunks: tuple[Chunk, ...] = ()
@@ -187,6 +188,10 @@ def _bare(phrase: str) -> str:
 def join(items: list[str] | tuple[str, ...]) -> str:
     items = list(items)
     return "".join(items) if len(items) <= 1 else ", ".join(items[:-1]) + " and " + items[-1]
+
+
+def length(take: Take, index: int) -> float:
+    return take.chunks[index].seconds or take.seconds
 
 
 def opening(take: Take, index: int) -> str:
@@ -450,7 +455,7 @@ def compile_chunk(take: Take, index: int) -> Compiled:
     for number, beat in enumerate(chunk.beats):
         if beat.phase == "settle":
             continue
-        text = expand(f"{timing(beat, number, take.seconds, used)} {_lower(beat.prose.strip())}")
+        text = expand(f"{timing(beat, number, length(take, index), used)} {_lower(beat.prose.strip())}")
         # A dialogue line lands where the writer put its {say}, taking them in order - not where the
         # line's own `start` second happens to fall.
         #
@@ -588,6 +593,7 @@ def chunk_of(plan: dict[str, Any]) -> Chunk:
         ),
         summary=str(plan.get("summary", "")),
         sounds=str(plan.get("sounds", "")),
+        seconds=float(plan.get("seconds", 0.0)),
     )
 
 
@@ -658,7 +664,7 @@ def take_of(connection: sqlite3.Connection, production: store.Production, chapte
         seconds=float(manifest.get("seconds", 0.0)),
         tail=tail,
         budget=int(manifest.get("budget", config.DIRECTOR_REFERENCE_ROWS)),
-        chunks=tuple(chunk_of(shot.plan) for shot in shots),
+        chunks=tuple(dataclasses.replace(chunk_of(shot.plan), seconds=shot.seconds) for shot in shots),
         story=tuple((str(event), int(clip)) for event, clip in manifest.get("story", [])),
         tails=tails,
         lands=landed,

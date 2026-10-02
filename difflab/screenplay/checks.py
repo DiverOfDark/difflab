@@ -250,7 +250,6 @@ def story_rules(idea: str, story: list[tuple[str, int]], take: compose.Take) -> 
 def plan_rules(take: compose.Take) -> list[Problem]:
     """Timing, continuity and staging of the whole plan, before any prose is written. All repairable."""
     out: list[Problem] = []
-    seconds = take.seconds
     living = {m for m in take.members if take.cards[m].kind in compose.LIVING}
 
     def fail(code: str, message: str) -> None:
@@ -259,6 +258,7 @@ def plan_rules(take: compose.Take) -> list[Problem]:
     for index, chunk in enumerate(take.chunks):
         clip = f"clip {index + 1}"
         beats = list(chunk.beats)
+        seconds = compose.length(take, index)
         unknown = {m for beat in beats for m in beat.who} | set(chunk.cast) | {chunk.camera_toward}
         if unknown - set(take.members):
             fail("cast", f"{clip}: {sorted(unknown - set(take.members))} are not cast ids {list(take.members)}")
@@ -294,6 +294,11 @@ def plan_rules(take: compose.Take) -> list[Problem]:
             fail("airlock", f"{clip}: start with an airlock beat of at least {airlock:g} seconds")
         if beats[-1].phase != "settle" or beats[-1].end - beats[-1].start < settle:
             fail("settle", f"{clip}: end with a settle beat of at least {settle:g} seconds")
+        for beat in beats:
+            # 0.36 s: `plan_shots.on_grid` moves the last beat's end by up to half a 17-frame cycle.
+            if beat.phase in QUIET and beat.end - beat.start > config.DIRECTOR_QUIET_MAX + 0.36:
+                fail(beat.phase, f"{clip}: the {beat.phase} beat {beat.start:g}-{beat.end:g} s lasts over "
+                     f"{config.DIRECTOR_QUIET_MAX:g} seconds; shorten it and the clip with it")  # fmt: skip
         if any(beat.phase == "settle" for beat in beats[:-1]):
             fail("settle", f"{clip}: only the last beat is a settle")
         main = [beat for beat in beats if beat.phase in ("primary", "handoff")]

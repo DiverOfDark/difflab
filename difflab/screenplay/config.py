@@ -16,6 +16,12 @@ DIRECTOR_REPAIRS = 2  # re-asks with the gate's issue list before giving up
 DIRECTOR_PLAN_REPAIRS = 3  # the plan answers to the most rules at once, and has needed two repairs on its own
 DIRECTOR_TOKENS = {"survey": 1024, "ground": 1024, "card": 2048, "opening": 512, "tidy": 2048, "plan": 8192}
 DIRECTOR_WRITE_TOKENS = 2048
+# A beat's prose is asked as 35-60 words. Unbounded, the writer once listed clothes and hair for 1,482
+# words inside one string, ran out of tokens and left the JSON open, three times in a row. The schema
+# closes each string at DIRECTOR_WRITE_CHARS; asked again to shorten, it wrote the same 115-125 words, so
+# a beat is cut in code to the whole sentences that fit DIRECTOR_WRITE_WORDS.
+DIRECTOR_WRITE_CHARS = 700
+DIRECTOR_WRITE_WORDS = 60
 DIRECTOR_WRITE_TEMPERATURE = 0.5  # beat prose only; every other first answer decodes greedily
 # Greedy decoding asked again repeats the rejected answer word for word, so a repair samples.
 DIRECTOR_REPAIR_TEMPERATURE = 0.4
@@ -66,8 +72,15 @@ DIRECTOR_MAX_NEGATIONS = 3  # in a detailed_description: a negated noun tends to
 # The plan's rules (lint.plan_rules), stated in the plan prompt with these same numbers.
 DIRECTOR_AIRLOCK = (2.0, 1.5)  # the opening beat of every chunk after the first: asked, least accepted (s)
 DIRECTOR_SETTLE = (2.0, 1.5)  # the closing beat of every chunk: asked, least accepted (s)
+# Longest airlock or settle accepted. With none, a 60 s take of five events came back as five 12.2 s
+# clips whose settles ran up to 6.2 s: the lengths were the budget divided by the count, padded with stillness.
+DIRECTOR_QUIET_MAX = 3.0
 DIRECTOR_HANDOFF_MIN = 4.0  # s: reach, grip and release all visible
 DIRECTOR_BEAT_MIN = 1.0  # s
+# The plan chooses how many clips and how long each; the longest is the render settings' duration.
+# 6 s holds a 2 s airlock, a main beat and a 2 s settle.
+DIRECTOR_CLIP_MIN = 6.0
+DIRECTOR_TAKE_SLACK = 0.1  # the take's length is a ceiling; the clips may run over it by this fraction
 # The main beat starts mid-chunk, because a chunk's last beat gets squeezed; it may start right after a
 # 2 s airlock (0.16 of a 12.25 s chunk).
 DIRECTOR_MAIN_BEAT_WINDOW = (0.15, 0.65)
