@@ -44,7 +44,8 @@ SIDE = re.compile(
 )
 PHASES = ("airlock", "carry", "build", "primary", "handoff", "reaction", "settle")
 QUIET = ("airlock", "settle")  # beats in which nothing new happens
-TRAVEL = {"follow", "crane_up"}  # camera moves that go with a member through space
+AWAY = re.compile(r"\baway from the camera\b|\bsmall(?:er)? (?:shape|figure|dot|in the frame)\b", re.I)
+TRAVEL = {"follow", "crane_up", "stay"}  # camera moves that show a member travelling through space
 # Sounds a mouth makes, by word stem (`stem`): it opens for each one, so the mouth rule must list it.
 VOCAL = {"giggl": "giggle", "laugh": "laugh", "chuck": "chuckle", "meow": "meow", "exhal": "exhale", "sigh": "sigh",
          "cough": "cough", "purr": "purr", "gasp": "gasp", "yawn": "yawn"}  # fmt: skip
@@ -371,7 +372,10 @@ def plan_rules(take: compose.Take) -> list[Problem]:
             fail("camera", f"{clip}: the camera move is one of {', '.join(words.CAMERA_MOVES)}")
         if len(set(chunk.cast) & living) > config.DIRECTOR_MAX_LIVING:
             fail("crowd", f"{clip}: at most {config.DIRECTOR_MAX_LIVING} people and animals on screen")
-        for member in set(re.findall(r"\{([a-z_]+)\}", compose.opening(take, index))) - set(chunk.cast):
+        # A camera following a member away leaves the room's things behind: they need not be cast.
+        things = {m for m in take.members if take.cards[m].kind not in compose.LIVING}
+        behind = things if chunk.camera_move == "follow" else set()
+        for member in set(re.findall(r"\{([a-z_]+)\}", compose.opening(take, index))) - set(chunk.cast) - behind:
             fail("join", f"{clip}: {{{member}}} is in its opening arrangement, so it must be in its cast")
         held = compose.references(take, index)
         # A member no photograph shows has no crop by construction: its <Subject N> line carries it.
@@ -398,7 +402,13 @@ def plan_rules(take: compose.Take) -> list[Problem]:
                  f"where it is, as {{{member}}}")  # fmt: skip
         if closing - set(chunk.cast):
             fail("closing", f"{clip}: the closing names {sorted(closing - set(chunk.cast))}, who are not in its cast")
-        if not closing & living <= set(chunk.faces_at_close):
+        # Production 10 wrote its cat "a small shape high in the sky, moving away from the camera" over a
+        # crane_up, and the camera rising with it rendered the cat filling the frame.
+        if chunk.camera_move in ("follow", "crane_up") and AWAY.search(chunk.closing):
+            fail("camera", f"{clip}: its closing has {{{chunk.camera_toward}}} going away from the camera, which "
+                 f"\"{chunk.camera_move}\" keeps close: use \"stay\" (rule 16)")  # fmt: skip
+        leaving = {chunk.camera_toward} if chunk.camera_move == "stay" else set()  # its back to the camera
+        if not closing & living - leaving <= set(chunk.faces_at_close):
             fail("faces", f"{clip}: every person and animal in the closing needs its face visible")
         # The breach and the count, not the rule: told it is nine words over, the writer cuts nine
         # words; told the rule again, it writes the same sentence again, three times over.

@@ -280,10 +280,12 @@ def references(take: Take, index: int) -> tuple[str, ...]:
     def kind(member: str) -> str:
         return take.cards[member].kind
 
+    # A picture of a place the chunk is not in brings that place back: the room photo, which also shows
+    # the cat, pulled production 10's sky chase back onto the desk.
     usable = [
         ref
         for ref in take.refs.values()
-        if on & set(ref.shows) and all(m in on for m in ref.shows if kind(m) in LIVING)
+        if on & set(ref.shows) and all(m in on for m in ref.shows if kind(m) in (*LIVING, "environment"))
     ]
     best: dict[tuple[str, str], Ref] = {}
     for ref in usable:
@@ -342,9 +344,16 @@ class Expander:
         self.take, self.subjects, self.speakers, self.looks = take, subjects, speakers, looks or {}
         self.seen: set[str] = set()
 
-    def __call__(self, text: str, expand: bool = True) -> str:
+    def __call__(self, text: str, expand: bool = True, behind: bool = False) -> str:
+        """`behind`: the text is an opening, the clip before's own words, so a member the clip does not cast
+        is named plainly rather than failing a writer who cannot change them; `lint.plan_rules` asks the
+        plan to cast a person or animal there."""
+
         def label(match: re.Match[str]) -> str:
             member = match.group(1)
+            card = self.take.cards.get(member)
+            if member not in self.subjects and behind and card is not None:
+                return f"the {card.noun}"
             if member not in self.subjects:
                 cast = ", ".join(f"{{{m}}}" for m in self.subjects)
                 raise CastError(f"{{{member}}} is named, but this clip's cast is {cast}: leave it out or cast it")
@@ -472,7 +481,7 @@ def compile_chunk(take: Take, index: int) -> Compiled:
         if chunk.looks.get(m) and chunk.looks[m] != now.get(m)
     ]
     definitions.append(
-        say["first_frame"].format(arrangement=_lower(_sentence(labels_only(opening(take, index), False))))
+        say["first_frame"].format(arrangement=_lower(_sentence(labels_only(opening(take, index), False, True))))
     )
     if landing:
         definitions.append(say["last_frame"].format(arrangement=_lower(_sentence(labels_only(chunk.closing, False)))))
@@ -508,7 +517,9 @@ def compile_chunk(take: Take, index: int) -> Compiled:
     expand = Expander(take, subject, speakers, now)
     room = take.cards[env]
     body = [
-        say["begin_continued" if tail else "begin"].format(arrangement=_lower(_sentence(expand(opening(take, index))))),
+        say["begin_continued" if tail else "begin"].format(
+            arrangement=_lower(_sentence(expand(opening(take, index), behind=True)))
+        ),
         say["room" if room.lights else "room_unlit"].format(
             room=subject[env], traits=room.short(), lights=join(room.lights)
         ),

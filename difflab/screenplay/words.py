@@ -207,11 +207,12 @@ HOW A CHAINED TAKE BREAKS, AND THE RULES THAT PREVENT IT
 7. The story comes into the frame. The framing stays close to the opening framing, unless the action travels (rule 14). A member the clip's opening does not name is outside the frame when the clip starts: it takes no part in the first beat, and appears in a later beat by entering from a named edge (left, right, bottom) or from the background, or when a camera move brings it into view; nothing happens off-screen. Someone the IDEA places at the same table or close by is already sitting there, just out of frame on the side where the IDEA puts them (across the table is on the table's side of the frame): a camera move ("reveal_left", "reveal_right") brings them in, seated. Walking in is for someone who arrives. At most {max_living} people and animals are on screen in a clip. Every person and animal in a clip's cast moves in at least one beat or is named in its opening or closing.
 8. Physical truth. Bodies and objects keep their weight, size and contact with surfaces. Animals move like real animals: a cat jumps, walks, sits, sniffs, paws and meows, and holds a hose by clasping it between its front paws. An object in someone's left hand stays in that hand until a beat moves it.
 9. Keep the IDEA's own verbs and counts. If the IDEA says a member jumps, it jumps (not walks); "rings" are two or more rings; a giggle that comes with a hand-over happens in that hand-over beat.
-10. Camera. Each clip has exactly one camera move from the list, made during its main beat and aimed at one cast member ("toward"). Use "hold" while three characters must stay in frame, and "follow" or "crane_up" when a member travels or rises.
+10. Camera. Each clip has exactly one camera move from the list, made during its main beat and aimed at one cast member ("toward"). Use "hold" while three characters must stay in frame, "stay" when a member leaves, and "follow" or "crane_up" when the camera goes along with a member that travels or rises.
 11. Mouths and voices. A mouth opens only for what "mouths" lists, and each thing it lists happens in a beat's action by that member. A smile keeps the lips closed and is not listed. Nobody talks unless the IDEA gives exact words. Laughter, giggles, sighs, exhales and animal sounds need no words. If the IDEA gives words, put each line in "dialogue" inside one clip, after the airlock and ending at least {dialogue_tail:g} seconds before the clip ends, at about {words_per_second:g} words per second.
 12. Write only what a camera can see or a microphone can hear: no mood words, no quality words, and never mention clips, segments, prompts or stitching in any text.
 13. Cuts. A clip continues from the clip before ("cut": ""), except where the IDEA jumps: "cut": "back" returns to the OPENING photograph exactly as it was, the way waking returns to the bed a dream started in; "cut": "new" jumps to a new framing or another place, and its "opening" is a snapshot of its own first frame, written like a closing. A cut clip begins with an airlock. Never cut inside one continuous action.
 14. Travel and chases. A chase, a flight or a run covers distance: the one chased starts far ahead, small in the frame, the gap changes over the clip, and the camera moves with them ("follow"). Nothing travelling stops to pose: a clip whose action runs on into the next ends with a "carry" beat instead of a settle, its closing a snapshot of the motion under way (who is where in the frame, which way each moves, the background passing), and the next clip begins with a "carry" beat, at most {quiet_max:g} seconds, in which that motion goes on and nothing new starts. A carry is never the main event: the leap or the swipe is the clip's primary beat, and the carry only keeps that motion going for at most {quiet_max:g} seconds after it. Faces still show at a carry's close, but need not turn to the camera.
+16. Leaving. A member that flies, runs or walks off goes away from the camera: it grows smaller in the frame while the camera stays behind ("stay"), and the closing says how small it has become and where (a small dark shape high in the upper right of the sky). It shows its back as it goes, so it is not in "faces_at_close". The camera follows it only in a later clip.
 15. Changes that last. When a member's look changes and stays changed (wings grow, a shirt gets soaked), the clip where it happens gives "looks": {{"cat": "two large grey-and-white feathered wings on its back"}}, the member's look from the end of that clip on, in at most {look_words} words. The program says it in every later clip, so a later clip does not repeat it; a "back" cut ends every change.
 
 FIELDS
@@ -226,7 +227,7 @@ FIELDS
   - "camera": {{"move": one of the CAMERA MOVES, "toward": a cast id}}.
   - "mouths": every way a mouth opens in this clip, as short plain phrases with possessives and no braces ("his slow draw on the mouthpiece", "her giggle", "the two meows of the cat"); [] when every mouth stays closed.
   - "closing": one snapshot sentence of at most {closing_words} words, as rule 1 says.
-  - "faces_at_close": the id of every person and animal in the closing.
+  - "faces_at_close": the id of every person and animal in the closing whose face shows; one leaving with its back to the camera is left out (rule 16).
   - "irreversible_change": at most 20 words.
   - "looks": {{}} unless a member's look changes for good in this clip (rule 15).
   - "ambience": "" in the first place; in another place, one noun phrase of the sound heard there ("wind rushing past and distant birdsong high above the trees").
@@ -351,7 +352,7 @@ SENTENCES = {
     "mouths_none": "Every visible mouth stays closed.",
     "line": "says in {voice}, <d>[{language}] {words}</d> The lips close as the line ends.",
     "settle": "{timing} the arrangement settles: {arrangement}, as the camera holds on this settled {shot} through the end of the video.",
-    "carry": "{timing} the motion carries on without stopping, the camera still moving with it, through the end of the video: {arrangement}.",
+    "carry": "{timing} the motion carries on without stopping through the end of the video: {arrangement}.",
     "settle_lands": "{timing} the arrangement settles into <Picture 2>: {arrangement}, as the camera holds on this settled {shot} until the final frame matches <Picture 2>.",
     "room_sound": "{ambience} continues throughout.",
     "room_sound_continued": "The room sound of <Audio 1> continues throughout, the same {ambience}.",
@@ -398,6 +399,7 @@ CAMERA_MOVES = {
     "tilt_down": "The camera tilts down with small amplitude at slow speed toward {toward}.",
     # Moves that travel: a chase or a flight covers distance, and a camera that holds makes it hover.
     "follow": "The camera travels with {toward} at its speed, keeping it in frame as the background streams past.",
+    "stay": "The camera stays where it is while {toward} moves away from it, growing smaller in the frame.",
     "crane_up": "The camera rises with large amplitude at medium speed, following {toward} upward.",
 }
 MUSIC = "N/A"  # a score regenerated per chunk cannot be continuous; add music after the join
