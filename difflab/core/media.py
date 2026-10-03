@@ -87,6 +87,68 @@ def color_gain(frame: Frame, toward: Frame, strength: float) -> torch.Tensor:
     return torch.pow(target / source, strength)
 
 
+# Measured on a take of production 9 (2026-10-04), five chunks: within each chunk a* rose by
+# 2-3 and the spread of a*, b* and L by about x1.15, and each chunk opened on the one before's colour,
+# so a* ran 2.4 (the photo) to 11.0 and chroma spread x2.3 by 38 s. A change of place is far larger than
+# one chunk's drift (a blue sky moves b* by tens), so a correction capped at drift's size leaves it alone.
+HOLD_SHIFT = 4.0  # most a*/b* mean moved per chunk, in Lab units
+HOLD_RATIO = (0.8, 1.25)  # most a spread is scaled per chunk
+_XYZ = torch.tensor([[0.4124, 0.3576, 0.1805], [0.2126, 0.7152, 0.0722], [0.0193, 0.1192, 0.9505]])
+_WHITE = torch.tensor([0.95047, 1.0, 1.08883])
+
+
+def _lab(rgb: torch.Tensor) -> torch.Tensor:
+    linear = torch.where(rgb <= 0.04045, rgb / 12.92, ((rgb + 0.055) / 1.055) ** 2.4)
+    xyz = linear @ _XYZ.T / _WHITE
+    f = torch.where(xyz > 216 / 24389, xyz.clamp_min(0) ** (1 / 3), (24389 / 27 * xyz + 16) / 116)
+    return torch.stack((116 * f[..., 1] - 16, 500 * (f[..., 0] - f[..., 1]), 200 * (f[..., 1] - f[..., 2])), -1)
+
+
+def _rgb(lab: torch.Tensor) -> torch.Tensor:
+    fy = (lab[..., 0] + 16) / 116
+    f = torch.stack((fy + lab[..., 1] / 500, fy, fy - lab[..., 2] / 200), -1)
+    xyz = torch.where(f**3 > 216 / 24389, f**3, (116 * f - 16) / (24389 / 27)) * _WHITE
+    linear = (xyz @ torch.linalg.inv(_XYZ).T).clamp(0, 1)
+    return torch.where(linear <= 0.0031308, 12.92 * linear, 1.055 * linear ** (1 / 2.4) - 0.055)
+
+
+def _lab_stats(pixels: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    lab = _lab(pixels[::4, ::4].float()).reshape(-1, 3)
+    return lab.mean(0), lab.std(0).clamp_min(1e-3)
+
+
+def hold_colour(clip: Clip, toward: Frame, strength: float) -> Clip:
+    """`clip` with the colour cast and the spread it gained since `toward`, its opening, taken out.
+
+    Brightness is left to the take, since light may change; the cast and the chroma and contrast spread
+    are what a chunk inflates on its own. Measured per frame, smoothed over a second so a passing change
+    survives, and capped at one chunk's drift (HOLD_SHIFT, HOLD_RATIO) so a real change of place does."""
+    if not strength:
+        return clip
+    target_mean, target_spread = _lab_stats(toward.pixels)
+    stats = [_lab_stats(frame) for frame in clip.frames]
+    window = max(1, clip.fps)
+    means = _smooth(torch.stack([m for m, _ in stats]), window)
+    spreads = _smooth(torch.stack([s for _, s in stats]), window)
+    frames = clip.frames.clone()
+    for index in range(len(frames)):
+        mean, spread = means[index], spreads[index]
+        shift = ((target_mean - mean) * strength).clamp(-HOLD_SHIFT, HOLD_SHIFT)
+        shift[0] = 0.0
+        ratio = ((target_spread / spread) ** strength).clamp(*HOLD_RATIO)
+        lab = _lab(frames[index].float())
+        frames[index] = _rgb((lab - mean) * ratio + mean + shift).to(frames.dtype)
+    return replace(clip, frames=frames)
+
+
+def _smooth(rows: torch.Tensor, window: int) -> torch.Tensor:
+    """A centred moving average with the ends repeated, so the first and last second are not dragged."""
+    pad = window // 2
+    padded = torch.nn.functional.pad(rows.t()[None], (pad, pad), mode="replicate")
+    kernel = torch.ones(rows.shape[1], 1, window, dtype=rows.dtype) / window
+    return torch.nn.functional.conv1d(padded, kernel, groups=rows.shape[1])[0].t()[: len(rows)]
+
+
 @overload
 def recolored(item: Frame, gain: torch.Tensor) -> Frame: ...
 

@@ -42,11 +42,16 @@ def handoff(clip: Clip, window: int, tail_frames: int, anchor: Frame | None = No
     return Handoff(frame, tail, cut)
 
 
-def handoff_key(chunk: Key, window: int, tail_frames: int, anchor: Frame | None, strength: float) -> Key:
-    """Keyed by the chunk it comes from and what was taken from it. The anchor counts only when it is
-    applied, so turning the colour pull off does not move every handoff."""
+def handoff_key(
+    chunk: Key, window: int, tail_frames: int, anchor: Frame | None, strength: float, hold: float = 0.0
+) -> Key:
+    """Keyed by the chunk it comes from and what was taken from it. The anchor and the hold count only
+    when applied, so turning either off does not move every handoff."""
     pulled = anchor.pixels if anchor is not None and strength else None
-    return key("handoff", 1, chunk=str(chunk), window=window, tail_frames=tail_frames, anchor=pulled, strength=strength)
+    held = {"hold": hold} if hold else {}
+    return key(
+        "handoff", 1, chunk=str(chunk), window=window, tail_frames=tail_frames, anchor=pulled, strength=strength, **held
+    )
 
 
 def files(at: Key) -> tuple[Path, Path, Path]:

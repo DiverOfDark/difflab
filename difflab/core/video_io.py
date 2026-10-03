@@ -1,6 +1,6 @@
 """Mux decoded frames and audio into an MP4 (ComfyUI's CreateVideo + SaveVideo).
 
-H.264 video at 24 fps in yuv420p with BT.709 tags, AAC audio at the VAE's 32 kHz, stereo. The two
+H.264 video at 24 fps in yuv420p, converted and tagged as BT.709, AAC audio at the VAE's 32 kHz, stereo. The two
 streams do not divide evenly — 362 frames at 24 fps is 15.083 s while 603 audio latents at 40 Hz is
 15.075 s — so the waveform is trimmed to `ceil(sample_rate / fps * frames)` samples, as ComfyUI does.
 """
@@ -15,6 +15,14 @@ import torch
 
 from difflab.core import ui
 from difflab.core.audio import SAMPLE_RATE, limited
+
+# An untagged H.264 stream is read by players as BT.709 at this size, and swscale converts to BT.601
+# unless told otherwise: the skin and the reds of every take shifted on playback before both said 709.
+BT709 = {"x264-params": "colorprim=bt709:transfer=bt709:colormatrix=bt709"}
+
+
+def yuv(pixels: np.ndarray) -> av.VideoFrame:
+    return av.VideoFrame.from_ndarray(pixels, format="rgb24").reformat(format="yuv420p", dst_colorspace="itu709")
 
 
 def output_path(out_dir: str | Path, name: str, seed: int | None = None) -> Path:
@@ -45,14 +53,14 @@ def save_video(
         audio = limited(waveform[:, :samples].contiguous().float().numpy()) if waveform is not None else None
 
         with av.open(str(path), "w", format="mp4") as container:
-            video_stream = container.add_stream("h264", rate=Fraction(round(fps * 1000), 1000))
+            video_stream = container.add_stream("h264", rate=Fraction(round(fps * 1000), 1000), options=dict(BT709))
             video_stream.width, video_stream.height = width, height
             video_stream.pix_fmt = "yuv420p"
             audio_stream = container.add_stream("aac", rate=sample_rate, layout="stereo") if audio is not None else None
 
             for frame in frames:
                 pixels = (frame.clamp(0, 1) * 255).round().to(torch.uint8).numpy()
-                picture = av.VideoFrame.from_ndarray(pixels, format="rgb24").reformat(format="yuv420p")
+                picture = yuv(pixels)
                 container.mux(video_stream.encode(picture))
             container.mux(video_stream.encode(None))
 
@@ -94,7 +102,7 @@ class VideoWriter:
         self.width, self.height = width, height
         self.frames = 0
         self._container = av.open(str(path), "w", format="mp4", options={"movflags": "faststart"})
-        options = {"crf": str(crf)} if crf is not None else {}
+        options = {**BT709, **({"crf": str(crf)} if crf is not None else {})}
         self._video = self._container.add_stream("h264", rate=Fraction(round(fps * 1000), 1000), options=options)
         self._video.width, self._video.height = width, height
         self._video.pix_fmt = "yuv420p"
@@ -110,7 +118,7 @@ class VideoWriter:
                 piece if piece.dtype == torch.uint8 else (piece.clamp(0, 1) * 255).round().to(torch.uint8)
             ).numpy()
             for picture in pixels:
-                frame = av.VideoFrame.from_ndarray(picture, format="rgb24").reformat(format="yuv420p")
+                frame = yuv(picture)
                 self._container.mux(self._video.encode(frame))
         self.frames += len(frames)
 

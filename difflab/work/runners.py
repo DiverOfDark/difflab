@@ -127,8 +127,14 @@ def run_render_shot(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
     chunk = render_chunk.chunk_key(opening, prompt, video, references, tail, clips, scale, closing)
     # A shot that ends on the next one's keyframe is cut on its very last frame, the one pinned to it.
     window = 1 if closing is not None else continuity.handoff_window
-    at = handoff.handoff_key(chunk, window, continuity.tail_frames, anchor, strength)
-    latents_file, mp4, soundtrack = cache.path(chunk, ".pt"), cache.path(chunk, ".mp4"), cache.path(chunk, ".audio.pt")
+    hold = continuity.color_hold
+    at = handoff.handoff_key(chunk, window, continuity.tail_frames, anchor, strength, hold)
+    finished = key("held", 1, chunk=str(chunk), hold=hold) if hold else chunk
+    latents_file, mp4, soundtrack = (
+        cache.path(chunk, ".pt"),
+        cache.path(finished, ".mp4"),
+        cache.path(chunk, ".audio.pt"),
+    )
     frame_file, tail_file, _ = handoff.files(at)
     outputs: dict[str, Any] = {
         "key": str(chunk),
@@ -172,6 +178,9 @@ def run_render_shot(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
     finally:
         previews.target(None, "clip")
     clip = render_chunk.decode(latents)
+    if hold:
+        with ui.step("Holding colour"):
+            clip = media.hold_colour(clip, opening, hold)
     with ui.step("Handoff") as detail:
         made = handoff.handoff(clip, window, continuity.tail_frames, anchor, strength)
         handoff.save(made, at)

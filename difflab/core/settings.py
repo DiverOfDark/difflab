@@ -300,6 +300,17 @@ class Continuity(Settings):
         high=1,
     )
 
+    # The cause of the drift above, measured on production 9: each chunk inflates its own cast and
+    # chroma as it goes, and the next opens on that. Held at the source, a chunk hands on the colour it
+    # was given (`media.hold_colour`), capped so a real change of light or place survives.
+    color_hold: float = setting(
+        1.0,
+        "colour hold",
+        "each chunk's colour cast and contrast held to the frame it opened on: 0 off, 1 fully",
+        low=0,
+        high=1,
+    )
+
     @property
     def tail_frames(self) -> int:
         """Frames of motion carried into the next chunk: 0 below the grid's five-frame minimum."""
