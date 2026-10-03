@@ -161,6 +161,48 @@ def parity_chain() -> int:
     return made.id
 
 
+def replay_rulings() -> None:
+    """The 27B's rulings beside the word lists, over every stored plan. Loads the VLM: not beside a render."""
+    import json
+
+    from difflab import store
+    from difflab.screenplay import checks, compiler
+    from difflab.screenplay import config as h3
+    from difflab.tools import ruling
+
+    h3.RULINGS = "on"
+    with store.connect() as connection:
+        jobs = connection.execute(
+            "SELECT inputs FROM jobs WHERE tool = 'plan_shots' AND state = 'done' ORDER BY id DESC"
+        )
+        ideas: dict[tuple[int, int], str] = {}
+        for row in jobs:
+            asked = json.loads(row["inputs"])
+            ideas.setdefault((int(asked["production"]), int(asked["chapter"])), str(asked["idea"]))
+        takes = {}
+        for (production_id, chapter_id), idea in ideas.items():
+            found = store.production(connection, production_id)
+            chapter = next((c for c in store.chapters_of(connection, production_id) if c.id == chapter_id), None)
+            if found is not None and chapter is not None:
+                takes[production_id, chapter_id] = (idea, compiler.take_of(connection, found, chapter))
+    for (production_id, chapter_id), (idea, take) in takes.items():
+        where = f"production {production_id} · chapter {chapter_id}"
+        pairs = [
+            ("story", checks.story_rules(idea, list(take.story), take), ruling.story(idea, list(take.story), take)),
+            ("mouths", checks.mouth_rules(take), ruling.mouths(take)),
+        ]
+        for index, chunk in enumerate(take.chunks):
+            prose = [beat.prose for beat in compiler.written(chunk) if beat.prose]
+            if prose:
+                prose.append(chunk.summary)
+                listed = checks.vocal_rules(prose, chunk.sounds, chunk.mouths)
+                pairs.append((f"voices {index + 1}", listed, ruling.voices(prose, chunk.sounds, chunk.mouths)))
+        for check, listed, ruled in pairs:
+            rows = {f"word lists {i}": p.message for i, p in enumerate(listed)}
+            rows |= {f"ruling {i}": p.message for i, p in enumerate(ruled)}
+            ui.panel(f"{where} · {check}", rows or {"both": "nothing"}, color="cyan" if not rows else "yellow")
+
+
 def serve() -> None:
     """No GPU. What Run does, and what a pod runs (`pixi run python -m difflab.api`): it holds the port, so
     every render started anywhere else records into this page rather than serving one of its own."""

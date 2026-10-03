@@ -228,22 +228,13 @@ def story_rules(idea: str, story: list[tuple[str, int]], take: compose.Take) -> 
     clip it names, so a giggle moved to another clip goes back. A beat number is not asked for: the
     writer miscounts beats. The IDEA's actions are found by their inflected verbs, clause by clause,
     and a clause with a negation ("nobody speaks") is a rule, not an event. All repairable."""
-    out: list[Problem] = []
-    vocabulary = set(tokens(idea))
-    covered: set[str] = set()
+    out, kept = story_bounds(idea, story, take)
+    covered = {stem(word) for event, _ in story for word in tokens(event) if _verbish(word)}
 
     def fail(message: str) -> None:
         out.append(Problem("error", "story", message, True))
 
-    for event, clip in story:
-        verbs = {stem(word) for word in tokens(event) if _verbish(word)}
-        covered |= verbs
-        if not set(tokens(event)) <= vocabulary:
-            fail(f"story: '{event}' is not in the IDEA's own words; quote them")
-            continue
-        if not 1 <= clip <= len(take.chunks):
-            fail(f"story: '{event}' points to clip {clip}, which does not exist")
-            continue
+    for event, clip in kept:
         beats = take.chunks[clip - 1].beats
         moving = {stem(word) for beat in beats if beat.phase not in QUIET for word in tokens(beat.action)}
         still = {stem(word) for beat in beats if beat.phase in QUIET for word in tokens(beat.action)}
@@ -261,6 +252,22 @@ def story_rules(idea: str, story: list[tuple[str, int]], take: compose.Take) -> 
             said = " ".join(part.split())
             fail(f"story: the IDEA's '{said}' is in no event; add it with the clip that shows it")
     return out
+
+
+def story_bounds(
+    idea: str, story: list[tuple[str, int]], take: compose.Take
+) -> tuple[list[Problem], list[tuple[str, int]]]:
+    """The events quoted from the IDEA that point at a clip that exists, and a problem for every other."""
+    out, kept = [], []
+    vocabulary = set(tokens(idea))
+    for event, clip in story:
+        if not set(tokens(event)) <= vocabulary:
+            out.append(Problem("error", "story", f"story: '{event}' is not in the IDEA's own words; quote them", True))
+        elif not 1 <= clip <= len(take.chunks):
+            out.append(Problem("error", "story", f"story: '{event}' points to clip {clip}, which does not exist", True))
+        else:
+            kept.append((event, clip))
+    return out, kept
 
 
 def plan_rules(take: compose.Take) -> list[Problem]:
@@ -293,7 +300,7 @@ def plan_rules(take: compose.Take) -> list[Problem]:
             fail("place", f"{clip}: its 'cast' names exactly one place, the one it happens in, not {places}")
             continue
         if chunk.cut not in compose.CUTS or (index == 0 and chunk.cut):
-            fail("cut", f"{clip}: 'cut' is \"\" (it continues), \"back\" or \"new\", and clip 1 does not cut")
+            fail("cut", f'{clip}: \'cut\' is "" (it continues), "back" or "new", and clip 1 does not cut')
         elif chunk.cut == "new" and not compose.PLACEHOLDER.search(chunk.opening):
             fail("cut", f"{clip}: a \"new\" cut writes its 'opening', the first frame, naming every member in it")
         for member, change in chunk.looks.items():
@@ -428,7 +435,6 @@ def plan_rules(take: compose.Take) -> list[Problem]:
                 fail("sides", f"{clip}: say sides as sides of the frame ('at the left of the frame'), not "
                      f"'{side.group(0)}'")  # fmt: skip
                 break
-        out += [Problem("error", "mouths", message, True) for message in _mouth_problems(take, index)]
         if not chunk.irreversible_change.strip():
             fail("change", f"{clip}: name the irreversible change")
         for line in chunk.dialogue:
@@ -437,6 +443,14 @@ def plan_rules(take: compose.Take) -> list[Problem]:
                 fail("dialogue", f"{clip}: a line starts after the airlock and ends "
                      f"{config.DIRECTOR_DIALOGUE_TAIL:g} seconds before the clip does")  # fmt: skip
     return out
+
+
+def mouth_rules(take: compose.Take) -> list[Problem]:
+    return [
+        Problem("error", "mouths", message, True)
+        for index in range(len(take.chunks))
+        for message in _mouth_problems(take, index)
+    ]
 
 
 def _mouth_problems(take: compose.Take, index: int) -> list[str]:

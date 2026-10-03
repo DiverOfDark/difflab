@@ -15,7 +15,7 @@ from difflab.screenplay import checks as lint
 from difflab.screenplay import compiler as compose
 from difflab.screenplay import config as h3
 from difflab.screenplay import words
-from difflab.tools import direct
+from difflab.tools import direct, ruling
 
 PROSE = {"type": "string", "maxLength": h3.DIRECTOR_WRITE_CHARS}
 
@@ -129,7 +129,7 @@ def write_one(take: compose.Take, index: int) -> compose.Take:
         if not set(re.findall(r"\{([a-z_]+)\}", str(data["summary"]))) & living:
             found.append(direct.problem('the "summary" names the members who act as {id}, in braces'))
         prose = [str(text) for text in [*data["beats"], data["summary"]]]
-        found += lint.vocal_rules(prose, str(data["sounds"]), planned.mouths)
+        found += ruling.voices(prose, str(data["sounds"]), planned.mouths)
         return found or chunk_problems(_with_prose(before, index, data), index)
 
     data = direct.ask_json(

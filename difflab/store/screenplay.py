@@ -236,9 +236,7 @@ def chain_keyframe(connection: sqlite3.Connection, shot_id: int) -> Keyframe:
     return keyframe_of(connection, shot_id)
 
 
-def compose_keyframe(
-    connection: sqlite3.Connection, shot_id: int, seed: int | None = None, note: str = ""
-) -> Keyframe:
+def compose_keyframe(connection: sqlite3.Connection, shot_id: int, seed: int | None = None, note: str = "") -> Keyframe:
     """The editor will make it from the plan's words over a reference of the room."""
     connection.execute(
         "UPDATE keyframes SET source = ?, provided = NULL, artifact = NULL, note = ?, state = ?, pinned = 0, "

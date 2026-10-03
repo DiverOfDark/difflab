@@ -12,7 +12,7 @@ from difflab.screenplay import checks as lint
 from difflab.screenplay import compiler as compose
 from difflab.screenplay import config as h3
 from difflab.screenplay import words
-from difflab.tools import direct
+from difflab.tools import direct, ruling
 
 
 def on_grid(seconds: float, longest: float) -> float:
@@ -113,10 +113,10 @@ def plan(base: compose.Take, idea: str, total: float) -> compose.Take:
         # Never returned alone: an answer stopped here counted one problem and was kept over answers that
         # broke fewer rules, unchecked - a 72 s plan whose closings named members missing from the next cast.
         take = _take_from_plan(data, base)
-        out += lint.plan_rules(take)
+        out += lint.plan_rules(take) + ruling.mouths(take)
         if not story(data):
             out.append(direct.problem('"story" lists every action of the IDEA with the clip that shows it'))
-        return out + lint.story_rules(idea, list(story(data)), take)
+        return out + ruling.story(idea, list(story(data)), take)
 
     data = direct.ask_json(
         system, question, [], gate, "plan", h3.DIRECTOR_TOKENS["plan"], repairs=h3.DIRECTOR_PLAN_REPAIRS
