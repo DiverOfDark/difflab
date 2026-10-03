@@ -72,70 +72,89 @@ def _fail(code: str, message: str) -> Problem:
     return Problem("error", code, message, True)
 
 
-def story(idea: str, events: list[tuple[str, int]], take: compose.Take) -> list[Problem]:
-    """Every event of the IDEA is in the story, shown by a moving beat of its clip with the IDEA's own verb."""
-    out, kept = lint.story_bounds(idea, events, take)
+def events(idea: str) -> list[str]:
+    """The IDEA's events in its own words, from the IDEA alone: every repair of a plan is held to the same list."""
+    actions = lint.actions_of(idea).strip()
+    data = ask(
+        "events",
+        words.RULING_EVENTS_SYSTEM,
+        words.RULING_EVENTS_USER.format(idea=actions),
+        _object(events=_array(QUOTE)),
+    )
+    return list(dict.fromkeys(q for q in map(str, data["events"]) if q.strip()))
+
+
+def story(idea: str, listed: list[tuple[str, int]], take: compose.Take) -> list[Problem]:
+    """Every event of the IDEA shown by a moving beat with the IDEA's own verb, one question per event."""
+    out, kept = lint.story_bounds(idea, listed, take)
     clips = "\n".join(
         f"Clip {index + 1}\n" + "\n".join(f"  {n}. [{b.phase}] {b.action}" for n, b in enumerate(chunk.beats, 1))
         for index, chunk in enumerate(take.chunks)
     )
-    listed = "\n".join(f'{n}. "{event}" - clip {clip}' for n, (event, clip) in enumerate(kept, 1))
-    question = words.RULING_STORY_USER.format(idea=lint.actions_of(idea).strip(), clips=clips, events=listed)
+    story = "\n".join(f'- "{event}" - clip {clip}' for event, clip in kept) or "(empty)"
     most = max((len(chunk.beats) for chunk in take.chunks), default=0)
-    schema = _object(events=_array(_object(beat=_number(most), faithful=FLAG), len(kept)), missing=_array(QUOTE))
-    data = ask("story", words.RULING_STORY_SYSTEM, question, schema)
-    for (event, clip), verdict in zip(kept, data["events"], strict=True):
-        beats, number = take.chunks[clip - 1].beats, int(verdict["beat"])
+    schema = _object(clip=_number(len(take.chunks)), beat=_number(most), faithful=FLAG)
+    asked = []
+    for wish in events(idea):
+        question = words.RULING_STORY_USER.format(clips=clips, story=story, event=f'"{wish}"')
+        asked.append(question)
+        found = ask("story", words.RULING_STORY_SYSTEM, question, schema)
+        clip, number = int(found["clip"]), int(found["beat"])
+        beats = take.chunks[clip - 1].beats if 1 <= clip <= len(take.chunks) else ()
         if not 1 <= number <= len(beats):
-            out.append(_fail("story", f"story: '{event}' is in clip {clip}, but no beat's action there shows it: say "
-                             "it in the action of the beat that shows it, with the IDEA's own verb"))  # fmt: skip
-        elif beats[number - 1].phase in lint.QUIET:
-            out.append(_fail("story", f"story: '{event}' happens in an airlock or settle beat of clip {clip}, which "
-                             "hold still: move it to a build, primary, handoff or reaction beat"))  # fmt: skip
-        elif not verdict["faithful"]:
-            out.append(_fail("story", f"story: '{event}' is beat {number} of clip {clip}, but its action does "
-                             "something else: say it with the IDEA's own verb and count"))  # fmt: skip
-    out += [
-        _fail("story", f"story: the IDEA's '{quote}' is in no event; add it with the clip that shows it")
-        for quote in map(str, data["missing"])
-        if quote.strip() and _plain(quote) in _plain(idea)
-    ]
-    return _decide("story", lambda: lint.story_rules(idea, events, take), out, question)
+            out.append(_fail("story", f"story: no beat's action shows the IDEA's '{wish}': show it in the action of "
+                             "the beat where it happens, with the IDEA's own verb, and list it in story with that "
+                             "clip"))  # fmt: skip
+        elif (phase := beats[number - 1].phase) in lint.QUIET:
+            out.append(_fail("story", f"story: the IDEA's '{wish}' happens in the {phase} beat of clip {clip}, which "
+                             "holds still: move it to a build, primary, handoff or reaction beat"))  # fmt: skip
+        elif not found["faithful"]:
+            out.append(_fail("story", f"story: beat {number} of clip {clip} shows the IDEA's '{wish}' with another "
+                             "action or count: say it with the IDEA's own verb and count"))  # fmt: skip
+    return _decide("story", lambda: lint.story_rules(idea, listed, take), out, "\n\n".join(asked))
 
 
 def mouths(take: compose.Take) -> list[Problem]:
-    """Each clip's "mouths" against its beats, both ways. The settle is written from the closing, so it is left out."""
-    written = [compose.written(chunk) for chunk in take.chunks]
-
-    def who(beat: compose.Beat) -> str:
-        return ", ".join(f"{{{m}}} ({take.cards[m].possessive})" if m in take.cards else f"{{{m}}}" for m in beat.who)
-
-    clips = "\n".join(
-        f"Clip {index + 1}\n"
-        + "\n".join(f"  {n}. [{b.phase}] who: {who(b) or '-'} - {b.action}" for n, b in enumerate(beats, 1))
-        for index, beats in enumerate(written)
-    )
-    entries = [(index, str(entry)) for index, chunk in enumerate(take.chunks) for entry in chunk.mouths]
-    listed = "\n".join(f'{n}. clip {index + 1}: "{entry}"' for n, (index, entry) in enumerate(entries, 1)) or "(none)"
-    question = words.RULING_MOUTHS_USER.format(clips=clips, mouths=listed)
-    most = max((len(beats) for beats in written), default=0)
-    unlisted = _object(clip=_number(len(take.chunks)), beat=_number(most), what=QUOTE)
-    schema = _object(mouths=_array(_object(smile=FLAG, beat=_number(most)), len(entries)), unlisted=_array(unlisted))
-    data = ask("mouths", words.RULING_MOUTHS_SYSTEM, question, schema)
+    """Each clip's "mouths" against its beats, both ways, one question per clip. The settle is written from the
+    closing, so it is left out."""
     out = []
-    for (index, entry), verdict in zip(entries, data["mouths"], strict=True):
-        if verdict["smile"]:
-            out.append(_fail("mouths", f"clip {index + 1}: '{entry}' - a smile keeps the lips closed; leave it out "
-                             "of mouths"))  # fmt: skip
-        elif not 1 <= int(verdict["beat"]) <= len(written[index]):
-            out.append(_fail("mouths", f"clip {index + 1}: mouths has '{entry}', but no beat's action has it done: "
-                             "add it to the beat where it happens, or leave it out of mouths"))  # fmt: skip
-    for found in data["unlisted"]:
-        clip, what = int(found["clip"]), str(found["what"])
-        if 1 <= clip <= len(take.chunks):
-            out.append(_fail("mouths", f"clip {clip}: beat {found['beat']}'s action has {what}, which opens a mouth: "
-                             f"list it in mouths ('{what}')"))  # fmt: skip
-    return _decide("mouths", lambda: lint.mouth_rules(take), out, question)
+    asked = []
+    for index, chunk in enumerate(take.chunks):
+        beats, entries = compose.written(chunk), [str(entry) for entry in chunk.mouths]
+
+        def who(beat: compose.Beat) -> str:
+            return ", ".join(
+                f"{{{m}}} ({take.cards[m].possessive})" if m in take.cards else f"{{{m}}}" for m in beat.who
+            )
+
+        question = words.RULING_MOUTHS_USER.format(
+            beats="\n".join(f"{n}. [{b.phase}] who: {who(b) or '-'} - {b.action}" for n, b in enumerate(beats, 1)),
+            mouths="\n".join(f'{n}. "{entry}"' for n, entry in enumerate(entries, 1)) or "(none)",
+        )
+        asked.append(question)
+        opening = _object(beat=_number(len(beats)), quote=QUOTE, what=QUOTE, entries=_array(_number(len(entries))))
+        schema = _object(openings=_array(opening), mouths=_array(_object(opens=FLAG), len(entries)))
+        data = ask("mouths", words.RULING_MOUTHS_SYSTEM, question, schema)
+        clip, done, unlisted = f"clip {index + 1}", set(), dict[str, str]()
+        for found in data["openings"]:
+            number, what = int(found["beat"]), str(found["what"])
+            named = {int(n) for n in found["entries"]} & set(range(1, len(entries) + 1))
+            if not 1 <= number <= len(beats) or _plain(str(found["quote"])) not in _plain(beats[number - 1].action):
+                continue
+            if named:
+                done |= named
+            else:
+                unlisted.setdefault(_plain(what), f"{clip}: beat {number}'s action has {what}, which opens a mouth: "
+                                    f"list it in mouths ('{what}')")  # fmt: skip
+        for n, (said, verdict) in enumerate(zip(entries, data["mouths"], strict=True), 1):
+            if not verdict["opens"]:
+                out.append(_fail("mouths", f"{clip}: '{said}' opens no mouth (a smile keeps the lips closed): leave "
+                                 "it out of mouths"))  # fmt: skip
+            elif n not in done:
+                out.append(_fail("mouths", f"{clip}: mouths has '{said}', but no beat's action has it done: add it "
+                                 "to the beat where it happens, or leave it out of mouths"))  # fmt: skip
+        out += [_fail("mouths", message) for message in unlisted.values()]
+    return _decide("mouths", lambda: lint.mouth_rules(take), out, "\n\n".join(asked))
 
 
 def voices(prose: list[str], sounds: str, allowed: tuple[str, ...]) -> list[Problem]:

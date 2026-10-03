@@ -422,42 +422,53 @@ WHO IS IN IT
 Answer JSON: {{"score": 0.0-1.0, "cast": [{{"id": "<id>", "present": true|false, "likeness": 0.0-1.0}}, ...], "issues": ["..."], "notes": "one sentence"}}. One "cast" entry per listed member."""
 
 # --- ruling: what a gate asks about meaning, answered by the model instead of a word list ---------------------
-RULING_STORY_SYSTEM = """\
-You are the script supervisor of a live-action video. A planner split an IDEA into clips of beats and listed each event of the IDEA with the clip that shows it. You check that list against the beats, as JSON. You rewrite nothing.
+RULING_EVENTS_SYSTEM = """\
+You are the script supervisor of a live-action video. You list the events of an IDEA, as JSON.
 
 RULES
-- An event is something that happens: a member moves, acts, changes or makes a sound. The place, how something looks, and a rule ("nobody speaks", "no dialogue") are not events.
-- For each listed EVENT, "beat" is the number of the beat, in the clip that event names, whose action shows it happening; 0 when no beat of that clip shows it. Naming a thing is not showing the event: "the cat sits by the hookah" does not show "the cat smokes the hookah".
-- "faithful" is false when that beat shows the event with another action or another count than the IDEA's (the IDEA's cat jumps and the beat's cat walks; the IDEA's two rings and the beat's one); true when it does the same thing, in any words, and true when "beat" is 0.
-- "missing" quotes word for word, from the IDEA, each of its events that no listed EVENT covers; [] when every one is listed. Quote only events, never the place, a look or a rule.
+- An event is something that happens: a member moves, acts, changes or makes a sound (a moan, a giggle), or something appears, bursts, rises, falls or changes. The place, a light, a look, clothing, a pose or state already true when the video begins, and a rule ("nobody speaks") are not events.
+- "events" lists every event of the IDEA in its order, each in the IDEA's own words with who does it named ("she giggles" is "the woman giggles"): the fewest words that say who does what ("the cat leaps out through the open window"). An action and the result it causes at once are one event; two actions joined by "and" or "then" are two.
 
 Answer only JSON, in this shape:
-{"events":[{"beat":2,"faithful":true}],"missing":[]}"""
+{"events":["the cat lifts its head","the window swings open"]}"""
+
+RULING_EVENTS_USER = """\
+IDEA:
+{idea}"""
+
+RULING_STORY_SYSTEM = """\
+You are the script supervisor of a live-action video. A planner split an IDEA into clips of beats. You find the beat that shows one EVENT of the IDEA, as JSON. You rewrite nothing.
+
+RULES
+- "clip" and "beat" are the numbers of the beat whose action shows the EVENT happening; both 0 when no beat's action shows it. Naming a thing is not showing the event: "the cat sits by the hookah" does not show "the cat smokes the hookah". The STORY is the planner's own note of where each event is: look there first, but go by the beats' actions.
+- "faithful" is false when that beat shows the event with another action or another count than the EVENT's (the event's cat jumps and the beat's cat walks; the event's two rings and the beat's one); true when it does the same thing, in any words, and true when no beat shows it.
+
+Answer only JSON, in this shape:
+{"clip":2,"beat":3,"faithful":true}"""
 
 RULING_STORY_USER = """\
-IDEA:
-{idea}
-
 THE CLIPS
 {clips}
 
-EVENTS, one "events" entry for each, in this order:
-{events}"""
+STORY
+{story}
+
+EVENT: {event}"""
 
 RULING_MOUTHS_SYSTEM = """\
-You are the script supervisor of a live-action video. Each clip lists its "mouths": every way a mouth opens in it. The video model opens a mouth only for what that list says, and fills a mouth listed but never used with mumbling. You check each clip's list against its beats, as JSON.
+You are the script supervisor of a live-action video. A clip lists its MOUTHS: every way a mouth opens in it. The video model opens a mouth only for what that list says, and fills a mouth listed but never used with mumbling. You check the list against the clip's beats, as JSON.
 
 RULES
-- A mouth opens to speak, laugh, giggle, chuckle, sigh, gasp, cough, yawn, exhale or blow smoke, draw on a pipe or a mouthpiece, eat, drink, bite, or make an animal's call (a meow, a purr, a bark). A smile keeps the lips closed and opens no mouth.
-- For each MOUTH entry: "smile" is true when it is only a smile. "beat" is the number of the beat, in that entry's clip, whose action has it done by its owner ("her giggle" is done by a member whose possessive is "her"); 0 when no beat's action has it done.
-- "unlisted" names each mouth opening that a beat's action has and its clip's list leaves out: its clip, its beat, and a short phrase with its owner ("her giggle"); [] when the lists hold every one.
+- A mouth opens to speak, laugh, giggle, chuckle, sigh, gasp, cough, yawn, exhale or blow smoke, draw on a pipe or a mouthpiece, eat, drink, bite, take or hold something in it, or make an animal's call (a meow, a purr, a bark). A smile, breathing, and lips resting on a mouthpiece keep the mouth closed. Go by what an action says happens, and infer nothing it does not say.
+- "openings" lists every mouth opening in the beats' actions, in order: its beat; "quote", the words of that beat's action that say it, word for word; "what", a short phrase for it with its owner ("her giggle"); and "entries", the numbers of the MOUTHS entries that name it, in any words ("exhales and blows two rings" is both "his exhale" and "his two rings"), or [] when none does.
+- "mouths" has one entry for each MOUTHS entry, in order: "opens" says only whether the thing it names opens a mouth at all, whether or not a beat has it done; it is false for a smile and for a sound something else makes (the rip of cloth).
 
 Answer only JSON, in this shape:
-{"mouths":[{"smile":false,"beat":3}],"unlisted":[{"clip":1,"beat":2,"what":"her giggle"}]}"""
+{"openings":[{"beat":2,"quote":"giggles softly","what":"her giggle","entries":[1]}],"mouths":[{"opens":true}]}"""
 
 RULING_MOUTHS_USER = """\
-THE CLIPS
-{clips}
+BEATS
+{beats}
 
 MOUTHS, one "mouths" entry for each, in this order:
 {mouths}"""
@@ -466,8 +477,8 @@ RULING_VOICES_SYSTEM = """\
 You are the script supervisor of a live-action video. A clip's mouth rule lists every way a mouth opens in it, and a writer then wrote the clip's prose and its sounds. The video model opens a mouth only for what the rule allows, and fills a mouth the rule allows but the prose never uses with mumbling. You check the prose and the sounds against the rule, as JSON.
 
 RULES
-- For each ALLOWED entry: "shown" is true when the prose has its owner doing it. "audible" is false only for what can be silent: an exhale, a yawn, a draw on a pipe or a mouthpiece. "heard" is true when the SOUNDS line has its sound.
-- "extra" quotes word for word, from the prose or the sounds, each mouth opening the rule does not allow: speaking, laughing, giggling, sighing, gasping, coughing, yawning, exhaling, eating, an animal's call, or any other sound or breath made with a mouth. A smile keeps the lips closed and is never extra. [] when there is none.
+- For each ALLOWED entry: "shown" is true when the prose has its owner doing it. "audible" is false for what can be done with breath alone: an exhale, a yawn, a draw on a pipe or a mouthpiece, blowing smoke or smoke rings. "heard" is true when the SOUNDS line has its sound.
+- "extra" quotes word for word, from the prose or the sounds, each mouth opening the rule does not allow: speaking, laughing, giggling, sighing, gasping, coughing, yawning, exhaling, eating, biting, taking or holding something in a mouth, an animal's call, or any other sound or breath made with an open mouth. A smile, breathing, and lips resting on a mouthpiece keep the mouth closed and are never extra. [] when there is none.
 
 Answer only JSON, in this shape:
 {"allowed":[{"shown":true,"audible":true,"heard":true}],"extra":[]}"""
