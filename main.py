@@ -184,7 +184,7 @@ def replay_rulings() -> None:
             if found is not None and chapter is not None:
                 takes[production_id, chapter_id] = (idea, compiler.take_of(connection, found, chapter))
     for (production_id, chapter_id), (idea, take) in takes.items():
-        problems = ruling.story(idea, list(take.story), take) + ruling.mouths(take)
+        problems = ruling.story(idea, list(take.story), take) + ruling.mouths(take) + ruling.leaving(take)
         for chunk in take.chunks:
             prose = [beat.prose for beat in compiler.written(chunk) if beat.prose]
             if prose:
