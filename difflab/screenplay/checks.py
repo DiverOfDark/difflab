@@ -46,18 +46,6 @@ PHASES = ("airlock", "carry", "build", "primary", "handoff", "reaction", "settle
 QUIET = ("airlock", "settle")  # beats in which nothing new happens
 AWAY = re.compile(r"\baway from the camera\b|\bsmall(?:er)? (?:shape|figure|dot|in the frame)\b", re.I)
 TRAVEL = {"follow", "crane_up", "stay"}  # camera moves that show a member travelling through space
-# Sounds a mouth makes, by word stem (`stem`): it opens for each one, so the mouth rule must list it.
-VOCAL = {"giggl": "giggle", "laugh": "laugh", "chuck": "chuckle", "meow": "meow", "exhal": "exhale", "sigh": "sigh",
-         "cough": "cough", "purr": "purr", "gasp": "gasp", "yawn": "yawn"}  # fmt: skip
-BREATHS = ("exhale", "yawn")  # shown, but not always heard: "a puff of smoke" is an exhale's sound
-SMILE = re.compile(r"\bsmil", re.I)
-# Words that say how a mouth moves rather than what it does: "her soft giggle" is matched on "giggle".
-MANNER = {"soft", "slow", "small", "short", "long", "single", "quiet", "gentle", "little", "brief", "light", "deep",
-          "loud", "faint", "their", "with", "from", "into", "onto", "once", "twice"}  # fmt: skip
-# Words ending in -s or -ing that are not verbs (`_verbish`).
-NOT_VERBS = {"across", "always", "towards", "afterwards", "perhaps", "sometimes", "whereas", "besides", "hers",
-             "during", "something", "nothing", "anything", "everything", "ceiling", "evening", "morning",
-             "building", "clothing", "seconds", "minutes", "photos", "pictures", "series"}  # fmt: skip
 
 
 def chunk_rules(text: str, labels: list[str], directive: str) -> list[Problem]:
@@ -165,48 +153,6 @@ def tokens(text: str) -> list[str]:
     return re.findall(r"[a-z]+", text.lower())
 
 
-def stem(word: str) -> str:
-    """ "giggles", "giggling", "giggle" -> "giggl": enough of a word to find it in another form."""
-    word = word.lower()
-    for suffix in ("ing", "ed", "s"):
-        if word.endswith(suffix) and len(word) - len(suffix) >= 3:
-            word = word[: -len(suffix)]
-            break
-    return (word.rstrip("e") if len(word) > 3 else word)[:5]
-
-
-def vocal(text: str) -> set[str]:
-    return {VOCAL[stem(word)] for word in tokens(text) if stem(word) in VOCAL}
-
-
-def vocal_rules(prose: list[str], sounds: str, mouths: tuple[str, ...]) -> list[Problem]:
-    """A chunk's mouth sounds against its mouth rule, both ways. All repairable, by the writer.
-
-    A giggle the rule allows but the prose never shows leaves a mouth open with nothing to do (H3
-    fills it with mumbling); one the prose shows but the rule forbids contradicts the rule."""
-    allowed, shown, heard = vocal(" ".join(mouths)), vocal(" ".join(prose)), vocal(sounds)
-    out = [
-        Problem("error", "mouths", f"the mouth rule allows '{sound}': show it in the beat where it happens", True)
-        for sound in sorted(allowed - shown)
-    ]
-    out += [
-        Problem("error", "mouths", f"the mouth rule allows '{sound}': put its sound in \"sounds\"", True)
-        for sound in sorted(allowed - heard - set(BREATHS))
-    ]
-    out += [
-        Problem("error", "mouths", f"'{sound}' is a mouth movement the mouth rule does not allow: leave it out", True)
-        for sound in sorted((shown | heard) - allowed)
-    ]
-    return out
-
-
-def _verbish(word: str) -> bool:
-    """An inflected verb, roughly: what an IDEA's events are told with ("blows", "jumps", "blowing")."""
-    if len(word) < 4 or word in NOT_VERBS:
-        return False
-    return (word.endswith("ing") and len(word) >= 6) or (word.endswith("s") and not word.endswith(("ss", "us", "is")))
-
-
 NUMBERED = re.compile(r"^\s*\d+[.)]\s+(.*)$", re.M)
 
 
@@ -219,39 +165,6 @@ def actions_of(idea: str) -> str:
     if numbered:
         return "\n".join(numbered)
     return "\n".join(line for line in idea.splitlines() if not re.match(r"\s*sound\s*:", line, re.I))
-
-
-def story_rules(idea: str, story: list[tuple[str, int]], take: compose.Take) -> list[Problem]:
-    """The plan's map of the IDEA's actions to clips: every action is somewhere, with its own verb.
-
-    `story` is (event, clip), the clip counted from 1; an event is checked against the beats of the
-    clip it names, so a giggle moved to another clip goes back. A beat number is not asked for: the
-    writer miscounts beats. The IDEA's actions are found by their inflected verbs, clause by clause,
-    and a clause with a negation ("nobody speaks") is a rule, not an event. All repairable."""
-    out, kept = story_bounds(idea, story, take)
-    covered = {stem(word) for event, _ in story for word in tokens(event) if _verbish(word)}
-
-    def fail(message: str) -> None:
-        out.append(Problem("error", "story", message, True))
-
-    for event, clip in kept:
-        beats = take.chunks[clip - 1].beats
-        moving = {stem(word) for beat in beats if beat.phase not in QUIET for word in tokens(beat.action)}
-        still = {stem(word) for beat in beats if beat.phase in QUIET for word in tokens(beat.action)}
-        missing = sorted(word for word in tokens(event) if _verbish(word) and stem(word) not in moving)
-        if missing and {stem(word) for word in missing} <= still:
-            fail(f"story: '{event}' happens in an airlock or settle beat of clip {clip}, which hold still: move it "
-                 "to a build, primary, handoff or reaction beat")  # fmt: skip
-        elif missing:
-            said = " and ".join(f"'{word}'" for word in missing)
-            fail(f"story: '{event}' is in clip {clip}, but no beat's action there says {said}: say it in the action "
-                 "of the beat that shows it, with the IDEA's own verb")  # fmt: skip
-    for part in re.split(r"[.;:,!?]|\band\b|\bthen\b|\bwhile\b", actions_of(idea), flags=re.I):
-        verbs = {stem(word) for word in tokens(part) if _verbish(word)}
-        if verbs and not verbs & covered and not NEGATION.search(part):  # "nobody speaks" is not an event
-            said = " ".join(part.split())
-            fail(f"story: the IDEA's '{said}' is in no event; add it with the clip that shows it")
-    return out
 
 
 def story_bounds(
@@ -442,41 +355,6 @@ def plan_rules(take: compose.Take) -> list[Problem]:
             if line.start < airlock or ends > seconds - config.DIRECTOR_DIALOGUE_TAIL:
                 fail("dialogue", f"{clip}: a line starts after the airlock and ends "
                      f"{config.DIRECTOR_DIALOGUE_TAIL:g} seconds before the clip does")  # fmt: skip
-    return out
-
-
-def mouth_rules(take: compose.Take) -> list[Problem]:
-    return [
-        Problem("error", "mouths", message, True)
-        for index in range(len(take.chunks))
-        for message in _mouth_problems(take, index)
-    ]
-
-
-def _mouth_problems(take: compose.Take, index: int) -> list[str]:
-    """The plan's "mouths" against its beats, both ways. A smile keeps the lips closed, so it is not a
-    mouth movement; the settle beat does not count, since it is written from the closing."""
-    chunk, clip = take.chunks[index], f"clip {index + 1}"
-    moving = compose.written(chunk)
-    out = []
-    for entry in chunk.mouths:
-        if SMILE.search(entry):
-            out.append(f"{clip}: '{entry}' - a smile keeps the lips closed; leave it out of mouths")
-            continue
-        wanted = {stem(word) for word in tokens(entry) if len(word) >= 4 and word not in MANNER}
-        owner = tokens(entry)[0] if tokens(entry) and tokens(entry)[0] in ("his", "her", "their", "its") else None
-        doers = [
-            beat
-            for beat in moving
-            if wanted & {stem(word) for word in tokens(beat.action)}
-            and (owner is None or any(take.cards[m].possessive == owner for m in beat.who))
-        ]
-        if wanted and not doers:
-            out.append(f"{clip}: mouths has '{entry}', but no beat's action has it done: add it to the beat where "
-                       "it happens, or leave it out of mouths")  # fmt: skip
-    listed = vocal(" ".join(chunk.mouths))
-    for sound in sorted(vocal(" ".join(beat.action for beat in moving)) - listed):
-        out.append(f"{clip}: a beat's action has a {sound}, which opens a mouth: list it in mouths ('her {sound}')")
     return out
 
 

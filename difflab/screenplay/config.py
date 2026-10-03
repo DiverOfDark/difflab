@@ -113,11 +113,7 @@ DIRECTOR_TRAIT_ORDER = (
 DIRECTOR_SHORT_TRAITS = {"person": 4, "animal": 4, "object": 2, "environment": 4}  # restated at first mention
 DIRECTOR_RETAIN_TRAITS = {"person": 6, "animal": 5, "object": 4, "environment": 7}  # in retention_analysis
 
-# The script supervisor (`tools/ruling.py`). Not DIRECTOR_: in "shadow" the word-list checks still decide
-# and each ruling that disagrees is only recorded, as a "ruling" event; "on" lets the rulings decide, and
-# their RULING_ words join the fingerprint.
-RULINGS = "shadow"
-RULING_TOKENS = 1024
+RULING_TOKENS = 1024  # the script supervisor's answers (`tools/ruling.py`): a verdict, not prose
 
 # The idea editor's numbers (`tools/refine_idea.py`). IDEA_, not DIRECTOR_: they rewrite ideas and
 # re-plan nothing.

@@ -1,13 +1,10 @@
-"""The VLM as script supervisor: the gate's questions of meaning, which word lists answered before."""
+"""The VLM as script supervisor: what the gate asks about the meaning of the plan's and the writer's words."""
 
 from __future__ import annotations
 
 import json
-import time
-from collections.abc import Callable
 from typing import Any
 
-from difflab.core import record
 from difflab.core.cache import cache
 from difflab.core.keys import key
 from difflab.models.exl3vl import ANY_JSON
@@ -52,18 +49,6 @@ def ask(title: str, system: str, question: str, schema: dict[str, Any]) -> Any:
     return data
 
 
-def _decide(check: str, word_lists: Callable[[], list[Problem]], ruled: list[Problem], question: str) -> list[Problem]:
-    if h3.RULINGS == "on":
-        return ruled
-    listed = word_lists()
-    if [p.message for p in listed] != [p.message for p in ruled]:
-        record.event("ruling", round(time.time(), 3), {
-            "check": check, "word_lists": [p.message for p in listed], "ruling": [p.message for p in ruled],
-            "question": question,
-        })  # fmt: skip
-    return listed
-
-
 def _plain(text: str) -> str:
     return " ".join(text.lower().split())
 
@@ -94,10 +79,8 @@ def story(idea: str, listed: list[tuple[str, int]], take: compose.Take) -> list[
     story = "\n".join(f'- "{event}" - clip {clip}' for event, clip in kept) or "(empty)"
     most = max((len(chunk.beats) for chunk in take.chunks), default=0)
     schema = _object(clip=_number(len(take.chunks)), beat=_number(most), faithful=FLAG)
-    asked = []
     for wish in events(idea):
         question = words.RULING_STORY_USER.format(clips=clips, story=story, event=f'"{wish}"')
-        asked.append(question)
         found = ask("story", words.RULING_STORY_SYSTEM, question, schema)
         clip, number = int(found["clip"]), int(found["beat"])
         beats = take.chunks[clip - 1].beats if 1 <= clip <= len(take.chunks) else ()
@@ -111,14 +94,13 @@ def story(idea: str, listed: list[tuple[str, int]], take: compose.Take) -> list[
         elif not found["faithful"]:
             out.append(_fail("story", f"story: beat {number} of clip {clip} shows the IDEA's '{wish}' with another "
                              "action or count: say it with the IDEA's own verb and count"))  # fmt: skip
-    return _decide("story", lambda: lint.story_rules(idea, listed, take), out, "\n\n".join(asked))
+    return out
 
 
 def mouths(take: compose.Take) -> list[Problem]:
     """Each clip's "mouths" against its beats, both ways, one question per clip. The settle is written from the
     closing, so it is left out."""
     out = []
-    asked = []
     for index, chunk in enumerate(take.chunks):
         beats, entries = compose.written(chunk), [str(entry) for entry in chunk.mouths]
 
@@ -131,7 +113,6 @@ def mouths(take: compose.Take) -> list[Problem]:
             beats="\n".join(f"{n}. [{b.phase}] who: {who(b) or '-'} - {b.action}" for n, b in enumerate(beats, 1)),
             mouths="\n".join(f'{n}. "{entry}"' for n, entry in enumerate(entries, 1)) or "(none)",
         )
-        asked.append(question)
         opening = _object(beat=_number(len(beats)), quote=QUOTE, what=QUOTE, entries=_array(_number(len(entries))))
         schema = _object(openings=_array(opening), mouths=_array(_object(opens=FLAG), len(entries)))
         data = ask("mouths", words.RULING_MOUTHS_SYSTEM, question, schema)
@@ -154,7 +135,7 @@ def mouths(take: compose.Take) -> list[Problem]:
                 out.append(_fail("mouths", f"{clip}: mouths has '{said}', but no beat's action has it done: add it "
                                  "to the beat where it happens, or leave it out of mouths"))  # fmt: skip
         out += [_fail("mouths", message) for message in unlisted.values()]
-    return _decide("mouths", lambda: lint.mouth_rules(take), out, "\n\n".join(asked))
+    return out
 
 
 def voices(prose: list[str], sounds: str, allowed: tuple[str, ...]) -> list[Problem]:
@@ -177,4 +158,4 @@ def voices(prose: list[str], sounds: str, allowed: tuple[str, ...]) -> list[Prob
         for quote in map(str, data["extra"])
         if quote.strip() and _plain(quote) in written
     ]
-    return _decide("voices", lambda: lint.vocal_rules(prose, sounds, allowed), out, question)
+    return out

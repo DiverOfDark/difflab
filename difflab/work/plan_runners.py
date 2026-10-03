@@ -40,8 +40,8 @@ def _frame(value: Any) -> Frame:
 def _fingerprint() -> dict[str, Any]:
     """The model, every prompt's words and every knob: a change to any of them is a different plan."""
     # The judge's, the composer's and the idea editor's words are not the planner's: a change to them
-    # re-plans nothing. Nor are the rulings' while they only shadow the word lists.
-    others = ("JUDGE_", "COMPOSE_", "IDEA_", *(() if knobs.RULINGS == "on" else ("RULING_",)))
+    # re-plans nothing.
+    others = ("JUDGE_", "COMPOSE_", "IDEA_")
     prompts = {name: value for name, value in vars(words).items() if name.isupper() and not name.startswith(others)}
     settings = {name: value for name, value in vars(knobs).items() if name.startswith("DIRECTOR_")}
     return {"model": direct.MODEL.get(), "prompts": prompts, "knobs": settings}
