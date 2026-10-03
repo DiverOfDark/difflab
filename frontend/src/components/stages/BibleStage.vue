@@ -776,6 +776,8 @@ const detach = (refId: number) => props.act(`ref ${refId}`, async () => said((aw
 
 .gap label.chip {
   cursor: pointer;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-btn);
 }
 
 .gap label.chip.off {
