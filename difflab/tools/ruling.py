@@ -160,3 +160,32 @@ def voices(prose: list[str], sounds: str, allowed: tuple[str, ...]) -> list[Prob
         if quote.strip() and _plain(quote) in written
     ]
     return out
+
+
+def traits(member: direct.Member, members: dict[str, direct.Member], listed: Any) -> list[Problem]:
+    """A card's traits that are not its own lasting look: another member's part, a thing held, a passing state."""
+    others = [m for m in members.values() if m.id != member.id]
+    phrases = [str(trait.get("phrase", "")) for trait in listed if isinstance(trait, dict)]
+    if not phrases:
+        return []
+    question = words.RULING_TRAITS_USER.format(
+        member=f"{member.id}, the {member.noun} ({member.kind})",
+        others="\n".join(f"- {m.id}: the {m.noun} ({m.kind})" for m in others) or "(none)",
+        traits="\n".join(f'{n}. "{phrase}"' for n, phrase in enumerate(phrases, 1)),
+    )
+    verdict = _object(
+        verdict={"type": "string", "enum": ["own", "other", "held", "moment"]},
+        of={"type": "string", "enum": ["", *(m.id for m in others)]},
+    )
+    data = ask("traits", words.RULING_TRAITS_SYSTEM, question, _object(traits=_array(verdict, len(phrases))))
+    out = []
+    for phrase, found in zip(phrases, data["traits"], strict=True):
+        if found["verdict"] == "other" and found["of"]:
+            out.append(_fail("answer", f"{member.id}: '{phrase}' is part of {found['of']}, which has its own card: "
+                             "leave it out"))  # fmt: skip
+        elif found["verdict"] == "held":
+            out.append(_fail("answer", f"{member.id}: '{phrase}' is held, not worn: leave it out"))
+        elif found["verdict"] == "moment":
+            out.append(_fail("answer", f"{member.id}: '{phrase}' is a state of the photo's moment, which the shot "
+                             "changes: record the look, not the pose of the moment"))  # fmt: skip
+    return out

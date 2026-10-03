@@ -3,17 +3,15 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 
 from difflab.core import ui
 from difflab.core.types import Frame
 from difflab.models.minimax_h3 import caption
-from difflab.screenplay import checks as lint
 from difflab.screenplay import compiler as compose
 from difflab.screenplay import config as h3
 from difflab.screenplay import crops, words
-from difflab.tools import direct
+from difflab.tools import direct, ruling
 
 
 def identify(frames: list[Frame], listed: list[list[direct.Member]]) -> list[dict[str, dict[str, Any]]]:
@@ -41,9 +39,10 @@ def identify(frames: list[Frame], listed: list[list[direct.Member]]) -> list[dic
             card = parse(data)
             missing = [member for member in wanted if member not in card]
             out = [direct.problem(f"record every listed member; missing: {missing}")] if missing else []
+            others = {m.id: m for m in members}
             for member in members:
                 entry = card.get(member.id, {"traits": [], "lights": []})
-                out += _trait_problems(member.id, entry["traits"])
+                out += _trait_problems(member.id, entry["traits"]) or ruling.traits(member, others, entry["traits"])
                 if member.kind == "environment" and not entry.get("lights"):
                     out.append(direct.problem(f'{member.id}: list every visible light source in "lights"'))
             return out
@@ -64,9 +63,6 @@ def _trait_problems(member: str, traits: Any) -> list[caption.Problem]:
             out.append(direct.problem(f'{member}: "part" is one of {", ".join(parts)}'))
         if not all(isinstance(trait.get(field), str) and trait[field].strip() for field in ("phrase", "short", "name")):
             out.append(direct.problem(f'{member}: every trait has "part", "phrase", "short" and "name"'))
-        elif trait.get("part") == "face" and (state := STATE.search(str(trait["phrase"]))):
-            out.append(direct.problem(f"{member}: '{trait['phrase']}' says '{state.group(0)}', which the shot changes: "
-                                      "record the look, not the pose of the moment"))  # fmt: skip
     return out
 
 
@@ -111,29 +107,6 @@ def _traits(entries: Any) -> tuple[compose.Trait, ...]:
     )
 
 
-# A pose of the photo's moment read as a look: production 10's card said "closed eyes" from a sleeping
-# photo, and the retention line then kept them closed in every shot.
-STATE = re.compile(r"\b(?:closed|shut|open(?:ed)?|half-open|asleep|sleeping|squinting|blinking|yawning)\b", re.I)
-HELD = re.compile(r"\b(?:in|between) (?:his|her|its|their|both) (?:left |right |front )?(?:hands?|paws?)\b", re.I)
-
-
-def _foreign(member: direct.Member, members: dict[str, direct.Member], traits: Any) -> list[caption.Problem]:
-    """Another member's trait (the man's "black hookah hose" belongs to the hookah's card), or one held
-    for the moment, which the take moves and which would contradict the hand the opening names."""
-    # its id and its head noun: "fluffy cat" is a cat, and "fluffy" names no member
-    others = {word for m in members.values() if m.id != member.id for word in (m.id, *lint.tokens(m.noun)[-1:])}
-    out = []
-    for trait in traits:
-        phrase = str(trait.get("phrase", ""))
-        if owner := sorted(others & set(lint.tokens(phrase))):
-            out.append(
-                direct.problem(f"{member.id}: '{phrase}' is part of {owner[0]}, which has its own card: leave it out")
-            )
-        elif HELD.search(phrase):
-            out.append(direct.problem(f"{member.id}: '{phrase}' is held, not worn: leave it out"))
-    return out
-
-
 def invent(idea: str, member: direct.Member, members: dict[str, direct.Member]) -> compose.Card:
     """The card of a member the idea needs and no photograph shows: its look decided, not observed.
 
@@ -146,7 +119,7 @@ def invent(idea: str, member: direct.Member, members: dict[str, direct.Member]) 
     )
 
     def gate(data: Any) -> list[caption.Problem]:
-        out = _trait_problems(member.id, data["traits"]) + _foreign(member, members, data["traits"])
+        out = _trait_problems(member.id, data["traits"]) or ruling.traits(member, members, data["traits"])
         if member.kind == "environment" and not data.get("lights"):
             out.append(direct.problem('a place lists every source of its light in "lights"'))
         return out
@@ -207,10 +180,10 @@ def merge(
         )
 
         def gate(data: Any, member: direct.Member = member) -> list[caption.Problem]:
-            out = _trait_problems(member.id, data["traits"])
+            out = _trait_problems(member.id, data["traits"]) or ruling.traits(member, members, data["traits"])
             if member.kind == "environment" and not data.get("lights"):
                 out.append(direct.problem('list every light source in "lights"'))
-            return out + _foreign(member, members, data["traits"])
+            return out
 
         data = direct.ask_json(words.TIDY_SYSTEM, question, [], gate, f"card · {member.id}", h3.DIRECTOR_TOKENS["tidy"])
         lights = tuple(str(x) for x in data.get("lights", [])) if member.kind == "environment" else ()

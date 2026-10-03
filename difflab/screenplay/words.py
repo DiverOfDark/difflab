@@ -495,6 +495,32 @@ PROSE
 SOUNDS
 {sounds}"""
 
+# "moment": production 10's card said "closed eyes" from a sleeping photo, and the retention line kept them
+# closed in every shot. "held": the take moves a held thing, and a card that keeps it contradicts the hand
+# the opening names.
+RULING_TRAITS_SYSTEM = """\
+You are the script supervisor of a live-action video. A member's card lists its TRAITS: its lasting look, which every shot of the video restates. You check each trait, as JSON.
+
+RULES
+- "verdict", for each trait in order:
+  - "own": a lasting part of this member's own look: its hair, face, body, coat and markings, its clothes and what it wears (a watch, glasses, a hair tie); for a place, its landmarks, furniture and surfaces.
+  - "other": a part of another listed MEMBER, which has a card of its own (the hookah's hose on the man's card); "of" is that member's id.
+  - "held": a thing held or carried for the moment (a glass in her hand, a hose between its paws).
+  - "moment": a passing state of the photograph's moment, which the video changes: eyes closed, asleep, a mouth open, a yawn, a blink.
+- "of" is "" unless "verdict" is "other".
+
+Answer only JSON, in this shape:
+{"traits":[{"verdict":"own","of":""}]}"""
+
+RULING_TRAITS_USER = """\
+MEMBER: {member}
+
+OTHER MEMBERS
+{others}
+
+TRAITS, one "traits" entry for each, in this order:
+{traits}"""
+
 # --- composing: a first frame from words, over a reference of the room ---------------------------------------
 COMPOSE_INSTRUCTION = """\
 Keep this room exactly as it is: its walls, furniture, lighting and colour. Change nothing about the camera. Add the people and things described, placed as described, in photographic detail: {scene}."""
