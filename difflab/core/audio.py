@@ -14,6 +14,18 @@ import torch
 
 SAMPLE_RATE = 32000
 CHANNELS = 2
+# The VAE decodes past full scale: production 10 (2026-10-03) peaked at +0.68 dBFS on two samples, which
+# AAC keeps and playback clips. Below KNEE nothing changes; above it the peak bends under CEILING (-1 dBFS).
+KNEE, CEILING = 0.7, 0.89
+
+
+def limited(audio: np.ndarray) -> np.ndarray:
+    loud = np.abs(audio) > KNEE
+    if not loud.any():
+        return audio
+    room = CEILING - KNEE
+    bent = np.sign(audio) * (KNEE + room * np.tanh((np.abs(audio) - KNEE) / room))
+    return np.where(loud, bent, audio).astype(audio.dtype)
 
 
 def load_audio(path: str | Path, rate: int = SAMPLE_RATE) -> torch.Tensor | None:

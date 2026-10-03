@@ -517,6 +517,15 @@ async def command(run_id: str, request: Request) -> dict[str, bool]:
     return {"ok": True}
 
 
+@app.post("/api/restart")
+def restart() -> dict[str, str]:
+    """The server restarts on its code as it is now, once no job is running: a job in flight finishes first."""
+    from difflab.work import worker
+
+    worker.RESTART.set()
+    return {"restart": "when the queue is idle"}
+
+
 @app.get("/api/runs/{run_id}/events")
 async def events(run_id: str) -> StreamingResponse:
     """The run's events as server-sent events: enough to draw it as it stands, then each new one.

@@ -119,7 +119,7 @@ class Line:
 class Beat:
     start: float
     end: float
-    phase: str  # airlock | build | primary | handoff | reaction | settle
+    phase: str  # airlock | carry | build | primary | handoff | reaction | settle
     who: tuple[str, ...]
     action: str  # the planner's note
     prose: str = ""  # the writer's expansion: {id} placeholders, no labels, no timing words
@@ -140,6 +140,10 @@ class Chunk:
     summary: str = ""  # writer
     sounds: str = ""  # writer
     seconds: float = 0.0  # on H3's frame grid; 0 in a plan from before the director chose lengths: `Take.seconds`
+    cut: str = ""  # "" continues the chunk before; "back" returns to the opening photo; "new" opens on `opening`
+    opening: str = ""  # a "new" cut's first frame, {id} placeholders
+    looks: dict[str, str] = dataclasses.field(default_factory=dict)  # member -> its look from this chunk's end on
+    ambience: str = ""  # the sound of a place other than the take's first; "" is `Take.ambience`
 
 
 @dataclass(frozen=True)
@@ -194,14 +198,47 @@ def length(take: Take, index: int) -> float:
     return take.chunks[index].seconds or take.seconds
 
 
+CUTS = ("", "back", "new")
+
+
 def opening(take: Take, index: int) -> str:
-    return take.opening if index == 0 else take.chunks[index - 1].closing
+    chunk = take.chunks[index]
+    if index == 0 or chunk.cut == "back":
+        return take.opening
+    return chunk.opening if chunk.cut == "new" else take.chunks[index - 1].closing
+
+
+def look(take: Take, index: int, member: str) -> str:
+    """How `member` looks beyond its card when chunk `index` starts: the last change a chunk before it
+    made. A cut back to the opening photo ends every change, the way waking ends a dream."""
+    found = ""
+    for chunk in take.chunks[:index]:
+        if chunk.cut == "back":
+            found = ""
+        found = chunk.looks.get(member, found)
+    return "" if take.chunks[index].cut == "back" else found
+
+
+def ambience(take: Take, index: int) -> str:
+    return take.chunks[index].ambience or take.ambience
+
+
+def written(chunk: Chunk) -> list[Beat]:
+    """The beats the writer writes: all but a closing settle or carry, which the compiler says from the closing."""
+    last = chunk.beats[-1] if chunk.beats else None
+    return [beat for beat in chunk.beats if not (beat is last and beat.phase in ("settle", "carry"))]
+
+
+def place(take: Take, chunk: Chunk) -> str:
+    return next(m for m in chunk.cast if take.cards[m].kind == "environment")
 
 
 KEYFRAMES = ("opening", "handoff", "closing")  # a Presentation's keys that are frames of the clip, not crops
 
 
 def carried(take: Take, index: int) -> bool:
+    if take.chunks and take.chunks[index].cut:
+        return False  # a cut opens on its own keyframe: the clip before's motion stops there
     return take.tails[index] if take.tails else take.tail and index > 0
 
 
@@ -291,16 +328,26 @@ def rows(take: Take, keys: tuple[str, ...]) -> int:
     return sum(take.refs[key].rows for key in keys)
 
 
-class Expander:
-    """{id} -> <Subject N>, restating the member's short traits at its first mention in the chunk."""
+class CastError(ValueError):
+    """Text names a member the chunk does not cast: a message the model that wrote it can act on."""
 
-    def __init__(self, take: Take, subjects: dict[str, str], speakers: dict[str, str]) -> None:
-        self.take, self.subjects, self.speakers = take, subjects, speakers
+
+class Expander:
+    """{id} -> <Subject N>, restating the member's short traits - and a lasting change to its look - at
+    its first mention in the chunk."""
+
+    def __init__(
+        self, take: Take, subjects: dict[str, str], speakers: dict[str, str], looks: dict[str, str] | None = None
+    ) -> None:
+        self.take, self.subjects, self.speakers, self.looks = take, subjects, speakers, looks or {}
         self.seen: set[str] = set()
 
     def __call__(self, text: str, expand: bool = True) -> str:
         def label(match: re.Match[str]) -> str:
             member = match.group(1)
+            if member not in self.subjects:
+                cast = ", ".join(f"{{{m}}}" for m in self.subjects)
+                raise CastError(f"{{{member}}} is named, but this clip's cast is {cast}: leave it out or cast it")
             card, subject = self.take.cards[member], self.subjects[member]
             follow = text[match.end() : match.end() + 7]
             if follow.startswith(" {say}"):
@@ -309,7 +356,8 @@ class Expander:
                 return subject
             self.seen.add(member)
             comma = "" if follow[:1] in tuple(".,;:!?") else ","
-            return f"{subject}, the {card.noun} with {card.short()}{comma}"
+            now = f" and {self.looks[member]}" if self.looks.get(member) else ""
+            return f"{subject}, the {card.noun} with {card.short()}{now}{comma}"
 
         return PLACEHOLDER.sub(label, text)
 
@@ -326,7 +374,7 @@ def timing(beat: Beat, index: int, seconds: float, used: set[str]) -> str:
     """The phrase in front of a beat's prose. The settle is phrased by `compile_chunk` itself."""
     length = spoken(beat.end - beat.start)
     if index == 0:
-        return words.TIMING["airlock" if beat.phase == "airlock" else "first"].format(seconds=length)
+        return words.TIMING[beat.phase if beat.phase in ("airlock", "carry") else "first"].format(seconds=length)
     if beat.phase == "handoff":
         phrase = words.TIMING["handoff"].format(seconds=length)
     else:
@@ -366,7 +414,9 @@ def definition(take: Take, member: str, subject: str, shown: Presentation) -> st
 
     say = words.SENTENCES
     if not card.photographed and not held:
-        return say["unseen"].format(subject=subject, noun=card.noun, traits=card.full())
+        group = "unseen_group" if card.possessive == "their" else "unseen"
+        unseen = "unseen_place" if card.kind == "environment" else group
+        return say[unseen].format(subject=subject, noun=card.noun, traits=card.full())
     if card.kind == "environment":
         own = [key for key in held if take.refs[key].role == "environment"] or held
         return say["environment"].format(subject=subject, noun=card.noun, pictures=cite(own), traits=card.full())
@@ -408,12 +458,19 @@ def compile_chunk(take: Take, index: int) -> Compiled:
     cast = [m for m in take.members if m in chunk.cast]
     subject = {m: f"<Subject {i + 1}>" for i, m in enumerate(cast)}
     speakers = {line.who: f"S{i + 1}" for i, line in enumerate(chunk.dialogue)}
-    env = next(m for m in cast if take.cards[m].kind == "environment")
+    env = place(take, chunk)
     living = [m for m in cast if take.cards[m].kind in LIVING]
     labels_only = Expander(take, subject, speakers)
+    now = {m: look(take, index, m) for m in cast if look(take, index, m)}
 
     # subject_definitions: identity-only pictures are cited inside the <Subject N> lines (ref-en 2.2)
     definitions = [definition(take, member, subject[member], shown) for member in cast]
+    definitions += [say["look"].format(subject=subject[m], look=now[m]) for m in cast if m in now]
+    definitions += [
+        say["look_change"].format(subject=subject[m], look=chunk.looks[m])
+        for m in cast
+        if chunk.looks.get(m) and chunk.looks[m] != now.get(m)
+    ]
     definitions.append(
         say["first_frame"].format(arrangement=_lower(_sentence(labels_only(opening(take, index), False))))
     )
@@ -437,25 +494,32 @@ def compile_chunk(take: Take, index: int) -> Compiled:
     )
 
     # retention_analysis
-    retention = [say["retain"].format(subject=subject[m], traits=take.cards[m].retain()) for m in cast]
+    retention = [
+        say["retain_look" if m in now else "retain"].format(
+            subject=subject[m], traits=take.cards[m].retain(), look=now.get(m, "")
+        )
+        for m in cast
+    ]
     retention += [say["retain_frame"]] + ([say["retain_last"]] if landing else [])
-    retention += [say["retain_video"], say["retain_audio"]] if tail else []
+    moving = index > 0 and any(beat.phase == "carry" for beat in take.chunks[index - 1].beats[-1:])
+    retention += [say["retain_video_moving" if moving else "retain_video"], say["retain_audio"]] if tail else []
 
     # detailed_description
-    expand = Expander(take, subject, speakers)
+    expand = Expander(take, subject, speakers, now)
     room = take.cards[env]
     body = [
         say["begin_continued" if tail else "begin"].format(arrangement=_lower(_sentence(expand(opening(take, index))))),
-        say["room"].format(room=subject[env], traits=room.short(), lights=join(room.lights)),
+        say["room" if room.lights else "room_unlit"].format(
+            room=subject[env], traits=room.short(), lights=join(room.lights)
+        ),
     ]
     used: set[str] = set()
     pending = list(chunk.dialogue)  # taken in the writer's own order, one per {say}
     camera_said = False
     camera = words.CAMERA_MOVES[chunk.camera_move].format(toward=subject.get(chunk.camera_toward, subject[env]))
-    for number, beat in enumerate(chunk.beats):
-        if beat.phase == "settle":
-            continue
-        text = expand(f"{timing(beat, number, length(take, index), used)} {_lower(beat.prose.strip())}")
+    for number, beat in enumerate(written(chunk)):
+        prose = beat.prose.strip() or beat.action.strip()  # a beat edited by hand is said as planned
+        text = expand(f"{timing(beat, number, length(take, index), used)} {_lower(prose)}")
         # A dialogue line lands where the writer put its {say}, taking them in order - not where the
         # line's own `start` second happens to fall.
         #
@@ -508,8 +572,9 @@ def compile_chunk(take: Take, index: int) -> Compiled:
     mouths = labels_only(join(chunk.mouths), False) if chunk.mouths else ""
     body.append(say["mouths"].format(actions=mouths) if mouths else say["mouths_none"])
     settle = chunk.beats[-1]
+    ending = "carry" if settle.phase == "carry" else "settle_lands" if landing else "settle"
     body.append(
-        say["settle_lands" if landing else "settle"].format(
+        say[ending].format(
             timing=words.TIMING["settle"].format(seconds=spoken(settle.end - settle.start)),
             arrangement=_lower(_sentence(expand(chunk.closing))),
             shot="two-shot" if len(living) == 2 else "shot",
@@ -525,12 +590,15 @@ def compile_chunk(take: Take, index: int) -> Compiled:
     style = words.STYLE.format(room=subject[env])
 
     # sound
-    ambience = (
-        say["room_sound_continued"].format(ambience=_sentence(take.ambience))
-        if tail
-        else say["room_sound"].format(ambience=_upper(_sentence(take.ambience)))
+    heard = ambience(take, index)
+    # The tail's room tone carries on only into the same place's sound.
+    same = tail and heard == ambience(take, index - 1)
+    room_sound = (
+        say["room_sound_continued"].format(ambience=_sentence(heard))
+        if same
+        else say["room_sound"].format(ambience=_upper(_sentence(heard)))
     )
-    soundscape = f"{ambience} {labels_only(chunk.sounds.strip(), False)}".strip()
+    soundscape = f"{room_sound} {labels_only(chunk.sounds.strip(), False)}".strip()
 
     # A {say} with no dialogue behind it marks speech the writer never wrote. Dropped here, on the
     # finished text, rather than beat by beat: the closing and the soundscape are assembled after the
@@ -594,6 +662,10 @@ def chunk_of(plan: dict[str, Any]) -> Chunk:
         summary=str(plan.get("summary", "")),
         sounds=str(plan.get("sounds", "")),
         seconds=float(plan.get("seconds", 0.0)),
+        cut=str(plan.get("cut", "")),
+        opening=str(plan.get("opening", "")),
+        looks={str(m): str(v) for m, v in (plan.get("looks") or {}).items()},
+        ambience=str(plan.get("ambience", "")),
     )
 
 
@@ -653,7 +725,15 @@ def take_of(connection: sqlite3.Connection, production: store.Production, chapte
     manifest = production.manifest
     shots = store.shots_of(connection, chapter.id)
     tail = bool(manifest.get("tail", True))
-    tails, landed = joins([store.keyframe_of(connection, shot.id) for shot in shots], shots, tail)
+    keyframes = [store.keyframe_of(connection, shot.id) for shot in shots]
+    tails, landed = joins(keyframes, shots, tail)
+    first = keyframes[0].provided if keyframes else None
+    chunks = [dataclasses.replace(chunk_of(shot.plan), seconds=shot.seconds) for shot in shots]
+    # A later shot handed the first photo by hand cuts back to it, whatever its plan says.
+    chunks = [
+        dataclasses.replace(chunk, cut="back") if index and first and keyframe.provided == first else chunk
+        for index, (chunk, keyframe) in enumerate(zip(chunks, keyframes, strict=True))
+    ]
     return Take(
         title=production.title,
         members=tuple(member.slug for member in members),
@@ -664,7 +744,7 @@ def take_of(connection: sqlite3.Connection, production: store.Production, chapte
         seconds=float(manifest.get("seconds", 0.0)),
         tail=tail,
         budget=int(manifest.get("budget", config.DIRECTOR_REFERENCE_ROWS)),
-        chunks=tuple(dataclasses.replace(chunk_of(shot.plan), seconds=shot.seconds) for shot in shots),
+        chunks=tuple(chunks),
         story=tuple((str(event), int(clip)) for event, clip in manifest.get("story", [])),
         tails=tails,
         lands=landed,

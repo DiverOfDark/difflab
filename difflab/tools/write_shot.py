@@ -46,9 +46,8 @@ def trimmed(text: str) -> str:
 def _with_prose(take: compose.Take, index: int, data: Any) -> compose.Take:
     chunk = take.chunks[index]
     texts = iter(str(text) for text in data["beats"])
-    beats = tuple(
-        beat if beat.phase == "settle" else dataclasses.replace(beat, prose=next(texts)) for beat in chunk.beats
-    )
+    wanted = compose.written(chunk)
+    beats = tuple(dataclasses.replace(beat, prose=next(texts)) if beat in wanted else beat for beat in chunk.beats)
     filled = dataclasses.replace(chunk, beats=beats, summary=str(data["summary"]), sounds=str(data["sounds"]))
     return dataclasses.replace(take, chunks=(*take.chunks[:index], filled, *take.chunks[index + 1 :]))
 
@@ -77,9 +76,10 @@ def write_one(take: compose.Take, index: int) -> compose.Take:
     """One call for chunk `index`: prose only, around the sentences the compiler already owns."""
     chunk = take.chunks[index]
     cast = "\n".join(
-        f"{c.id} | {c.noun} | {c.full()}" for c in (take.cards[m] for m in take.members if m in chunk.cast)
+        f"{c.id} | {c.noun} | {c.full()}" + (f", and now {now}" if (now := compose.look(take, index, c.id)) else "")
+        for c in (take.cards[m] for m in take.members if m in chunk.cast)
     )
-    written = [beat for beat in chunk.beats if beat.phase != "settle"]
+    written = compose.written(chunk)
     beats = "\n".join(
         words.WRITE_BEAT.format(
             number=i + 1,
@@ -104,7 +104,7 @@ def write_one(take: compose.Take, index: int) -> compose.Take:
 
     def gate(data: Any, index: int = index, before: compose.Take = take) -> list[caption.Problem]:
         planned = before.chunks[index]
-        to_write = [beat for beat in planned.beats if beat.phase != "settle"]
+        to_write = compose.written(planned)
         if len(data["beats"]) != len(to_write):
             return [direct.problem(f'"beats" has exactly {len(to_write)} strings, one per listed beat')]
         data["beats"] = [trimmed(str(text)) for text in data["beats"]]  # `ask_json` returns this same dict

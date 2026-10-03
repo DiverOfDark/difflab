@@ -14,7 +14,7 @@ import numpy as np
 import torch
 
 from difflab.core import ui
-from difflab.core.audio import SAMPLE_RATE
+from difflab.core.audio import SAMPLE_RATE, limited
 
 
 def output_path(out_dir: str | Path, name: str, seed: int | None = None) -> Path:
@@ -42,7 +42,7 @@ def save_video(
     with ui.step("Muxing MP4") as detail:
         height, width = int(frames.shape[1]), int(frames.shape[2])
         samples = int(np.ceil(sample_rate / fps * len(frames)))
-        audio = waveform[:, :samples].contiguous().float().numpy() if waveform is not None else None
+        audio = limited(waveform[:, :samples].contiguous().float().numpy()) if waveform is not None else None
 
         with av.open(str(path), "w", format="mp4") as container:
             video_stream = container.add_stream("h264", rate=Fraction(round(fps * 1000), 1000))
@@ -118,7 +118,7 @@ class VideoWriter:
         self._container.mux(self._video.encode(None))
         if waveform is not None:
             samples = int(np.ceil(self.sample_rate / self.fps * self.frames))
-            audio = waveform[:, :samples].contiguous().float().numpy()
+            audio = limited(waveform[:, :samples].contiguous().float().numpy())
             audio_frame = av.AudioFrame.from_ndarray(audio, format="fltp", layout="stereo")
             audio_frame.sample_rate = self.sample_rate
             audio_frame.pts = 0

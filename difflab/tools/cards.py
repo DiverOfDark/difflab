@@ -64,6 +64,9 @@ def _trait_problems(member: str, traits: Any) -> list[caption.Problem]:
             out.append(direct.problem(f'{member}: "part" is one of {", ".join(parts)}'))
         if not all(isinstance(trait.get(field), str) and trait[field].strip() for field in ("phrase", "short", "name")):
             out.append(direct.problem(f'{member}: every trait has "part", "phrase", "short" and "name"'))
+        elif trait.get("part") == "face" and (state := STATE.search(str(trait["phrase"]))):
+            out.append(direct.problem(f"{member}: '{trait['phrase']}' says '{state.group(0)}', which the shot changes: "
+                                      "record the look, not the pose of the moment"))  # fmt: skip
     return out
 
 
@@ -108,6 +111,9 @@ def _traits(entries: Any) -> tuple[compose.Trait, ...]:
     )
 
 
+# A pose of the photo's moment read as a look: production 10's card said "closed eyes" from a sleeping
+# photo, and the retention line then kept them closed in every shot.
+STATE = re.compile(r"\b(?:closed|shut|open(?:ed)?|half-open|asleep|sleeping|squinting|blinking|yawning)\b", re.I)
 HELD = re.compile(r"\b(?:in|between) (?:his|her|its|their|both) (?:left |right |front )?(?:hands?|paws?)\b", re.I)
 
 
@@ -140,13 +146,17 @@ def invent(idea: str, member: direct.Member, members: dict[str, direct.Member]) 
     )
 
     def gate(data: Any) -> list[caption.Problem]:
-        return _trait_problems(member.id, data["traits"]) + _foreign(member, members, data["traits"])
+        out = _trait_problems(member.id, data["traits"]) + _foreign(member, members, data["traits"])
+        if member.kind == "environment" and not data.get("lights"):
+            out.append(direct.problem('a place lists every source of its light in "lights"'))
+        return out
 
     data = direct.ask_json(
         words.INVENT_SYSTEM, question, [], gate, f"card · {member.id} · invented", h3.DIRECTOR_TOKENS["tidy"]
     )
+    lights = tuple(str(x) for x in data.get("lights", [])) if member.kind == "environment" else ()
     return compose.Card(
-        member.id, member.kind, member.noun, member.possessive, _traits(data["traits"]), photographed=False
+        member.id, member.kind, member.noun, member.possessive, _traits(data["traits"]), lights, photographed=False
     )
 
 

@@ -24,11 +24,12 @@ def survey(idea: str, frames: list[Frame]) -> tuple[dict[str, direct.Member], li
             for m in data["members"]
         }
         pictures = {int(p["picture"]): [str(i) for i in p["shows"]] for p in data["pictures"]}
-        environment = [m.id for m in members.values() if m.kind == "environment"]
+        places = [m.id for m in members.values() if m.kind == "environment"]
+        # The first place is Picture 1's whatever the answer lists; a further place is shown only where listed.
         shows = []
         for number in range(1, len(frames) + 1):
-            listed = [m for m in pictures.get(number, []) if m in members and m not in environment]
-            shows.append(tuple(dict.fromkeys([*listed, *(environment if number == 1 else [])])))
+            listed = [m for m in pictures.get(number, []) if m in members and m not in places[:1]]
+            shows.append(tuple(dict.fromkeys([*listed, *(places[:1] if number == 1 else [])])))
         return members, shows
 
     def gate(data: Any) -> list[caption.Problem]:
@@ -47,12 +48,12 @@ def survey(idea: str, frames: list[Frame]) -> tuple[dict[str, direct.Member], li
             if m.kind not in direct.KINDS
         ]
         out += [
-            direct.problem(f'{m.id}: "possessive" is his, her or its')
+            direct.problem(f'{m.id}: "possessive" is his, her, their or its')
             for m in members.values()
-            if m.possessive not in ("his", "her", "its")
+            if m.possessive not in ("his", "her", "their", "its")
         ]
-        if sum(m.kind == "environment" for m in members.values()) != 1:
-            out.append(direct.problem("exactly one member is the environment: the place in Picture 1"))
+        if not any(m.kind == "environment" for m in members.values()):
+            out.append(direct.problem("the first environment member is the place in Picture 1"))
         if not any(m.kind in crops.LIVING for m in members.values()):
             out.append(direct.problem("the IDEA needs at least one person or animal"))
         if len(data["pictures"]) != len(frames):
@@ -61,10 +62,10 @@ def survey(idea: str, frames: list[Frame]) -> tuple[dict[str, direct.Member], li
         out += [
             direct.problem(f'"{i}" is in a picture but is not one of the members') for i in sorted(listed - set(ids))
         ]
-        # A person or animal no picture shows is created from words alone (`invent`). An object or a
-        # place is there to be seen, or it is not a member.
-        unseen = [m.id for m in members.values() if m.kind not in crops.LIVING and not any(m.id in s for s in shows)]
-        only_living = "only a person or an animal can be a member no picture shows"
+        # A person, an animal or a further place no picture shows is created from words alone (`invent`).
+        # An object is there to be seen, or it is not a member.
+        unseen = [m.id for m in members.values() if m.kind == "object" and not any(m.id in s for s in shows)]
+        only_living = "an object is a member only where a picture shows it"
         out += [
             direct.problem(f"{m} is in no picture: list it where it is seen, or leave it out - {only_living}")
             for m in unseen

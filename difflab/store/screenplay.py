@@ -236,12 +236,14 @@ def chain_keyframe(connection: sqlite3.Connection, shot_id: int) -> Keyframe:
     return keyframe_of(connection, shot_id)
 
 
-def compose_keyframe(connection: sqlite3.Connection, shot_id: int, seed: int | None = None) -> Keyframe:
+def compose_keyframe(
+    connection: sqlite3.Connection, shot_id: int, seed: int | None = None, note: str = ""
+) -> Keyframe:
     """The editor will make it from the plan's words over a reference of the room."""
     connection.execute(
-        "UPDATE keyframes SET source = ?, provided = NULL, artifact = NULL, note = '', state = ?, pinned = 0, "
+        "UPDATE keyframes SET source = ?, provided = NULL, artifact = NULL, note = ?, state = ?, pinned = 0, "
         "seed = coalesce(?, seed), wanted_key = NULL, current_job = NULL WHERE shot_id = ?",
-        (COMPOSED, MISSING, seed, shot_id),
+        (COMPOSED, note, MISSING, seed, shot_id),
     )
     return keyframe_of(connection, shot_id)
 

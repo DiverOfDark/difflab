@@ -23,11 +23,11 @@ def on_grid(seconds: float, longest: float) -> float:
 
 
 def _take_from_plan(data: Any, base: compose.Take) -> compose.Take:
-    """The plan's JSON as a take. The environment is in every chunk, whatever the plan says.
+    """The plan's JSON as a take. A clip that names no place happens in the first one.
 
     Each clip's length goes onto the frame grid here and its last beat takes up the difference (under
     0.36 s), so the model never does frame arithmetic."""
-    environment = next(m for m in base.members if base.cards[m].kind == "environment")
+    places = [m for m in base.members if base.cards[m].kind == "environment"]
     chunks = []
     for clip in data["clips"]:
         asked = float(clip["seconds"])
@@ -40,6 +40,7 @@ def _take_from_plan(data: Any, base: compose.Take) -> compose.Take:
         )
         if beats and abs(beats[-1].end - asked) <= 0.3:
             beats = (*beats[:-1], dataclasses.replace(beats[-1], end=round(seconds, 3)))
+        named = [str(m) for m in clip["cast"]]
         lines = tuple(
             compose.Line(str(d["who"]), float(d["start"]), str(d["language"]), str(d["line"]), str(d["voice"]))
             for d in clip.get("dialogue", [])
@@ -47,7 +48,7 @@ def _take_from_plan(data: Any, base: compose.Take) -> compose.Take:
         chunks.append(
             compose.Chunk(
                 purpose=str(clip["purpose"]),
-                cast=tuple(dict.fromkeys([*(str(m) for m in clip["cast"]), environment])),
+                cast=tuple(dict.fromkeys([*named, *([] if set(named) & set(places) else places[:1])])),
                 beats=beats,
                 camera_move=str(clip["camera"]["move"]),
                 camera_toward=str(clip["camera"]["toward"]),
@@ -57,6 +58,10 @@ def _take_from_plan(data: Any, base: compose.Take) -> compose.Take:
                 irreversible_change=str(clip["irreversible_change"]),
                 dialogue=lines,
                 seconds=seconds,
+                cut=str(clip.get("cut") or "").replace("none", ""),
+                opening=str(clip.get("opening") or "").strip(),
+                looks={str(m): str(v).strip() for m, v in (clip.get("looks") or {}).items()},
+                ambience=str(clip.get("ambience") or "").strip(),
             )
         )
     return dataclasses.replace(base, ambience=str(data["ambience"]).strip(), chunks=tuple(chunks))
@@ -82,7 +87,7 @@ def plan(base: compose.Take, idea: str, total: float) -> compose.Take:
         early=window[0] * 100, late=window[1] * 100, moves=moves, beat_min=h3.DIRECTOR_BEAT_MIN,
     )  # fmt: skip
     system = words.PLAN_SYSTEM.format(
-        longest=longest,
+        longest=longest, look_words=h3.DIRECTOR_LOOK_WORDS,
         airlock=h3.DIRECTOR_AIRLOCK[0], airlock_min=h3.DIRECTOR_AIRLOCK[1], settle=h3.DIRECTOR_SETTLE[0],
         settle_min=h3.DIRECTOR_SETTLE[1], quiet_max=h3.DIRECTOR_QUIET_MAX, early=window[0] * 100, late=window[1] * 100,
         handoff_min=h3.DIRECTOR_HANDOFF_MIN, max_living=h3.DIRECTOR_MAX_LIVING,
@@ -105,10 +110,10 @@ def plan(base: compose.Take, idea: str, total: float) -> compose.Take:
         if planned > (1 + h3.DIRECTOR_TAKE_SLACK) * total:
             out.append(direct.problem(f'the clips\' "seconds" add up to {planned:g}; the take lasts at most {total:g}, '
                                       "so shorten clips or merge two"))  # fmt: skip
-        if out:
-            return out
+        # Never returned alone: an answer stopped here counted one problem and was kept over answers that
+        # broke fewer rules, unchecked - a 72 s plan whose closings named members missing from the next cast.
         take = _take_from_plan(data, base)
-        out = lint.plan_rules(take)
+        out += lint.plan_rules(take)
         if not story(data):
             out.append(direct.problem('"story" lists every action of the IDEA with the clip that shows it'))
         return out + lint.story_rules(idea, list(story(data)), take)

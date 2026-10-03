@@ -23,7 +23,7 @@ from difflab.models.minimax_h3.settings import VideoSettings
 from difflab.screenplay import checks, compiler, crops, words
 from difflab.screenplay import config as knobs
 from difflab.screenplay import settings as chosen
-from difflab.screenplay.production import OPENING_NOTE
+from difflab.screenplay.production import CUT_NOTE, OPENING_NOTE
 from difflab.tools import cards, cut_crops, direct, ground, opening, plan_shots, refine_idea, survey, write_shot
 from difflab.work import Skipped
 
@@ -466,9 +466,16 @@ def _plan_shots(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, A
                 store.update_shot(connection, shot.id, plan=plan, dialogue=dialogue)
                 store.set_clip_seed(connection, shot.id, video.seed + shot.position)
             first = store.keyframe_of(connection, shot.id)
-            by_hand = first.source == store.COMPOSED or (first.source == store.PROVIDED and first.note != OPENING_NOTE)
-            if position == 0 and not by_hand:
-                store.provide_keyframe(connection, shot.id, str(inputs["opening"]), note=OPENING_NOTE)
+            by_hand = first.source != store.CHAINED and first.note not in (OPENING_NOTE, CUT_NOTE)
+            if not by_hand:
+                if position == 0 or chunk.cut == "back":
+                    store.provide_keyframe(connection, shot.id, str(inputs["opening"]), note=OPENING_NOTE)
+                elif chunk.cut == "new":
+                    store.compose_keyframe(connection, shot.id, note=CUT_NOTE)
+                elif first.source != store.CHAINED:
+                    store.chain_keyframe(connection, shot.id)
+                # A cut's keyframe is where the clip starts, not where the clip before it ends.
+                store.land_keyframe(connection, shot.id, not chunk.cut)
         for extra in existing[len(chunks) :]:
             if extra.pinned:
                 ui.note(f"shot {extra.position + 1} is pinned, so it stays after the plan's {len(chunks)} shots")

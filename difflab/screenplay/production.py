@@ -20,6 +20,7 @@ _SLUG = re.compile(r"[a-z0-9][a-z0-9_-]*")
 MEMBER_ID = re.compile(rf"[a-z][a-z_]{{0,{knobs.DIRECTOR_ID_LENGTH - 1}}}")  # as `tools.direct.ID` asks the survey
 MEMBER_KINDS = ("person", "animal", "object", "environment")
 OPENING_NOTE = "the opening frame"  # what the planner writes on the keyframe it cuts from the first photo
+CUT_NOTE = "the plan's cut"  # on a keyframe the planner composes for a "new" cut
 ASPECTS = (0.25, 4.0)  # width over height a canvas may be given
 
 
@@ -82,7 +83,8 @@ def add_shot(
 
 
 def update_shot(shot_id: int, **changes: Any) -> store.Shot:
-    """`prompt`, `keyframe` (a path, `composed`, `opening` for the planner's cut of the first photo, or
+    """`prompt`, `keyframe` (a path, `composed`, `opening` for the planner's cut of the first photo - on a
+    later shot, a cut back to it that opens on the opening arrangement - or
     "" to chain again), `landed` (whether the shot before ends on that keyframe), `seed`, the plan's
     `closing`, `cast`, `camera_move`, `camera_toward` and `dialogue`, and the shot's own columns. A plan
     edit pins the shot and recompiles its prompt at once, and a closing the next shot's too, since it
@@ -103,8 +105,8 @@ def update_shot(shot_id: int, **changes: Any) -> store.Shot:
                 store.compose_keyframe(connection, shot_id)
             elif given == "opening":
                 opening = _opening_frame(connection, chapter.production_id)
-                if opening is None or shot.position != 0:
-                    raise ValueError("only the first shot opens on the first photo, once a plan has cut it")
+                if opening is None:
+                    raise ValueError("a shot opens on the first photo once a plan has cut it")
                 store.provide_keyframe(connection, shot_id, opening, note=OPENING_NOTE)
             elif given:
                 store.provide_keyframe(connection, shot_id, store.relative(_under_output(str(given))))
@@ -134,7 +136,7 @@ def update_shot(shot_id: int, **changes: Any) -> store.Shot:
         return updated
 
 
-PLAN_FIELDS = ("closing", "cast", "camera_move", "camera_toward", "dialogue")
+PLAN_FIELDS = ("actions", "closing", "cast", "camera_move", "camera_toward", "dialogue")
 
 
 def _edit_plan(connection: Any, chapter: store.Chapter, shot: store.Shot, **planned: Any) -> None:
@@ -146,6 +148,20 @@ def _edit_plan(connection: Any, chapter: store.Chapter, shot: store.Shot, **plan
         raise ValueError("this shot has no plan to edit: plan the chapter first")
     shots = store.shots_of(connection, chapter.id)
     following = shots[shot.position + 1] if shot.position + 1 < len(shots) else None
+    if "actions" in planned:
+        # One per beat, null keeping it. An edited beat drops the writer's prose for it, and the prompt
+        # says the action as planned until a re-plan writes it again.
+        given = list(planned["actions"] or [])
+        if len(given) != len(plan["beats"]):
+            raise ValueError(f"one action per beat: this shot has {len(plan['beats'])}, null to keep one")
+        beats = []
+        for beat, action in zip(plan["beats"], given, strict=True):
+            action = " ".join(str(action).split()) if action is not None else ""
+            unknown = sorted(set(compiler.PLACEHOLDER.findall(action)) - set(plan.get("cast", [])))
+            if unknown:
+                raise ValueError(f"{', '.join(unknown)} is not in this shot's cast: cast it first")
+            beats.append({**beat, "action": action, "prose": ""} if action and action != beat["action"] else beat)
+        plan["beats"] = beats
     if "closing" in planned:
         closing = " ".join(str(planned["closing"]).split())
         closed = list(dict.fromkeys(compiler.PLACEHOLDER.findall(closing)))
@@ -170,11 +186,7 @@ def _edit_plan(connection: Any, chapter: store.Chapter, shot: store.Shot, **plan
             raise ValueError(f"no member called {', '.join(unknown)}")
         environments = [m for m in members.values() if m.kind == "environment"]
         cast = list(dict.fromkeys([*cast, *(e.slug for e in environments)]))
-        opening = (
-            str(production.manifest.get("opening_arrangement", ""))
-            if shot.position == 0
-            else str(shots[shot.position - 1].plan.get("closing", ""))
-        )
+        opening = compiler.opening(compiler.take_of(connection, production, chapter), shot.position)
         named = set(compiler.PLACEHOLDER.findall(_said(plan) + " " + opening))
         dropped = sorted(named - set(cast))
         if dropped:
@@ -560,12 +572,10 @@ def _check_member(slug: str, fields: dict[str, str], identity: dict[str, Any], o
     kind = fields["kind"]
     if kind not in MEMBER_KINDS:
         raise ValueError(f"{slug}: the kind is one of {', '.join(MEMBER_KINDS)}")
-    if fields["possessive"] not in ("his", "her", "its"):
-        raise ValueError(f"{slug}: the possessive is his, her or its")
+    if fields["possessive"] not in ("his", "her", "their", "its"):
+        raise ValueError(f"{slug}: the possessive is his, her, their or its")
     if not fields["noun"]:
         raise ValueError(f"{slug}: a noun, what it is in a word or two")
-    if kind == "environment" and any(m.kind == "environment" for m in others):
-        raise ValueError("a chapter has one place: edit it rather than adding another")
     if kind != "environment" and not any(m.kind == "environment" for m in others):
         raise ValueError(f"{slug} is the chapter's only place: it stays an environment")
     traits = identity.get("traits", [])

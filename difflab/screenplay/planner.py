@@ -53,7 +53,7 @@ def check(connection: Any, shots: list[store.Shot], production: store.Production
             if not keyframe.present:
                 problems.append(f"{name}'s keyframe is missing from disk: {keyframe.provided}")
         elif keyframe.source == store.COMPOSED and production is not None:
-            if base(connection, production, _arrangement(production, shots, shot.position)) is None:
+            if base(connection, production, *_opening(connection, production, shots, shot.position)) is None:
                 problems.append(
                     f"{name}'s keyframe is composed, and there is no picture to compose it over: no reference of "
                     "the place, and none of who its first frame names"
@@ -118,7 +118,7 @@ def render_chapter(chapter_id: int, asked_by: str = "person") -> str:
         for shot, keyframe in zip(shots, keyframes, strict=True):
             cast = [str(m) for m in shot.plan.get("cast", [])]
             judged = verdicts.gate > 0 and bool(cast or shot.action)
-            arrangement = _arrangement(production, shots, shot.position)
+            arrangement, where = _opening(connection, production, shots, shot.position)
             if keyframe.source == store.COMPOSED:
                 seed = keyframe.seed if keyframe.seed is not None else int(video["seed"]) + 1000 + shot.position
                 composed = store.add_job(
@@ -127,7 +127,7 @@ def render_chapter(chapter_id: int, asked_by: str = "person") -> str:
                         "production": production.id,
                         "shot": shot.id,
                         "arrangement": arrangement,
-                        **(base(connection, production, arrangement) or {}),
+                        **(base(connection, production, arrangement, where) or {}),
                         "size": _canvas(production),
                         "seed": seed,
                     },
@@ -221,17 +221,21 @@ def render_production(production_id: int, asked_by: str = "person", chapter_posi
     return render_chapter(chapters[chapter_position].id, asked_by)
 
 
-def base(connection: Any, production: store.Production, arrangement: str) -> dict[str, Any] | None:
+def base(
+    connection: Any, production: store.Production, arrangement: str, where: str | None = None
+) -> dict[str, Any] | None:
     """What a composed keyframe is made over. The place's reference - cut from a photo, or drawn from
     its words - or the chapter's opening frame, kept as a room the arrangement's members are put into;
     with neither, the photo of the first person or animal the arrangement names, kept as that member
-    and everything around it replaced. `box` is where it is in that photo."""
+    and everything around it replaced. `box` is where it is in that photo. `where` is the place the
+    shot happens in: a place no photo shows is never drawn over the opening room."""
     members = store.members_of(connection, production.id)
     slugs = {m.id: m.slug for m in members}
-    places = {m.id for m in members if m.kind == "environment"}
+    places = {m.id for m in members if m.kind == "environment" and where in (None, m.slug)}
+    unseen = any(not m.identity.get("photographed", True) for m in members if m.id in places)
     references = [r for r in store.refs_of_production(connection, production.id) if r.member_id in slugs]
     for reference in references:
-        if reference.role == "environment" and reference.artifact:
+        if reference.role == "environment" and reference.member_id in places and reference.artifact:
             return {"base": reference.artifact, "box": None, "keep": None}
     for reference in references:
         if reference.generated and reference.member_id in places and reference.artifact:
@@ -239,7 +243,7 @@ def base(connection: Any, production: store.Production, arrangement: str) -> dic
     chapters = store.chapters_of(connection, production.id)
     shots = store.shots_of(connection, chapters[0].id) if chapters else []
     first = store.keyframe_of(connection, shots[0].id) if shots else None
-    if first is not None and first.source == store.PROVIDED and first.provided:
+    if not unseen and first is not None and first.source == store.PROVIDED and first.provided:
         return {"base": first.provided, "box": None, "keep": None}
     photos = [str(p) for p in production.manifest.get("photos", [])]
     living = {m.slug for m in members if m.kind in ("person", "animal")}
@@ -253,11 +257,16 @@ def base(connection: Any, production: store.Production, arrangement: str) -> dic
     return None
 
 
-def _arrangement(production: store.Production, shots: list[store.Shot], position: int) -> str:
-    """What a shot opens on, in words: the production's opening, or the shot before's closing."""
-    if position == 0:
-        return str(production.manifest.get("opening_arrangement", ""))
-    return str(shots[position - 1].plan.get("closing", ""))
+def _opening(
+    connection: Any, production: store.Production, shots: list[store.Shot], position: int
+) -> tuple[str, str | None]:
+    """What a shot opens on, in words, as its prompt says it, and the place it happens in."""
+    chapter = store.chapter(connection, shots[position].chapter_id)
+    assert chapter is not None
+    take = compiler.take_of(connection, production, chapter)
+    chunk = take.chunks[position]
+    where = next((m for m in chunk.cast if take.cards[m].kind == "environment"), None)
+    return compiler.opening(take, position), where
 
 
 def _canvas(production: store.Production) -> list[int] | None:

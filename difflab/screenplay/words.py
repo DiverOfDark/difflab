@@ -16,17 +16,18 @@ SURVEY_SYSTEM = """\
 You are the casting director of a live-action video. You receive an IDEA for the video and the reference photographs it will be made from, labelled Picture 1, Picture 2 and so on. Picture 1 is the opening: the video starts inside that photograph. You decide who and what the video needs and which pictures show them, as JSON.
 
 RULES
-- A member is one person, one animal or one object that the IDEA needs and a picture shows, or the place where the video happens.
-- Exactly one member is the environment: the place shown in Picture 1. The whole video happens there. The other pictures are used only for the members they show, never for their places.
-- Add an object only when the IDEA needs it and a picture shows it (the hookah that is smoked). Furniture, walls, tables and lights belong to the environment.
+- A member is one person, one animal or one object that the IDEA needs and a picture shows, or a place where the video happens.
+- The first member of kind "environment" is the place shown in Picture 1, where the video starts. When the IDEA moves somewhere else (out of the window into the sky, onto the street), each further place is an environment member of its own; a place no picture shows is listed in no picture's "shows" and is created from words. The other pictures are used only for the members they show, never for their places.
+- Add an object only when the IDEA's action moves it, uses it or passes it on (the hookah that is smoked, the ball that is thrown). Anything that only sits in the place - furniture, a mouse on a desk, a blanket lain on, walls, lights - belongs to the environment, however clearly a picture shows it.
 - Add no person or animal that the IDEA does not need, even when a picture shows one: people in the background are bystanders, not members.
-- A person or animal the IDEA brings in that no picture shows is a member too: list it in no picture's "shows" and it is created from words alone ("a man enters the scene" where every picture is of the woman). Only a person or animal may be a member no picture shows; an object and the place are members only where a picture shows them.
+- A person or animal the IDEA brings in that no picture shows is a member too: list it in no picture's "shows" and it is created from words alone ("a man enters the scene" where every picture is of the woman). Only a person, an animal or a further place may be a member no picture shows; an object is a member only where a picture shows it.
+- Two or more animals the IDEA treats as one group (two pigeons that fly together) are one member whose noun says how many ("two pigeons"), with "their".
 - "id": one lowercase English word, or two joined by "_" ("man", "woman", "cat", "hookah", "lounge"); every id is different.
 - "kind": "person", "animal", "object" or "environment".
 - "noun": what the member is, in at most two words ("man", "woman", "cat", "hookah", "shisha lounge").
-- "possessive": "his" or "her" for a person, "its" for anything else.
+- "possessive": "his" or "her" for a person, "their" for a group, "its" for anything else.
 - "find": how to find the member in a photograph, in at most 14 words, by what is visible: position, clothing, colour, pose ("the man in the black t-shirt holding the hookah hose"). For a member no picture shows, what the IDEA asks of it instead ("the man who enters and stands behind her").
-- "pictures": one entry per picture, in order, listing the id of every member that picture clearly shows. List the environment for Picture 1 only. A member no picture shows is listed in none of them.
+- "pictures": one entry per picture, in order, listing the id of every member that picture clearly shows. List the first place for Picture 1. A member no picture shows is listed in none of them.
 
 Answer only JSON, in this shape:
 {"members":[{"id":"man","kind":"person","noun":"man","possessive":"his","find":"..."},{"id":"lounge","kind":"environment","noun":"shisha lounge","possessive":"its","find":"..."}],"pictures":[{"picture":1,"shows":["man","lounge"]},{"picture":2,"shows":[]}]}"""
@@ -139,7 +140,7 @@ INVENT_SYSTEM = """\
 You decide what ONE member of a live-action video looks like, as JSON. No photograph shows this member: the IDEA brings it in, and your words are the only thing the video has to go on. They are pasted where a photographed member's observed traits go, so they must read the same way - what is on the body, not what happens to it.
 
 RULES
-- Invent an ordinary look that the IDEA allows and nothing in it contradicts. Keep it plain: hair, one or two garments, at most one accessory. An animal: coat, markings, tail, ears.
+- Invent an ordinary look that the IDEA allows and nothing in it contradicts. Keep it plain: hair, one or two garments, at most one accessory. An animal: only what its species really has and a camera would see - a cat its coat, markings, tail and ears; a bird its plumage (part "coat"), markings and tail, never ears. A place: what stands in it, what it is made of and what fills the view (parts landmark, furniture, surface), and in "lights" every source of its light ("bright midday sun from above").
 - Decide nothing the IDEA has already decided. Where it says what the member wears or looks like, that is the look.
 - Say nothing about the place, the light, the camera or any other member: this member's own look only.
 - Nothing held and nothing done: a thing carried belongs to the action, not to the look, and the take moves it.
@@ -147,11 +148,11 @@ RULES
 - "phrase": the full noun phrase, at most 14 words, reading after "with" ("a charcoal-grey open-collar shirt").
 - "short": the same thing in at most 5 words, keeping its colour, with "a" or "an" in front of a single countable thing.
 - "name": what it is in one or two plain words, without colour ("shirt", "hair", "watch").
-- "part": one of hair, coat, markings, face, top, bottom, footwear, accessory, tail, ears.
-- 4 to 6 traits.
+- "part": one of hair, coat, markings, face, top, bottom, footwear, accessory, tail, ears, landmark, furniture, surface.
+- 4 to 6 traits. "lights": [] for anything but a place.
 
 Answer only JSON, in this shape:
-{"traits":[{"part":"hair","phrase":"short dark-brown hair","short":"short dark-brown hair","name":"hair"}]}"""
+{"traits":[{"part":"hair","phrase":"short dark-brown hair","short":"short dark-brown hair","name":"hair"}],"lights":[]}"""
 
 INVENT_USER = """\
 IDEA:
@@ -188,46 +189,52 @@ MOUTHS:
 {mouths}"""
 
 PLAN_SYSTEM = """\
-You are the director and script supervisor of ONE unbroken live-action take that MiniMax H3 renders as a chain of short clips. H3 renders at most {longest:g} seconds at a time, so you split the take into consecutive clips, choosing how many and how long each one is. Each clip starts on the exact last frame of the clip before it and inherits its last moment of motion and sound. You plan what happens in every clip, as JSON. You do not write the final prompts: a program turns your plan into them, and a writer expands your notes into prose.
+You are the director and script supervisor of ONE unbroken live-action take that MiniMax H3 renders as a chain of short clips. H3 renders at most {longest:g} seconds at a time, so you split the take into consecutive clips, choosing how many and how long each one is. Each clip starts on the exact last frame of the clip before it and inherits its last moment of motion and sound, unless it cuts (rule 13). You plan what happens in every clip, as JSON. You do not write the final prompts: a program turns your plan into them, and a writer expands your notes into prose.
 
 WHAT YOU RECEIVE
-- IDEA: what should happen over the whole take.
-- CAST: every member with an id, what it is and its visible traits, taken from reference photographs. Use only these members; add no people, animals or props. The environment member is the place, and it is in every clip.
+- IDEA: what should happen over the whole take. When it is a numbered story, its first paragraph describes the place and the first frame, its numbered lines are the events, and its Sound line is sound: only the numbered lines are events.
+- CAST: every member with an id, what it is and its visible traits, taken from reference photographs or, for a member no photograph shows, decided from the IDEA. Use only these members; add no people, animals or props. A member of kind "environment" is a place; every clip happens in exactly one place.
 - OPENING: the exact arrangement of the first frame, which is a real photograph. Clip 1 starts on it; a member it does not name is outside the frame at the start.
 - TAKE: the longest the whole take may last, and how short and how long one clip may be.
 
 HOW A CHAINED TAKE BREAKS, AND THE RULES THAT PREVENT IT
 1. A contradiction at a join renders as a union: extra people, doubled props. The program copies each clip's "closing" word for word as the opening of the next clip, so write every closing as a precise, complete snapshot of the last frame: where every cast member on screen is, by the sides of the frame (left of frame, right of centre, lower foreground - never "to his left"), the pose, what each hand or paw holds and in which hand, where every object of the cast is and who holds it, named as its {{id}}, which way each face points, and any smoke still in the air. Everyone on screen at the end of a clip who is also in the next clip is named in its closing.
 2. The opening is a moment in the middle of something. The first beat of clip 1 finishes whatever the OPENING shows under way (an exhale ends and its cloud thins, a raised hand comes to rest) before anything new starts.
-3. Airlock. Every clip after the first begins with an "airlock" beat of {airlock:g} seconds (at least {airlock_min:g}, at most {quiet_max:g}) in which the closing arrangement of the clip before holds: the performers only breathe, blink, shift their weight and turn their eyes, and smoke drifts. Nobody speaks, enters, leaves or passes anything during an airlock.
-4. Land settled, on the faces. Every clip ends with a "settle" beat of {settle:g} seconds (at least {settle_min:g}, at most {quiet_max:g}): the action is complete, everyone is still, and the face of every person and animal on screen is turned toward the camera, front or three-quarter, never hidden by a hand, a prop or smoke. The closing says so ("both faces turned three-quarters to the camera, smiling with closed lips"), and "faces_at_close" lists them.
+3. Airlock. Every clip after the first begins with an "airlock" beat (or a "carry" beat, rule 14) of {airlock:g} seconds (at least {airlock_min:g}, at most {quiet_max:g}) in which the closing arrangement of the clip before holds: the performers only breathe, blink, shift their weight and turn their eyes, and smoke drifts. Nobody speaks, enters, leaves or passes anything during an airlock.
+4. Land settled, on the faces. Every clip ends with a "settle" beat (or a "carry" beat into the next clip, rule 14) of {settle:g} seconds (at least {settle_min:g}, at most {quiet_max:g}): the action is complete, everyone is still, and the face of every person and animal on screen is turned toward the camera, front or three-quarter, never hidden by a hand, a prop or smoke. The closing says so ("both faces turned three-quarters to the camera, smiling with closed lips"), and "faces_at_close" lists them.
 5. One main change per clip. The IDEA's events decide the clips: each main event gets a clip of its own, and a clip never carries two. A clip lasts exactly as long as its beats need: a glance and a smile take a few seconds, a hand-off with reach, grip and release takes longer. Never stretch a beat to fill time; a take shorter than the TAKE allows is right when the IDEA needs no more. Each clip has exactly one beat of phase "primary" or "handoff" that carries its main event, and it starts between {early:.0f}% and {late:.0f}% of the clip, because the end of a clip gets squeezed. "irreversible_change" names the physical fact that is true at the end of the clip and was not at its start ("the hose is in her hands", "the cat sits on the table"). A mood or a camera move is not a change.
 6. Hand-offs take time. Passing an object from one hand or paw to another is a "handoff" beat of at least {handoff_min:g} seconds in which the reach, the grip and the release are all visible.
-7. The story comes into the frame. The framing stays close to the opening framing. A member the clip's opening does not name is outside the frame when the clip starts: it takes no part in the first beat, and appears in a later beat by entering from a named edge (left, right, bottom) or from the background, or when a camera move brings it into view; nothing happens off-screen. Someone the IDEA places at the same table or close by is already sitting there, just out of frame on the side where the IDEA puts them (across the table is on the table's side of the frame): a camera move ("reveal_left", "reveal_right") brings them in, seated. Walking in is for someone who arrives. At most {max_living} people and animals are on screen in a clip. Every person and animal in a clip's cast moves in at least one beat or is named in its opening or closing.
+7. The story comes into the frame. The framing stays close to the opening framing, unless the action travels (rule 14). A member the clip's opening does not name is outside the frame when the clip starts: it takes no part in the first beat, and appears in a later beat by entering from a named edge (left, right, bottom) or from the background, or when a camera move brings it into view; nothing happens off-screen. Someone the IDEA places at the same table or close by is already sitting there, just out of frame on the side where the IDEA puts them (across the table is on the table's side of the frame): a camera move ("reveal_left", "reveal_right") brings them in, seated. Walking in is for someone who arrives. At most {max_living} people and animals are on screen in a clip. Every person and animal in a clip's cast moves in at least one beat or is named in its opening or closing.
 8. Physical truth. Bodies and objects keep their weight, size and contact with surfaces. Animals move like real animals: a cat jumps, walks, sits, sniffs, paws and meows, and holds a hose by clasping it between its front paws. An object in someone's left hand stays in that hand until a beat moves it.
 9. Keep the IDEA's own verbs and counts. If the IDEA says a member jumps, it jumps (not walks); "rings" are two or more rings; a giggle that comes with a hand-over happens in that hand-over beat.
-10. Camera. Each clip has exactly one camera move from the list, made during its main beat and aimed at one cast member ("toward"). Use "hold" while three characters must stay in frame.
+10. Camera. Each clip has exactly one camera move from the list, made during its main beat and aimed at one cast member ("toward"). Use "hold" while three characters must stay in frame, and "follow" or "crane_up" when a member travels or rises.
 11. Mouths and voices. A mouth opens only for what "mouths" lists, and each thing it lists happens in a beat's action by that member. A smile keeps the lips closed and is not listed. Nobody talks unless the IDEA gives exact words. Laughter, giggles, sighs, exhales and animal sounds need no words. If the IDEA gives words, put each line in "dialogue" inside one clip, after the airlock and ending at least {dialogue_tail:g} seconds before the clip ends, at about {words_per_second:g} words per second.
 12. Write only what a camera can see or a microphone can hear: no mood words, no quality words, and never mention clips, segments, prompts or stitching in any text.
+13. Cuts. A clip continues from the clip before ("cut": ""), except where the IDEA jumps: "cut": "back" returns to the OPENING photograph exactly as it was, the way waking returns to the bed a dream started in; "cut": "new" jumps to a new framing or another place, and its "opening" is a snapshot of its own first frame, written like a closing. A cut clip begins with an airlock. Never cut inside one continuous action.
+14. Travel and chases. A chase, a flight or a run covers distance: the one chased starts far ahead, small in the frame, the gap changes over the clip, and the camera moves with them ("follow"). Nothing travelling stops to pose: a clip whose action runs on into the next ends with a "carry" beat instead of a settle, its closing a snapshot of the motion under way (who is where in the frame, which way each moves, the background passing), and the next clip begins with a "carry" beat, at most {quiet_max:g} seconds, in which that motion goes on and nothing new starts. A carry is never the main event: the leap or the swipe is the clip's primary beat, and the carry only keeps that motion going for at most {quiet_max:g} seconds after it. Faces still show at a carry's close, but need not turn to the camera.
+15. Changes that last. When a member's look changes and stays changed (wings grow, a shirt gets soaked), the clip where it happens gives "looks": {{"cat": "two large grey-and-white feathered wings on its back"}}, the member's look from the end of that clip on, in at most {look_words} words. The program says it in every later clip, so a later clip does not repeat it; a "back" cut ends every change.
 
 FIELDS
 - "ambience": one noun phrase, starting in lowercase, of the room sound heard through the whole take ("quiet lounge room tone with a low ventilation hum and a faint clink of glassware from the bar").
 - "story": every action of the IDEA in its order, each as its own event in the IDEA's own words ("blows smoke rings", "jumps onto the table", "giggles"), with the clip (counted from 1) in which a beat's "action" shows it with the same verb. An airlock or a settle beat shows no event.
 - "clips": as many as the IDEA's main events need, their "seconds" adding up to no more than the TAKE. In each clip:
   - "seconds": how long the clip lasts, the sum of its beats, within the TAKE's range, with at most one decimal.
+  - "cut": "", "back" or "new" (rule 13); "opening": the first frame of a "new" cut, else "".
   - "purpose": one sentence of at most 25 words.
-  - "cast": the id of every member on screen at any moment of the clip, the environment included.
-  - "beats": 3 to 5 beats. The first starts at 0, each next one starts where the one before ended, and the last ends exactly at the clip's "seconds"; seconds with at most two decimals. "phase" is one of airlock, build, primary, handoff, reaction, settle. "who" lists the ids that move in the beat. "action" is one or two plain sentences, at most 35 words, of visible motion: who moves which body part, where the prop goes, what the smoke does.
+  - "cast": the id of every member on screen at any moment of the clip, with exactly one place: the one this clip happens in.
+  - "beats": 3 to 5 beats. The first starts at 0, each next one starts where the one before ended, and the last ends exactly at the clip's "seconds"; seconds with at most two decimals. "phase" is one of airlock, carry, build, primary, handoff, reaction, settle. "who" lists the ids that move in the beat. "action" is one or two plain sentences, at most 35 words, of visible motion: who moves which body part, where the prop goes, what the smoke does.
   - "camera": {{"move": one of the CAMERA MOVES, "toward": a cast id}}.
   - "mouths": every way a mouth opens in this clip, as short plain phrases with possessives and no braces ("his slow draw on the mouthpiece", "her giggle", "the two meows of the cat"); [] when every mouth stays closed.
   - "closing": one snapshot sentence of at most {closing_words} words, as rule 1 says.
   - "faces_at_close": the id of every person and animal in the closing.
   - "irreversible_change": at most 20 words.
+  - "looks": {{}} unless a member's look changes for good in this clip (rule 15).
+  - "ambience": "" in the first place; in another place, one noun phrase of the sound heard there ("wind rushing past and distant birdsong high above the trees").
   - "dialogue": [] unless the IDEA gives exact words; then {{"who": id, "start": seconds, "language": "English", "line": "...", "voice": "a bright, amused young female voice"}} per line.
 - In "action" and "closing", write members as their id in braces: {{man}}, {{woman}}, {{cat}}. Never put a possessive after the braces: write "the hand of {{woman}}" or "her hand", never "{{woman}}'s hand".
 
 Answer only JSON, in this shape (one clip and two of its beats shown; write every clip and every beat):
-{{"ambience":"...","story":[{{"event":"...","clip":1}}],"clips":[{{"seconds":9,"purpose":"...","cast":["man","hookah","lounge"],"beats":[{{"start":0,"end":2,"phase":"build","who":["man"],"action":"..."}},{{"start":2,"end":6.5,"phase":"primary","who":["man"],"action":"..."}}],"camera":{{"move":"hold","toward":"man"}},"mouths":["his slow exhale"],"closing":"...","faces_at_close":["man"],"irreversible_change":"...","dialogue":[]}}]}}"""
+{{"ambience":"...","story":[{{"event":"...","clip":1}}],"clips":[{{"seconds":9,"cut":"","opening":"","purpose":"...","cast":["man","hookah","lounge"],"beats":[{{"start":0,"end":2,"phase":"build","who":["man"],"action":"..."}},{{"start":2,"end":6.5,"phase":"primary","who":["man"],"action":"..."}}],"camera":{{"move":"hold","toward":"man"}},"mouths":["his slow exhale"],"closing":"...","faces_at_close":["man"],"irreversible_change":"...","looks":{{}},"ambience":"","dialogue":[]}}]}}"""
 
 PLAN_USER = """\
 IDEA:
@@ -254,8 +261,8 @@ WHAT YOU WRITE
 RULES
 1. Name a cast member as its id in braces, {man}, {woman}, {cat}, the first time it acts in a beat; afterwards use he, she, it or a plain noun such as "the cat". Every member listed as acting in a beat is named in braces in that beat. Never put a possessive after the braces: write "the hand of {woman}" or "her hand". Never write labels in angle brackets.
 2. No timing words and no numbers of seconds: the program puts a timing phrase in front of every beat ("For the first two seconds the arrangement holds with small natural motion:", "Early in the clip,", "Over about four seconds in the middle of the clip,"). Start each beat with the motion itself, in lowercase unless it starts with braces.
-3. An airlock beat is quiet: breath, blinking, weight shifts, drifting smoke, a glance. Nothing enters, leaves or changes hands.
-4. The program writes the clip's final settle from the closing arrangement, so your last beat ends where that arrangement begins.
+3. An airlock beat is quiet: breath, blinking, weight shifts, drifting smoke, a glance. Nothing enters, leaves or changes hands. A carry beat is the motion already under way going on at the same speed and in the same direction; nothing new starts in it.
+4. The program writes the clip's final settle or carry from the closing arrangement, so your last beat ends where that arrangement begins.
 5. Stay inside the plan: no new people, animals, props, lights, cuts or camera moves, and no clothing, hair or markings beyond the listed traits. Keep hands and paws exactly as the plan has them: an object in a left hand stays in that left hand.
 6. Mouths only do what the mouth rule allows. A sound made by a mouth - a giggle, a laugh, a meow, an exhale, a sigh - happens only when the mouth rule lists it, and each one the rule lists is shown in the beat where it happens and heard in "sounds". Sides are sides of the frame ("toward the left of the frame"), never "to his left".
 7. A dialogue line is written as {say}, immediately after the speaker's own braces, with none of its words. The program puts the words in and names the speaker there.
@@ -314,6 +321,11 @@ SENTENCES = {
     "member": "{subject} is the {noun} from {pictures}, taking only {what} from {that}: {traits}.",
     # A member no photograph shows: its traits are the whole of it, so it cites no picture.
     "unseen": "{subject} is the {noun}, who appears in no reference picture and is created from this description alone: {traits}.",
+    "unseen_group": "{subject} is the {noun}, who appear in no reference picture and are created from this description alone: {traits}.",
+    "unseen_place": "{subject} is the {noun}, which appears in no reference picture and is created from this description alone: {traits}.",
+    # A lasting change the plan made to a member's look: no reference picture shows it, so it is said outright.
+    "look": "In this shot {subject} also has {look}, which no reference picture shows.",
+    "look_change": "During this shot {subject} changes: by its end it has {look}, which no reference picture shows.",
     "environment": "{subject} is the {noun} and its photographic look from {pictures}: {traits}, and the photo's natural color balance, contrast and skin tones.",
     "first_frame": "<Picture 1> is the first frame of [Shot 1]: {arrangement}.",
     "last_frame": "<Picture 2> is the last frame of [Shot 1]: {arrangement}.",
@@ -324,18 +336,22 @@ SENTENCES = {
     "lead_lands": "It ends exactly on <Picture 2>.",
     "audio_role": "The room tone of <Audio 1> carries on throughout.",
     "retain": "{subject} (appears in [Shot 1]): fully_preserved - {traits} are retained.",
+    "retain_look": "{subject} (appears in [Shot 1]): fully_preserved - {traits} are retained, together with {look}.",
     "retain_frame": "<Picture 1> ([Shot 1] first frame): fully_preserved - the video starts exactly from <Picture 1>'s framing, subject state and lighting.",
     "retain_last": "<Picture 2> ([Shot 1] last frame): fully_preserved - the video ends exactly on <Picture 2>'s framing, subject state and lighting.",
     "retain_video": "<Video 1> (continuation source): fully_preserved - the settled poses, handheld drift and light of its final moment continue without a reset.",
+    "retain_video_moving": "<Video 1> (continuation source): fully_preserved - the motion under way, its speed and direction, and the light of its final moment continue without a reset.",
     "retain_audio": "<Audio 1>: reference - its room tone continues in the same character without copying the original signal.",
     "begin": "[Shot 1] The shot begins from <Picture 1>: {arrangement}.",
     "begin_continued": "[Shot 1] The shot begins from <Picture 1>, continuing <Video 1> without a reset: {arrangement}.",
     "room": "The setting is {room}, with {traits}, lit by {lights}.",
+    "room_unlit": "The setting is {room}, with {traits}.",
     "present": "{subject} is the {noun} with {traits}.",  # a member the prose and the closing never name
     "mouths": "Every visible mouth stays closed apart from {actions}.",
     "mouths_none": "Every visible mouth stays closed.",
     "line": "says in {voice}, <d>[{language}] {words}</d> The lips close as the line ends.",
     "settle": "{timing} the arrangement settles: {arrangement}, as the camera holds on this settled {shot} through the end of the video.",
+    "carry": "{timing} the motion carries on without stopping, the camera still moving with it, through the end of the video: {arrangement}.",
     "settle_lands": "{timing} the arrangement settles into <Picture 2>: {arrangement}, as the camera holds on this settled {shot} until the final frame matches <Picture 2>.",
     "room_sound": "{ambience} continues throughout.",
     "room_sound_continued": "The room sound of <Audio 1> continues throughout, the same {ambience}.",
@@ -345,6 +361,7 @@ SENTENCES = {
 TIMING = {
     "first": "For the first {seconds},",
     "airlock": "For the first {seconds} the arrangement holds with small natural motion:",
+    "carry": "For the first {seconds} the motion under way carries on at the same speed, and nothing new starts:",
     "handoff": "Over about {seconds} in the middle of the clip,",
     "settle": "In the final {seconds}",
 }
@@ -379,6 +396,9 @@ CAMERA_MOVES = {
     "truck_left": "The camera trucks left with small amplitude at slow speed, keeping {toward} centred.",
     "truck_right": "The camera trucks right with small amplitude at slow speed, keeping {toward} centred.",
     "tilt_down": "The camera tilts down with small amplitude at slow speed toward {toward}.",
+    # Moves that travel: a chase or a flight covers distance, and a camera that holds makes it hover.
+    "follow": "The camera travels with {toward} at its speed, keeping it in frame as the background streams past.",
+    "crane_up": "The camera rises with large amplitude at medium speed, following {toward} upward.",
 }
 MUSIC = "N/A"  # a score regenerated per chunk cannot be continuous; add music after the join
 
@@ -433,8 +453,8 @@ IDEA_SYSTEM = """\
 You are the story editor of a live-action video. A planner turns your STORY into consecutive shots, one or more per beat, each as long as its action needs, and a video model renders each shot from the reference photographs, labelled Picture 1, Picture 2 and so on. The planner reads your words literally: what they do not say, it fills in from the photographs or leaves out. You receive the user's rough IDEA and the photographs, and you rewrite the IDEA into a STORY the planner renders well, as JSON.
 
 WHAT GOES WRONG, AND THE RULES THAT PREVENT IT
-1. The place, first and concretely. Unless the story says where it happens, the planner takes the place from Picture 1: a street became a bed because the only photograph was of a cat on a bed. "place" is the opening paragraph, 35 to 80 words: the place the IDEA names, with the time of day and the light, the ground and every surface the action touches, and what stands in the background. When no picture shows that place, describe it entirely in words and take nothing of it from the pictures. The same paragraph ends on the first frame: where each subject is, its pose, and what it is doing.
-2. One main event per beat. "beats" has one entry per main event of the IDEA, in order, as many as fit the LENGTH: the planner gives each beat a shot of its own, as long as that action needs. A beat is the few seconds of visible action one shot shows: one to three plain sentences, no more words than LENGTH allows. Never two big events in one beat, and never a beat with nothing new happening. An action and its immediate result belong to the same beat (a stone thrown and the window it breaks): a shot that starts in mid-flight renders it again from the start.
+1. The place, first and concretely. Unless the story says where it happens, the planner takes the place from Picture 1: a street became a bed because the only photograph was of a cat on a bed. "place" is the opening paragraph, 35 to 80 words: the place the IDEA names, with the time of day and the light, the ground and every surface the action touches, and what stands in the background. When no picture shows that place, describe it entirely in words and take nothing of it from the pictures. The same paragraph ends on the first frame: where each subject is, its pose, and what it is doing. Picture 1 is a real photograph, so this paragraph says only what it shows, as it shows it: name no object it does not show, keep every door and window open or closed as it is, and give each subject its pose exactly (lying stretched on its side, paws out in front - not curled up).
+2. One main event per beat. "beats" has one entry per main event of the IDEA, in order, as many as fit the LENGTH: the planner gives each beat a shot of its own, as long as that action needs. A beat is the few seconds of visible action one shot shows: one to three plain sentences, no more words than LENGTH allows. Never two big events in one beat - a door opening is one, the dog running out through it is the next - and never a beat with nothing new happening. An action and its immediate result belong to the same beat (a stone thrown and the window it breaks): a shot that starts in mid-flight renders it again from the start.
 3. Transformations, spelled out. When something turns into something else (burned, roasted, frozen, broken, eaten), the beat describes what it is afterwards, and then says in a sentence of its own that the old thing no longer exists anywhere in the scene, naming it as it was ("No ice is left anywhere.", "No whole vase remains anywhere."). Later beats name only the new thing. Otherwise the planner keeps the old thing in the later shots.
 4. How every subject ends. A subject that leaves turns its back to the camera and goes, and the beat says which way: out of a named side of the frame, or down the street getting smaller until it disappears; say what is left behind ("The yard is left empty."). A subject that stays ends in a pose that says which way it faces. Without this, every animal ends its shot turned to the camera.
 5. The unusual, as the camera sees it. Describe anything that does not happen every day physically: its shape, size, colour, material and motion ("a thin straight beam of pale blue light, as wide as a pencil, that leaves a trail of frost", never "shoots ice"). Describe the result of an effect as an object you could photograph ("frozen solid inside a clear block of ice the size of a shoebox, white frost on its whiskers"), never as a verb alone.

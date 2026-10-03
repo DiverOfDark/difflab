@@ -42,8 +42,9 @@ SIDE = re.compile(
     r"|\b(?:left|right) of (?:him|her|it|them)\b",
     re.I,
 )
-PHASES = ("airlock", "build", "primary", "handoff", "reaction", "settle")
+PHASES = ("airlock", "carry", "build", "primary", "handoff", "reaction", "settle")
 QUIET = ("airlock", "settle")  # beats in which nothing new happens
+TRAVEL = {"follow", "crane_up"}  # camera moves that go with a member through space
 # Sounds a mouth makes, by word stem (`stem`): it opens for each one, so the mouth rule must list it.
 VOCAL = {"giggl": "giggle", "laugh": "laugh", "chuck": "chuckle", "meow": "meow", "exhal": "exhale", "sigh": "sigh",
          "cough": "cough", "purr": "purr", "gasp": "gasp", "yawn": "yawn"}  # fmt: skip
@@ -205,6 +206,20 @@ def _verbish(word: str) -> bool:
     return (word.endswith("ing") and len(word) >= 6) or (word.endswith("s") and not word.endswith(("ss", "us", "is")))
 
 
+NUMBERED = re.compile(r"^\s*\d+[.)]\s+(.*)$", re.M)
+
+
+def actions_of(idea: str) -> str:
+    """The part of an IDEA that tells events. A story the idea editor wrote opens with a paragraph on the
+    place and the first frame and ends on a Sound line; only its numbered beats happen. On production 10
+    the place's "sits", "falls" and "holds" were asked of clip 1 as events, and its main beat became the
+    desk sitting by the window."""
+    numbered = NUMBERED.findall(idea)
+    if numbered:
+        return "\n".join(numbered)
+    return "\n".join(line for line in idea.splitlines() if not re.match(r"\s*sound\s*:", line, re.I))
+
+
 def story_rules(idea: str, story: list[tuple[str, int]], take: compose.Take) -> list[Problem]:
     """The plan's map of the IDEA's actions to clips: every action is somewhere, with its own verb.
 
@@ -239,7 +254,7 @@ def story_rules(idea: str, story: list[tuple[str, int]], take: compose.Take) -> 
             said = " and ".join(f"'{word}'" for word in missing)
             fail(f"story: '{event}' is in clip {clip}, but no beat's action there says {said}: say it in the action "
                  "of the beat that shows it, with the IDEA's own verb")  # fmt: skip
-    for part in re.split(r"[.;:,!?]|\band\b|\bthen\b|\bwhile\b", idea, flags=re.I):
+    for part in re.split(r"[.;:,!?]|\band\b|\bthen\b|\bwhile\b", actions_of(idea), flags=re.I):
         verbs = {stem(word) for word in tokens(part) if _verbish(word)}
         if verbs and not verbs & covered and not NEGATION.search(part):  # "nobody speaks" is not an event
             said = " ".join(part.split())
@@ -268,6 +283,24 @@ def plan_rules(take: compose.Take) -> list[Problem]:
                 fail("phase", f"{clip}: '{beat.phase}' is not a phase; use one of {', '.join(PHASES)}")
             if set(beat.who) - set(chunk.cast):
                 fail("cast", f"{clip}: every id in a beat's 'who' is in the clip's 'cast'")
+        texts = (*(b.action for b in beats), chunk.closing)
+        named_in_text = {m for text in texts for m in compose.PLACEHOLDER.findall(text)}
+        for member in sorted(named_in_text - set(chunk.cast)):
+            fail("cast", f"{clip}: {{{member}}} is named in its beats or closing, so it is in its 'cast'")
+        places = [m for m in chunk.cast if take.cards[m].kind == "environment"]
+        if len(places) != 1:
+            fail("place", f"{clip}: its 'cast' names exactly one place, the one it happens in, not {places}")
+            continue
+        if chunk.cut not in compose.CUTS or (index == 0 and chunk.cut):
+            fail("cut", f"{clip}: 'cut' is \"\" (it continues), \"back\" or \"new\", and clip 1 does not cut")
+        elif chunk.cut == "new" and not compose.PLACEHOLDER.search(chunk.opening):
+            fail("cut", f"{clip}: a \"new\" cut writes its 'opening', the first frame, naming every member in it")
+        for member, change in chunk.looks.items():
+            if member not in chunk.cast:
+                fail("looks", f"{clip}: 'looks' changes {{{member}}}, who is not in its cast")
+            elif len(change.split()) > config.DIRECTOR_LOOK_WORDS:
+                fail("looks", f"{clip}: the look of {{{member}}} is {len(change.split())} words; at most "
+                     f"{config.DIRECTOR_LOOK_WORDS}")  # fmt: skip
         if len(beats) < 3:
             fail("beats", f"{clip}: write 3 to 5 beats")
             continue
@@ -290,13 +323,30 @@ def plan_rules(take: compose.Take) -> list[Problem]:
             if abs(a.end - b.start) > 0.01:
                 fail("coverage", f"{clip}: beats must be contiguous ({a.end} then {b.start})")
         airlock, settle = config.DIRECTOR_AIRLOCK[1], config.DIRECTOR_SETTLE[1]
-        if index > 0 and (beats[0].phase != "airlock" or beats[0].end - beats[0].start < airlock):
+        before = take.chunks[index - 1].beats[-1:] if index > 0 else ()
+        following = take.chunks[index + 1] if index + 1 < len(take.chunks) else None
+        carried_in = any(beat.phase == "carry" for beat in before) and not chunk.cut
+        if carried_in and beats[0].phase != "carry":
+            fail("carry", f"{clip}: the clip before ends in a carry, so this one starts with a carry beat")
+        elif index > 0 and not carried_in and (beats[0].phase != "airlock" or beats[0].end - beats[0].start < airlock):
             fail("airlock", f"{clip}: start with an airlock beat of at least {airlock:g} seconds")
-        if beats[-1].phase != "settle" or beats[-1].end - beats[-1].start < settle:
-            fail("settle", f"{clip}: end with a settle beat of at least {settle:g} seconds")
+        if beats[-1].phase == "carry":
+            if following is None or following.cut:
+                fail("carry", f"{clip}: a carry ends a clip only when the next clip continues it; end with a settle")
+        elif beats[-1].phase != "settle" or beats[-1].end - beats[-1].start < settle:
+            fail("settle", f"{clip}: end with a settle of at least {settle:g} seconds, or a carry into the next clip")
+        if any(beat.phase == "carry" for beat in beats[1:-1]):
+            fail("carry", f"{clip}: a carry beat comes only first or last")
+        # Production 10's chase was told rule 14 and still stopped at every join to face the camera; a
+        # travelling camera that runs straight into another is one motion, and it is held to it here.
+        travels = following is not None and not following.cut and {chunk.camera_move, following.camera_move} <= TRAVEL
+        if following is not None and travels and beats[-1].phase != "carry":
+            fail("carry", f"{clip} and the next clip both travel ({chunk.camera_move}, then "
+                 f"{following.camera_move}): end this one with a carry beat, the motion still under way, and "
+                 "start the next with one")  # fmt: skip
         for beat in beats:
             # 0.36 s: `plan_shots.on_grid` moves the last beat's end by up to half a 17-frame cycle.
-            if beat.phase in QUIET and beat.end - beat.start > config.DIRECTOR_QUIET_MAX + 0.36:
+            if beat.phase in (*QUIET, "carry") and beat.end - beat.start > config.DIRECTOR_QUIET_MAX + 0.36:
                 fail(beat.phase, f"{clip}: the {beat.phase} beat {beat.start:g}-{beat.end:g} s lasts over "
                      f"{config.DIRECTOR_QUIET_MAX:g} seconds; shorten it and the clip with it")  # fmt: skip
         if any(beat.phase == "settle" for beat in beats[:-1]):
@@ -332,15 +382,17 @@ def plan_rules(take: compose.Take) -> list[Problem]:
         closing = set(re.findall(r"\{([a-z_]+)\}", chunk.closing))
         # Each on-screen person or animal is restated with its traits at its first {id} in the chunk:
         # the opening, a beat it moves in (the writer must name it there), or the closing.
-        named = present | closing | {m for beat in beats if beat.phase != "settle" for m in beat.who}
+        named = present | closing | {m for beat in compose.written(chunk) for m in beat.who}
         for member in sorted(set(chunk.cast) & living - named):
             fail("drift", f"{clip}: {{{member}}} is on screen, but no beat moves it and neither the opening nor the "
                  "closing names it: give it a part in a beat's 'who', or take it out of the cast")  # fmt: skip
-        objects = {m for m in chunk.cast if take.cards[m].kind == "object"}
+        after = set(take.chunks[index + 1].cast) if index + 1 < len(take.chunks) else set()
+        # An object the clip leaves behind - the blanket below a cat flying off into the sky - is nowhere
+        # in the next frame, so nothing is doubled at the join; the last clip places all of its own.
+        objects = {m for m in chunk.cast if take.cards[m].kind == "object" and (following is None or m in after)}
         for member in sorted(objects - closing):
             fail("closing", f"{clip}: the closing says where {{{member}}} is and who holds it, naming it as "
                  f"{{{member}}}")  # fmt: skip
-        after = set(take.chunks[index + 1].cast) if index + 1 < len(take.chunks) else set()
         for member in sorted(set(chunk.cast) & after & living - closing):
             fail("closing", f"{clip}: {{{member}}} is on screen in this clip and the next one, so the closing says "
                  f"where it is, as {{{member}}}")  # fmt: skip
@@ -381,14 +433,14 @@ def _mouth_problems(take: compose.Take, index: int) -> list[str]:
     """The plan's "mouths" against its beats, both ways. A smile keeps the lips closed, so it is not a
     mouth movement; the settle beat does not count, since it is written from the closing."""
     chunk, clip = take.chunks[index], f"clip {index + 1}"
-    moving = [beat for beat in chunk.beats if beat.phase != "settle"]
+    moving = compose.written(chunk)
     out = []
     for entry in chunk.mouths:
         if SMILE.search(entry):
             out.append(f"{clip}: '{entry}' - a smile keeps the lips closed; leave it out of mouths")
             continue
         wanted = {stem(word) for word in tokens(entry) if len(word) >= 4 and word not in MANNER}
-        owner = tokens(entry)[0] if tokens(entry) and tokens(entry)[0] in ("his", "her", "its") else None
+        owner = tokens(entry)[0] if tokens(entry) and tokens(entry)[0] in ("his", "her", "their", "its") else None
         doers = [
             beat
             for beat in moving
@@ -407,14 +459,11 @@ def _mouth_problems(take: compose.Take, index: int) -> list[str]:
 def cross_chunk_rules(take: compose.Take, prompts: list[str]) -> list[Problem]:
     """What must not drift between chunks: the style, the room and its light, the room sound, the cast."""
     out: list[Problem] = []
-    env = next(m for m in take.members if take.cards[m].kind == "environment")
-    room = take.cards[env]
-    fixed = [
-        words.STYLE.split("{room}")[0],
-        f"with {room.short()}, lit by {compose.join(room.lights)}.",
-        take.ambience.strip().rstrip(".")[1:],
-    ]
     for index, (chunk, prompt) in enumerate(zip(take.chunks, prompts, strict=True)):
+        room = take.cards[compose.place(take, chunk)]
+        lit = f", lit by {compose.join(room.lights)}." if room.lights else "."
+        heard = compose.ambience(take, index).strip().rstrip(".")[1:]
+        fixed = [words.STYLE.split("{room}")[0], f"with {room.short()}{lit}", heard]
         wanted = fixed + [
             f"the {take.cards[m].noun} with {take.cards[m].short()}"
             for m in chunk.cast

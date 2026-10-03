@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import sys
 import threading
 import time
 import traceback
@@ -30,6 +31,9 @@ from difflab.work import Skipped, runners
 _DIRECTED = {tool.name for tool in TOOLS if tool.settings in (DirectorSettings, JudgeSettings)}
 
 POLL = 0.5  # seconds between looks at an empty queue
+# Set by `POST /api/restart`: the process replaces itself with a fresh one between jobs, so code edited
+# since it started takes effect without killing a render in flight.
+RESTART = threading.Event()
 STATS_EVERY = 2.0  # the liveness heartbeat the page watches
 
 
@@ -44,6 +48,9 @@ class Worker(threading.Thread):
         threading.Thread(target=self._watch, name="difflab-worker-watch", daemon=True).start()
         while not self.stopping.is_set():
             if not self.step():
+                if RESTART.is_set():
+                    print("difflab: restarting, the queue is idle", flush=True)
+                    os.execv(sys.executable, [sys.executable, *sys.argv])
                 time.sleep(POLL)
 
     def step(self) -> bool:

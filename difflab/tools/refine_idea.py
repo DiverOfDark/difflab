@@ -86,7 +86,10 @@ def refine(
             out.append(direct.problem("plain prose: no markdown, no bold, no bullets, no headings"))
         return out
 
-    images = [direct.shrink(frame, h3.DIRECTOR_SURVEY_PIXELS) for frame in frames]
+    # Picture 1 at the size the opening is described from: at the survey's 0.4 MP the editor put a
+    # laptop on a desk that held a mouse pad, and opened a closed window.
+    images = [direct.shrink(frame, h3.DIRECTOR_PHOTO_PIXELS if not i else h3.DIRECTOR_SURVEY_PIXELS)
+              for i, frame in enumerate(frames)]  # fmt: skip
     data = direct.ask_json(words.IDEA_SYSTEM, question, images, gate, "idea", h3.IDEA_TOKENS, h3.IDEA_TEMPERATURE)
     draft = _draft(data)
     ui.panel("idea · the story", {"place": draft.place, **{f"beat {i}": b for i, b in enumerate(draft.beats, 1)}})
