@@ -55,14 +55,15 @@ class Registry:
         if key in self._resident:
             self._touch(key)
             if key in self._parked:
-                self._resident[key].to(self._parked.pop(key))
+                device = self._parked.pop(key)
+                self._roomy(lambda: self._resident[key].to(device), spec)
             elif spec.heavy:
                 with ui.step(f"Loading {spec.name}") as detail:
                     detail("skipped, resident")
             return self._resident[key]
         if spec.heavy:
             self._make_room_for(key)
-        model = spec.build()
+        model = self._roomy(spec.build, spec)
         self._resident[key] = model
         self._specs[key] = spec
         self._touch(key)
@@ -112,6 +113,20 @@ class Registry:
         if moved:
             gc.collect()
             torch.cuda.empty_cache()
+
+    def _roomy(self, make: Callable[[], Any], spec: ModelSpec) -> Any:
+        """A light model that runs out of memory beside a heavy one gets the heavy one's room: the VLM,
+        left resident by a plan, filled the card the video VAE then needed at the start of a render."""
+        try:
+            return make()
+        except torch.OutOfMemoryError:
+            heavy = [k for k in self._order if self._specs[k].heavy]
+            if spec.heavy or not heavy:
+                raise
+            for victim in heavy:
+                ui.note(f"evicting {victim} to make room for {spec.name}")
+                self.evict(victim)
+            return make()
 
     def _make_room_for(self, incoming: str) -> None:
         heavy = [k for k in self._order if self._specs[k].heavy]
