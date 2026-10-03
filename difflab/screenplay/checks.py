@@ -44,7 +44,6 @@ SIDE = re.compile(
 )
 PHASES = ("airlock", "carry", "build", "primary", "handoff", "reaction", "settle")
 QUIET = ("airlock", "settle")  # beats in which nothing new happens
-AWAY = re.compile(r"\baway from the camera\b|\bsmall(?:er)? (?:shape|figure|dot|in the frame)\b", re.I)
 TRAVEL = {"follow", "crane_up", "stay"}  # camera moves that show a member travelling through space
 
 
@@ -322,11 +321,6 @@ def plan_rules(take: compose.Take) -> list[Problem]:
                  f"where it is, as {{{member}}}")  # fmt: skip
         if closing - set(chunk.cast):
             fail("closing", f"{clip}: the closing names {sorted(closing - set(chunk.cast))}, who are not in its cast")
-        # Production 10 wrote its cat "a small shape high in the sky, moving away from the camera" over a
-        # crane_up, and the camera rising with it rendered the cat filling the frame.
-        if chunk.camera_move in ("follow", "crane_up") and AWAY.search(chunk.closing):
-            fail("camera", f"{clip}: its closing has {{{chunk.camera_toward}}} going away from the camera, which "
-                 f"\"{chunk.camera_move}\" keeps close: use \"stay\" (rule 16)")  # fmt: skip
         leaving = {chunk.camera_toward} if chunk.camera_move == "stay" else set()  # its back to the camera
         if not closing & living - leaving <= set(chunk.faces_at_close):
             fail("faces", f"{clip}: every person and animal in the closing needs its face visible")

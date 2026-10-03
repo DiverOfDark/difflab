@@ -189,3 +189,19 @@ def traits(member: direct.Member, members: dict[str, direct.Member], listed: Any
             out.append(_fail("answer", f"{member.id}: '{phrase}' is a state of the photo's moment, which the shot "
                              "changes: record the look, not the pose of the moment"))  # fmt: skip
     return out
+
+
+def leaving(take: compose.Take) -> list[Problem]:
+    """A camera that travels with a member, over a closing that has it going away from the camera."""
+    out = []
+    for index, chunk in enumerate(take.chunks):
+        if chunk.camera_move not in ("follow", "crane_up") or chunk.camera_toward not in take.cards:
+            continue
+        card = take.cards[chunk.camera_toward]
+        question = words.RULING_LEAVING_USER.format(
+            member=f"{{{card.id}}}, the {card.noun}", move=chunk.camera_move, closing=chunk.closing
+        )
+        if ask("leaving", words.RULING_LEAVING_SYSTEM, question, _object(away=FLAG))["away"]:
+            out.append(_fail("camera", f"clip {index + 1}: its closing has {{{card.id}}} going away from the camera, "
+                             f"which \"{chunk.camera_move}\" keeps close: use \"stay\" (rule 16)"))  # fmt: skip
+    return out

@@ -495,6 +495,22 @@ PROSE
 SOUNDS
 {sounds}"""
 
+# Production 10 wrote its cat "a small shape high in the sky, moving away from the camera" over a crane_up,
+# and the camera rising with it rendered the cat filling the frame.
+RULING_LEAVING_SYSTEM = """\
+You are the script supervisor of a live-action video. A clip's camera travels with a MEMBER ("follow" or "crane_up"), so that member stays near the camera and large in the frame. You read the clip's CLOSING, its last frame in words, as JSON.
+
+RULES
+- "away" is true when the CLOSING has the MEMBER going away from the camera: growing smaller in the frame, far off, a shape, a dot or a speck in the distance, disappearing into the background. It is false when the member stays near the camera, at whatever size it has while the camera keeps up with it.
+
+Answer only JSON, in this shape:
+{"away":false}"""
+
+RULING_LEAVING_USER = """\
+MEMBER: {member}
+CAMERA: {move}
+CLOSING: {closing}"""
+
 # "moment": production 10's card said "closed eyes" from a sleeping photo, and the retention line kept them
 # closed in every shot. "held": the take moves a held thing, and a card that keeps it contradicts the hand
 # the opening names.

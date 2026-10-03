@@ -113,7 +113,7 @@ def plan(base: compose.Take, idea: str, total: float) -> compose.Take:
         # Never returned alone: an answer stopped here counted one problem and was kept over answers that
         # broke fewer rules, unchecked - a 72 s plan whose closings named members missing from the next cast.
         take = _take_from_plan(data, base)
-        out += lint.plan_rules(take) + ruling.mouths(take)
+        out += lint.plan_rules(take) + ruling.mouths(take) + ruling.leaving(take)
         if not story(data):
             out.append(direct.problem('"story" lists every action of the IDEA with the clip that shows it'))
         return out + ruling.story(idea, list(story(data)), take)
