@@ -216,6 +216,23 @@ def bystanders(found: list[Found]) -> list[Found]:
 
 
 @dataclass(frozen=True)
+class Dropped:
+    photo: int
+    member: str
+    role: str
+    why: str  # bystander | covered
+
+
+@dataclass(frozen=True)
+class Gap:
+    """A picture a member's prompts want and no photograph gave: H3 holds the member with less, or by words."""
+
+    member: str
+    role: str
+    why: str
+
+
+@dataclass(frozen=True)
 class _Option:
     """A crop to make, and the boxes to try for it in order: the first that shows no bystander is cut."""
 
@@ -232,14 +249,14 @@ def cut_all(
     kinds: dict[str, str],
     canvas: int,
     opening: Box,
-) -> tuple[list[Crop], list[str]]:
-    """Every crop of every photo, in presentation order, and a note for each one dropped.
+) -> tuple[list[Crop], list[Dropped]]:
+    """Every crop of every photo, in presentation order, and each one not cut.
 
     `canvas` is the render canvas's pixel area, which no crop may exceed. The environment is tried as
     the first photo whole, then cut back past any bystander, then the part the take opens on.
     """
     crops: list[Crop] = []
-    notes: list[str] = []
+    dropped: list[Dropped] = []
     counts: dict[str, int] = {}
 
     def key(member: str, role: str) -> str:
@@ -283,7 +300,8 @@ def cut_all(
             grown += [cleared] if thing.box.inside(cleared) >= config.DIRECTOR_CLEAR_KEEP else []
             tries = [fitted(box, config.DIRECTOR_VIEW_PIXELS, bounds, canvas) for box in grown]
             if portrait is not None and tries[0][0].inside(portrait) >= config.DIRECTOR_PORTRAIT_COVERS:
-                continue  # the face crop already is this view: a small animal's portrait holds all of it
+                dropped.append(Dropped(photo, member, role, "covered"))  # a small animal's portrait holds all of it
+                continue
             options.append(_Option(member, role, tries, thing.box.area))
         for option in options:
             for box, size in option.tries:
@@ -304,8 +322,67 @@ def cut_all(
                     )
                     break
             else:
-                notes.append(f"photo {photo + 1}: no {option.role} crop of {option.member} without a bystander in it")
-    return crops, notes
+                dropped.append(Dropped(photo, option.member, option.role, "bystander"))
+    return crops, dropped
+
+
+PLACE_ONLY = "only photos of the place show it, and those are kept whole for the place"
+# What a member's prompts want held, by kind: `compose.definition` says a person by face and body.
+WANTS = {"person": ("face", "body"), "animal": ("face", "view"), "object": ("object",), "environment": ("environment",)}
+
+
+def gaps(
+    made: list[Crop],
+    dropped: list[Dropped],
+    found: list[list[Found]],
+    shows: list[tuple[str, ...]],
+    kinds: dict[str, str],
+    detached: set[tuple[str, str]],
+) -> list[Gap]:
+    """Each picture a photographed member's prompts want and no photograph gave, with the reason."""
+    have = {(crop.member, crop.role) for crop in made}
+    covered = {(d.member, d.role) for d in dropped if d.why == "covered"}
+    out = []
+    for member, kind in kinds.items():
+        seen = [photo for photo, listed in enumerate(shows) if member in listed]
+        if not seen:
+            continue  # decided in words: drawn, not cut
+        for role in WANTS[kind]:
+            if (member, role) in have | covered:
+                continue
+            why = _why(member, role, seen, dropped, found, shows, kinds, detached)
+            if kind != "object" or why != PLACE_ONLY:  # the place's own picture holds a thing that stays in it
+                out.append(Gap(member, role, why))
+    return out
+
+
+def _why(
+    member: str,
+    role: str,
+    seen: list[int],
+    dropped: list[Dropped],
+    found: list[list[Found]],
+    shows: list[tuple[str, ...]],
+    kinds: dict[str, str],
+    detached: set[tuple[str, str]],
+) -> str:
+    if (member, role) in detached:
+        return "its crop was detached by hand"
+    crowded = [d.photo + 1 for d in dropped if (d.member, d.role, d.why) == (member, role, "bystander")]
+    if crowded:
+        return f"a bystander is in every {role} crop of it ({', '.join(f'photo {n}' for n in crowded)})"
+    things = [thing for photo in seen if (thing := best(found[photo], member, kinds[member])) is not None]
+    if not things:
+        return "the photos that show it found no box for it"
+    if role == "face":
+        heads = [thing.head.width for thing in things if thing.head is not None]
+        if not heads:
+            return "no photo shows its face"
+        widest = max(heads)
+        return f"its face is {widest:.0f} px wide at most, under the {config.DIRECTOR_FACE_MIN} px a face crop takes"
+    if all(any(kinds.get(m) == "environment" for m in shows[photo]) for photo in seen):
+        return PLACE_ONLY
+    return f"no {role} crop of it was cut"
 
 
 def clear_of(box: Box, bystanders: list[Box], members: list[Box]) -> Box:

@@ -10,10 +10,12 @@ from pathlib import Path
 from typing import Any
 
 from difflab import config, store
+from difflab.core import media
 from difflab.core.keys import key
 from difflab.core.settings import Continuity, EditSettings, Settings
+from difflab.models.minimax_h3 import pipeline
 from difflab.models.minimax_h3.settings import VideoSettings
-from difflab.screenplay import compiler, drawn, settings, words
+from difflab.screenplay import compiler, crops, drawn, settings, words
 from difflab.screenplay import config as knobs
 
 _SLUG = re.compile(r"[a-z0-9][a-z0-9_-]*")
@@ -509,6 +511,48 @@ def delete_member(member_id: int) -> dict[str, int]:
     return moved
 
 
+def gaps(production: store.Production, member: store.Member, references: list[store.Reference]) -> list[dict[str, str]]:
+    """The last cut's gaps for this member that no given or drawn picture has filled since."""
+    held = {compiler.DRAWN_ROLE[member.kind] if r.generated else r.role for r in references if r.artifact}
+    return [
+        {"role": str(gap["role"]), "why": str(gap["why"])}
+        for gap in production.manifest.get("gaps", [])
+        if gap["member"] == member.slug and gap["role"] not in held
+    ]
+
+
+def give_ref(member_id: int, path: str, role: str) -> dict[str, int]:
+    """A picture of the member from outside the photographs, fitted the way a crop is so H3 takes it as it is."""
+    with store.connect() as connection, store.transaction(connection):
+        member = store.member(connection, member_id)
+        production = None if member is None else store.production(connection, member.production_id)
+        if member is None or production is None:
+            raise LookupError(f"no member {member_id}")
+        if role not in crops.WANTS[member.kind]:
+            raise ValueError(f"a {member.kind} takes a {' or '.join(crops.WANTS[member.kind])} picture, not {role}")
+        canvas = production.manifest.get("canvas")
+        if not canvas:
+            raise ValueError("plan the chapter first: its canvas decides the picture's size")
+        source = Path(path) if Path(path).is_absolute() else config.OUTPUT_DIR / path
+        frame = media.frame_from_image(source)
+        pixels = knobs.DIRECTOR_ENVIRONMENT_PIXELS if role == "environment" else knobs.DIRECTOR_VIEW_PIXELS
+        whole = crops.Box(0, 0, frame.width, frame.height)
+        box, size = crops.fitted(whole, pixels, (frame.width, frame.height), canvas["width"] * canvas["height"])
+        geometry = pipeline.Geometry(int(canvas["width"]), int(canvas["height"]), int(canvas["frame_count"]))
+        if pipeline.reference_size(*size, geometry, "match") != size:
+            raise ValueError(f"a {size[0]}×{size[1]} picture would be resampled by H3's reference sizing")
+        folder = config.OUTPUT_DIR / "blobs" / "given"
+        folder.mkdir(parents=True, exist_ok=True)
+        kept = folder / f"{source.stem}_{member.slug}_{role}.png"
+        frame.crop(box.pixels()).resized(*size).pil().save(kept)
+        given = store.relative(source)
+        store.add_ref(
+            connection, member.id, role, given, list(box.pixels()), list(size), (size[0] // 32) * (size[1] // 32),
+            [member.slug], box.area, artifact=store.relative(kept), provided=given,
+        )  # fmt: skip
+        return _stale(connection, _shots_of(connection, production.id, member.slug))
+
+
 def detach_ref(ref_id: int) -> dict[str, int]:
     """A picture that does not show its member, let go of: remembered by photo and role, so the next
     cut does not attach it again."""
@@ -698,6 +742,7 @@ def _member(
         "position": member.position,
         "pinned": member.pinned,
         "references": [reference(ref) for ref in store.refs_of(connection, member.id)],
+        "gaps": gaps(production, member, store.refs_of(connection, member.id)),
         "conflicts": [
             {"id": conflict.id, "says": conflict.novel_says, "resolution": conflict.resolution}
             for conflict in store.conflicts_of(connection, member.id)

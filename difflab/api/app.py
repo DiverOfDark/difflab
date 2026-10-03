@@ -205,6 +205,21 @@ def _draw(production_id: int, member_id: int | None = None, seed: int | None = N
         raise HTTPException(500, f"the run could not be queued ({problem})") from problem
 
 
+@app.post("/api/members/{member_id}/given")
+async def give_reference(member_id: int, request: Request) -> dict[str, Any]:
+    """`path`, an uploaded picture of the member, held as its `role` picture; says what went stale."""
+    body = await request.json()
+    try:
+        moved = production.give_ref(member_id, str(body["path"]), str(body["role"]))
+    except LookupError as problem:
+        raise HTTPException(404, str(problem)) from problem
+    except (KeyError, ValueError, OSError) as problem:
+        raise HTTPException(400, str(problem)) from problem
+    owner = production.production_of_member(member_id)
+    assert owner is not None
+    return {**_production(owner), "stale": moved}
+
+
 @app.post("/api/conflicts/{conflict_id}/resolve")
 async def resolve_conflict(conflict_id: int, request: Request) -> dict[str, Any]:
     """`resolution`: which wording is kept, in words; empty opens it again."""

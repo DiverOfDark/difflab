@@ -11,6 +11,7 @@ from difflab.models.minimax_h3 import pipeline
 from difflab.models.minimax_h3.settings import VideoSettings
 from difflab.screenplay import config as h3
 from difflab.screenplay import crops
+from difflab.screenplay.crops import Dropped
 from difflab.tools import direct, render_chunk
 
 
@@ -25,12 +26,10 @@ def cut(
     kinds: dict[str, str],
     canvas: pipeline.Geometry,
     cut: crops.Box,
-) -> list[crops.Crop]:
-    """Every crop, checked to pass H3's own reference sizing untouched."""
+) -> tuple[list[crops.Crop], list[Dropped]]:
+    """Every crop, checked to pass H3's own reference sizing untouched, and each one not cut."""
     sizes = [(frame.width, frame.height) for frame in frames]
-    made, notes = crops.cut_all(sizes, found, shows, kinds, canvas.width * canvas.height, cut)
-    for note in notes:
-        ui.note(note)
+    made, dropped = crops.cut_all(sizes, found, shows, kinds, canvas.width * canvas.height, cut)
     for crop in made:
         if pipeline.reference_size(*crop.size, canvas, "match") != crop.size:
             raise RuntimeError(f"{crop.key} {crop.size} would be resampled by H3's reference sizing")
@@ -42,7 +41,7 @@ def cut(
             for crop in made
         },
     )
-    return made
+    return made, dropped
 
 
 def layout(
@@ -69,6 +68,7 @@ class Opening:
     cut: crops.Box  # where in the first photo
     canvas: pipeline.Geometry
     crops: list[crops.Crop]
+    dropped: list[Dropped]
 
 
 def opening_and_crops(
@@ -95,4 +95,4 @@ def opening_and_crops(
     planned = render_chunk.plan(opening, settings)
     if (planned.width, planned.height) != (canvas.width, canvas.height):
         raise RuntimeError(f"the opening plans {planned.width}×{planned.height}, not {canvas.width}×{canvas.height}")
-    return Opening(opening, box, canvas, cut(frames, found, shows, kinds, canvas, box))
+    return Opening(opening, box, canvas, *cut(frames, found, shows, kinds, canvas, box))

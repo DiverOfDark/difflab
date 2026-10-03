@@ -235,6 +235,8 @@ export interface MemberInfo {
   pinned: boolean
   /** Role `generated`: drawn by the editor from the member's words, with the seed it was drawn with. */
   references: (MadeThing & { role: string; photo: string; box: number[]; size: number[]; shows: string[]; seed?: number | null })[]
+  /** Pictures its prompts want that the last cut could not make from the photographs, and why. */
+  gaps?: { role: string; why: string }[]
   conflicts: Conflict[]
 }
 
@@ -320,6 +322,9 @@ export const patchMember = (memberId: number, body: Record<string, unknown>) =>
 export const deleteMember = (memberId: number) =>
   json<Production & { stale: Stale }>(`/api/members/${memberId}`, { method: 'DELETE' })
 export const detachRef = (refId: number) => json<Production & { stale: Stale }>(`/api/refs/${refId}`, { method: 'DELETE' })
+/** An uploaded picture held as the member's `role` picture, fitted to the canvas like a crop. */
+export const giveReference = (memberId: number, path: string, role: string) =>
+  json<Production & { stale: Stale }>(`/api/members/${memberId}/given`, post({ path, role }))
 export const resolveConflict = (conflictId: number, resolution: string) =>
   json<Production>(`/api/conflicts/${conflictId}/resolve`, post({ resolution }))
 export const ingest = (form: Ingest) => {

@@ -7,9 +7,11 @@ import {
   detachRef,
   drawReference,
   drawReferences,
+  giveReference,
   outputUrl,
   patchMember,
   resolveConflict,
+  upload,
   type Conflict,
   type MemberInfo,
   type Production,
@@ -55,6 +57,17 @@ const inDrawing = (m: MemberInfo) => {
 }
 const drawMissing = () => props.act('draw references', () => drawReferences(props.production.id))
 const drawOne = (m: MemberInfo) => props.act(`draw ${m.id}`, () => drawReference(m.id))
+/** A gap filled by the user's own picture; a face is not drawn, since a drawn picture is a whole body. */
+const give = (m: MemberInfo, role: string, event: Event) => {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (file)
+    props.act(`give ${m.id}`, async () => {
+      const [asset] = await upload([file])
+      said((await giveReference(m.id, asset.path, role)).stale)
+    })
+}
 const photoName = (path: string) => {
   if (!path) return 'drawn from its words'
 
@@ -366,6 +379,24 @@ const detach = (refId: number) => props.act(`ref ${refId}`, async () => said((aw
             <div v-if="m.identity.lights?.length" class="traits">
               <span class="eyebrow">lights</span>
               <span class="plain">{{ m.identity.lights.join(', ') }}</span>
+            </div>
+            <div v-for="g in m.gaps ?? []" :key="g.role" class="conflict gap">
+              <span class="eyebrow warn">no {{ g.role }} picture</span>
+              <span>{{ g.why }}</span>
+              <span class="keeps">
+                <button
+                  v-if="g.role !== 'face'"
+                  class="chip"
+                  :disabled="!!busy || !!drawing"
+                  title="the editor draws it from its words: the right clothes, but not the person in the photographs"
+                  @click="drawOne(m)"
+                >
+                  draw from words
+                </button>
+                <label class="chip" :class="{ off: !!busy }" title="a photo of it, fitted to the canvas like a crop">
+                  upload one<input type="file" accept="image/*" hidden :disabled="!!busy" @change="give(m, g.role, $event)" />
+                </label>
+              </span>
             </div>
             <div v-for="c in open(m)" :key="c.id" class="conflict">
               <span class="eyebrow warn">the photographs disagree</span>
@@ -741,6 +772,15 @@ const detach = (refId: number) => props.act(`ref ${refId}`, async () => said((aw
   font-size: var(--text-xs);
   font-weight: var(--weight-light);
   line-height: 1.45;
+}
+
+.gap label.chip {
+  cursor: pointer;
+}
+
+.gap label.chip.off {
+  pointer-events: none;
+  opacity: 0.5;
 }
 
 .conflict.settled {

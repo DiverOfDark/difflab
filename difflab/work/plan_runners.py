@@ -214,7 +214,7 @@ def run_cut_crops(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str,
     _, manifest = _by_hand(production_id)
     detached = [list(map(str, entry)) for entry in manifest.get("detached", [])]
     made = key(
-        "cut_crops", 1, production=production_id, photos=[f.pixels for f in frames], shows=inputs["shows"],
+        "cut_crops", 2, production=production_id, photos=[f.pixels for f in frames], shows=inputs["shows"],
         found=inputs["found"], kinds=kinds, aspect=aspect, video=video,
         **({"detached": detached} if detached else {}), **_fingerprint(),
     )  # fmt: skip
@@ -223,6 +223,10 @@ def run_cut_crops(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str,
         return previous
     cut = cut_crops.opening_and_crops(frames, found, shows, kinds, aspect, video)
     cut = dataclasses.replace(cut, crops=[c for c in cut.crops if [c.member, photos[c.photo], c.role] not in detached])
+    lost = {(member, role) for member, _, role in detached}
+    gaps = crops.gaps(cut.crops, cut.dropped, found, shows, kinds, lost)
+    for gap in gaps:
+        ui.note(f"{gap.member}: no {gap.role} reference, {gap.why}")
     first = cache.path(made, ".png")
     cut.frame.pil().save(first)
     folder = cache.directory / "crops"
@@ -238,6 +242,7 @@ def run_cut_crops(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str,
         "canvas": {**dataclasses.asdict(cut.canvas), "seconds": cut.canvas.duration},
         "seconds": cut.canvas.duration,
         "crops": listed,
+        "gaps": [dataclasses.asdict(gap) for gap in gaps],
     }
     _keep_cut(production_id, photos, outputs, str(made))
     return outputs
@@ -271,6 +276,7 @@ def _keep_cut(production_id: int, photos: list[str], cut: dict[str, Any], made: 
         opening={"photo": photos[0], "box": list(cut["cut"]), "size": [canvas["width"], canvas["height"]]},
         canvas=canvas,
         seconds=float(cut["seconds"]),
+        gaps=list(cut.get("gaps", [])),
     )
 
 
