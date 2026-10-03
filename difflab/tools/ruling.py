@@ -57,13 +57,14 @@ def _fail(code: str, message: str) -> Problem:
     return Problem("error", code, message, True)
 
 
-def events(idea: str) -> list[str]:
-    """The IDEA's events in its own words, from the IDEA alone: every repair of a plan is held to the same list."""
+def events(idea: str, opening: str) -> list[str]:
+    """The IDEA's events in its own words, from the IDEA and the opening alone: every repair of a plan is held to
+    the same list."""
     actions = lint.actions_of(idea).strip()
     data = ask(
         "events",
         words.RULING_EVENTS_SYSTEM,
-        words.RULING_EVENTS_USER.format(idea=actions),
+        words.RULING_EVENTS_USER.format(idea=actions, opening=opening.strip() or "-"),
         _object(events=_array(QUOTE)),
     )
     return list(dict.fromkeys(q for q in map(str, data["events"]) if q.strip()))
@@ -79,7 +80,7 @@ def story(idea: str, listed: list[tuple[str, int]], take: compose.Take) -> list[
     story = "\n".join(f'- "{event}" - clip {clip}' for event, clip in kept) or "(empty)"
     most = max((len(chunk.beats) for chunk in take.chunks), default=0)
     schema = _object(clip=_number(len(take.chunks)), beat=_number(most), faithful=FLAG)
-    for wish in events(idea):
+    for wish in events(idea, take.opening):
         question = words.RULING_STORY_USER.format(clips=clips, story=story, event=f'"{wish}"')
         found = ask("story", words.RULING_STORY_SYSTEM, question, schema)
         clip, number = int(found["clip"]), int(found["beat"])

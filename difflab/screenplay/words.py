@@ -426,7 +426,7 @@ RULING_EVENTS_SYSTEM = """\
 You are the script supervisor of a live-action video. You list the events of an IDEA, as JSON.
 
 RULES
-- An event is something that happens: a member moves, acts, changes or makes a sound (a moan, a giggle), or something appears, bursts, rises, falls or changes. The place, a light, a look, clothing, a pose or state already true when the video begins, and a rule ("nobody speaks") are not events.
+- An event is something that happens: a member moves, acts, changes or makes a sound (a moan, a giggle), or something appears, bursts, rises, falls or changes. The place, a light, a look, clothing, a pose or state already true when the video begins, an action the OPENING FRAME already shows under way (a man already smoking), and a rule ("nobody speaks") are not events.
 - "events" lists every event of the IDEA in its order, each in the IDEA's own words with who does it named ("she giggles" is "the woman giggles"): the fewest words that say who does what ("the cat leaps out through the open window"). An action and the result it causes at once are one event; two actions joined by "and" or "then" are two.
 
 Answer only JSON, in this shape:
@@ -434,7 +434,9 @@ Answer only JSON, in this shape:
 
 RULING_EVENTS_USER = """\
 IDEA:
-{idea}"""
+{idea}
+
+OPENING FRAME: {opening}"""
 
 RULING_STORY_SYSTEM = """\
 You are the script supervisor of a live-action video. A planner split an IDEA into clips of beats. You find the beat that shows one EVENT of the IDEA, as JSON. You rewrite nothing.
