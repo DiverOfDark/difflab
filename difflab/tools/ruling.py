@@ -115,8 +115,7 @@ def mouths(take: compose.Take) -> list[Problem]:
             mouths="\n".join(f'{n}. "{entry}"' for n, entry in enumerate(entries, 1)) or "(none)",
         )
         opening = _object(beat=_number(len(beats)), quote=QUOTE, what=QUOTE, entries=_array(_number(len(entries))))
-        schema = _object(openings=_array(opening), mouths=_array(_object(opens=FLAG), len(entries)))
-        data = ask("mouths", words.RULING_MOUTHS_SYSTEM, question, schema)
+        data = ask("mouths", words.RULING_MOUTHS_SYSTEM, question, _object(openings=_array(opening)))
         clip, done, unlisted = f"clip {index + 1}", set(), dict[str, str]()
         for found in data["openings"]:
             number, what = int(found["beat"]), str(found["what"])
@@ -128,8 +127,8 @@ def mouths(take: compose.Take) -> list[Problem]:
             else:
                 unlisted.setdefault(_plain(what), f"{clip}: beat {number}'s action has {what}, which opens a mouth: "
                                     f"list it in mouths ('{what}')")  # fmt: skip
-        for n, (said, verdict) in enumerate(zip(entries, data["mouths"], strict=True), 1):
-            if not verdict["opens"]:
+        for n, said in enumerate(entries, 1):
+            if not ask("opens", words.RULING_OPENS_SYSTEM, f'"{said}"', _object(opens=FLAG))["opens"]:
                 out.append(_fail("mouths", f"{clip}: '{said}' opens no mouth (a smile keeps the lips closed): leave "
                                  "it out of mouths"))  # fmt: skip
             elif n not in done:

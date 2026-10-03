@@ -461,18 +461,25 @@ RULING_MOUTHS_SYSTEM = """\
 You are the script supervisor of a live-action video. A clip lists its MOUTHS: every way a mouth opens in it. The video model opens a mouth only for what that list says, and fills a mouth listed but never used with mumbling. You check the list against the clip's beats, as JSON.
 
 RULES
-- A mouth opens to speak, laugh, giggle, chuckle, sigh, gasp, cough, yawn, exhale or blow smoke, draw on a pipe or a mouthpiece, eat, drink, bite, take or hold something in it, or make an animal's call (a meow, a purr, a bark). A smile, breathing, and lips resting on a mouthpiece keep the mouth closed. Go by what an action says happens, and infer nothing it does not say.
+- A mouth opens to speak, laugh, giggle, chuckle, sigh, gasp, cough, yawn, exhale or blow smoke, draw on a pipe or a mouthpiece, eat, drink, bite, take or hold something in it, or make an animal's call (a meow, a purr, a bark), and wherever an action says a mouth is open. A smile, breathing, and lips resting on a mouthpiece keep the mouth closed. Go by what an action says happens, and infer nothing it does not say.
 - "openings" lists every mouth opening in the beats' actions, in order: its beat; "quote", the words of that beat's action that say it, word for word; "what", a short phrase for it with its owner ("her giggle"); and "entries", the numbers of the MOUTHS entries that name it, in any words ("exhales and blows two rings" is both "his exhale" and "his two rings"), or [] when none does.
-- "mouths" has one entry for each MOUTHS entry, in order: "opens" says only whether the thing it names opens a mouth at all, whether or not a beat has it done; it is false for a smile and for a sound something else makes (the rip of cloth).
 
 Answer only JSON, in this shape:
-{"openings":[{"beat":2,"quote":"giggles softly","what":"her giggle","entries":[1]}],"mouths":[{"opens":true}]}"""
+{"openings":[{"beat":2,"quote":"giggles softly","what":"her giggle","entries":[1]}]}"""
+
+# Asked beside the beats, "does it open a mouth" came back false for "the cat's meow" and "his exhale"
+# whenever no beat had them done, and the planner deleted the meow; asked alone, it is about the words.
+RULING_OPENS_SYSTEM = """\
+You read one phrase from a video's list of the ways a mouth opens, and say whether the thing it names opens a mouth, as JSON. Speaking, laughing, giggling, sighing, gasping, coughing, yawning, exhaling or blowing smoke, drawing on a pipe, eating, drinking, biting, spitting, holding something in the mouth and an animal's call (a meow, a purr, a bark) open a mouth, and so does a phrase that names what a mouth makes or does ("the two smoke rings of the cat", "his blow", "her spit"). A smile, breathing through the nose, and a sound something else makes (the rip of cloth, a shove) do not.
+
+Answer only JSON, in this shape:
+{"opens":true}"""
 
 RULING_MOUTHS_USER = """\
 BEATS
 {beats}
 
-MOUTHS, one "mouths" entry for each, in this order:
+MOUTHS
 {mouths}"""
 
 RULING_VOICES_SYSTEM = """\
