@@ -264,6 +264,8 @@ def cut_all(
         counts[name] = counts.get(name, 0) + 1
         return name if counts[name] == 1 else f"{name}{counts[name]}"
 
+    places = [any(kinds[m] == "environment" for m in listed) for listed in shows]
+    elsewhere = {m for listed, place in zip(shows, places, strict=True) if not place for m in listed}
     for photo, (bounds, things, listed) in enumerate(zip(sizes, found, shows, strict=True)):
         clean = [thing for thing in things if thing.label != "other"] + bystanders(things)
         others = [thing.box for thing in clean if thing.label == "other"]
@@ -291,8 +293,8 @@ def cut_all(
                 if tries:
                     options.append(_Option(member, "face", tries, thing.head.width))
                     portrait = tries[0][0]
-            if environment is not None:
-                continue  # the environment photo, whole, already holds everyone in it at this size
+            if environment is not None and (kind not in LIVING or member in elsewhere):
+                continue  # the place's photo, whole, holds its things, and another photo holds this one's body
             role = {"person": "body", "animal": "view", "object": "object"}[kind]
             margin = config.DIRECTOR_OBJECT_MARGIN if role == "object" else config.DIRECTOR_BODY_MARGIN
             grown = [thing.box.grown(grow, *bounds, below=role == "object") for grow in (margin, 0.0)]

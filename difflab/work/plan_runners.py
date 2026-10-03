@@ -214,7 +214,7 @@ def run_cut_crops(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str,
     _, manifest = _by_hand(production_id)
     detached = [list(map(str, entry)) for entry in manifest.get("detached", [])]
     made = key(
-        "cut_crops", 2, production=production_id, photos=[f.pixels for f in frames], shows=inputs["shows"],
+        "cut_crops", 3, production=production_id, photos=[f.pixels for f in frames], shows=inputs["shows"],
         found=inputs["found"], kinds=kinds, aspect=aspect, video=video,
         **({"detached": detached} if detached else {}), **_fingerprint(),
     )  # fmt: skip
