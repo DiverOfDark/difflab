@@ -147,17 +147,16 @@ def draw(production_id: int, member_id: int | None = None, seed: int | None = No
                 label=f"draw {member.slug}", settings=editor.data(), for_kind="reference", for_id=reference.id,
             )  # fmt: skip
             store.set_made(connection, "reference", reference.id, store.QUEUED, current_job=job.id)
-            if verdicts.gate > 0:
-                store.add_job(
-                    connection, run_id, "judge",
-                    {"production": production_id, "kind": "reference picture",
-                     "path": {"from_job": job.id, "output": "frame"},
-                     "purpose": f"a reference picture of the {member.noun} alone, whole and sharp",
-                     "arrangement": f"{{{member.slug}}} alone on a plain backdrop" if member.kind != "environment"
-                     else f"{{{member.slug}}}, empty of people and animals",
-                     "cast": [member.slug]},
-                    label=f"judge {member.slug}", settings=verdicts.data(), for_kind="reference", for_id=reference.id,
-                )  # fmt: skip
+            store.add_job(
+                connection, run_id, "judge",
+                {"production": production_id, "kind": "reference picture",
+                 "path": {"from_job": job.id, "output": "frame"},
+                 "purpose": f"a reference picture of the {member.noun} alone, whole and sharp",
+                 "arrangement": f"{{{member.slug}}} alone on a plain backdrop" if member.kind != "environment"
+                 else f"{{{member.slug}}}, empty of people and animals",
+                 "cast": [member.slug]},
+                label=f"judge {member.slug}", settings=verdicts.data(), for_kind="reference", for_id=reference.id,
+            )  # fmt: skip
         if member_id is not None and _detached(manifest, chosen[0].slug):
             detached = [
                 list(e) for e in manifest.get("detached", []) if list(e) != [chosen[0].slug, "", store.GENERATED]

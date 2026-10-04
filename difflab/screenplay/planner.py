@@ -115,9 +115,10 @@ def render_chapter(chapter_id: int, asked_by: str = "person") -> str:
         # Every composed keyframe before any clip: the shot before one ends on it, and the editor is
         # loaded once rather than between clips.
         openings: list[Any] = []
+        framed: list[tuple[dict[str, Any], str, int]] = []
         for shot, keyframe in zip(shots, keyframes, strict=True):
             cast = [str(m) for m in shot.plan.get("cast", [])]
-            judged = verdicts.gate > 0 and bool(cast or shot.action)
+            judged = bool(cast or shot.action)
             arrangement, where = _opening(connection, production, shots, shot.position)
             if keyframe.source == store.COMPOSED:
                 seed = keyframe.seed if keyframe.seed is not None else int(video["seed"]) + 1000 + shot.position
@@ -136,13 +137,11 @@ def render_chapter(chapter_id: int, asked_by: str = "person") -> str:
                 )  # fmt: skip
                 store.set_made(connection, "keyframe", keyframe.id, store.QUEUED, current_job=composed.id, seed=seed)
                 if judged:
-                    store.add_job(
-                        connection, run_id, "judge",
+                    framed.append((
                         {"production": production.id, "kind": "keyframe", "path": _output(composed.id, "frame"),
                          "purpose": shot.action, "arrangement": arrangement, "cast": cast},
-                        label=f"shot {shot.position + 1}: judge the keyframe", settings=verdicts.data(),
-                        for_kind="keyframe", for_id=keyframe.id,
-                    )  # fmt: skip
+                        f"shot {shot.position + 1}: judge the keyframe", keyframe.id,
+                    ))  # fmt: skip
                 openings.append(_output(composed.id, "frame"))
                 if shot.position == 0:
                     anchor = openings[0]  # the chapter's colour is the composed frame's; unused when the anchor is off
@@ -151,13 +150,26 @@ def render_chapter(chapter_id: int, asked_by: str = "person") -> str:
             else:
                 openings.append(None)
 
+        # The editor composes every keyframe, then the VLM judges them all: one swap, not one per shot.
+        for inputs, label, keyframe_id in framed:
+            store.add_job(
+                connection,
+                run_id,
+                "judge",
+                inputs,
+                label=label,
+                settings=verdicts.data(),
+                for_kind="keyframe",
+                for_id=keyframe_id,
+            )
         previous: int | None = None
         clip_jobs: list[int] = []
+        judges: list[tuple[dict[str, Any], str, int]] = []
         for shot, keyframe in zip(shots, keyframes, strict=True):
             prompt = store.prompt_of(connection, shot.id)
             clip = store.clip_of(connection, shot.id)
             cast = [str(m) for m in shot.plan.get("cast", [])]
-            judged = verdicts.gate > 0 and bool(cast or shot.action)
+            judged = bool(cast or shot.action)
             opening = openings[shot.position] if openings[shot.position] is not None else _output(previous, "frame")
             tail = _output(previous, "tail") if tails[shot.position] else None
             inputs = {
@@ -187,15 +199,26 @@ def render_chapter(chapter_id: int, asked_by: str = "person") -> str:
             if keyframe.source == store.CHAINED and previous is not None:
                 store.set_made(connection, "keyframe", keyframe.id, store.QUEUED, current_job=previous)
             if judged:
-                store.add_job(
-                    connection, run_id, "judge",
+                judges.append((
                     {"production": production.id, "kind": "clip", "path": _output(job.id, "chunk"),
                      "purpose": shot.action, "arrangement": str(shot.plan.get("closing", "")), "cast": cast},
-                    label=f"shot {shot.position + 1}: judge the clip", settings=verdicts.data(),
-                    for_kind="clip", for_id=clip.id,
-                )  # fmt: skip
+                    f"shot {shot.position + 1}: judge the clip", clip.id,
+                ))  # fmt: skip
             previous = job.id
             clip_jobs.append(job.id)
+        # After every clip, not between them: the judge is the VLM and a clip is H3, and only one fits on
+        # the card, so judging each clip as it came swapped both models in and out at every shot.
+        for inputs, label, clip_id in judges:
+            store.add_job(
+                connection,
+                run_id,
+                "judge",
+                inputs,
+                label=label,
+                settings=verdicts.data(),
+                for_kind="clip",
+                for_id=clip_id,
+            )
         store.add_job(
             connection,
             run_id,

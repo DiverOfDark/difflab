@@ -267,10 +267,10 @@ RULES
 5. Stay inside the plan: no new people, animals, props, lights, cuts or camera moves, and no clothing, hair or markings beyond the listed traits. Keep hands and paws exactly as the plan has them: an object in a left hand stays in that left hand.
 6. Mouths only do what the mouth rule allows. A sound made by a mouth - a giggle, a laugh, a meow, an exhale, a sigh - happens only when the mouth rule lists it, and each one the rule lists is shown in the beat where it happens and heard in "sounds". Sides are sides of the frame ("toward the left of the frame"), never "to his left".
 7. A dialogue line is written as {say}, immediately after the speaker's own braces, with none of its words. The program puts the words in and names the speaker there.
-  Right: {right_girl} {say}, her shoulders shaking.
-  Wrong: {right_girl} laughs, saying {say}.  (the marker must touch the braces)
+  Right: {right_girl} {say}, turning toward {left_girl}.
+  Wrong: {right_girl} turns, saying {say}.  (the marker must touch the braces)
   Wrong: {right_girl} says "so there!"  (never write the words; they are not yours to choose)
-  One {say} per line of dialogue the plan gives this beat, in the order the plan lists them. A beat with no dialogue has no {say}.
+  One {say} per line of dialogue the plan gives this beat, in the order the plan lists them. A beat with no dialogue has no {say}. A laugh, a giggle, a sigh or a meow is not a line: write it as what the mouth does ("{right_girl} giggles"), never as {say}.
 8. Plain, concrete English: no mood words (magical, cosy, playful), no quality words (cinematic, photorealistic, 4K), no metaphors, and as few negations as possible.
 
 Answer only JSON, in this shape (the number of beats is the number listed):
