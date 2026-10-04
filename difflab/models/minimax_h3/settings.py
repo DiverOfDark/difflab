@@ -16,8 +16,12 @@ Schedule = Literal["beta57", "shifted"]
 COMFY = "Comfy-Org/MiniMax-H3@7e75982b97cd5a41d2dcfa1904ee88d0686d6fd1"
 
 
-# A community merge of grafts over H3, both tasks in one file, with a turbo delta fused in: pair it with
-# `lora=""`, never with the turbo LoRA as well.
+TURBO_V4 = (
+    "larryvrh/MiniMax-H3-Turbo-Lora@43a74557ac3f6539db8e0f2a959d03feb7a81480"
+    ":minimax_h3_turbo_v4_step600_ema.safetensors"
+)
+# A community merge of grafts over H3, both tasks in one file, with a turbo delta fused in: give it a
+# stack without TURBO_V4, or the turbo is applied twice.
 HYBRID = (
     "Comfy-Org/MiniMax-H3@7e75982b97cd5a41d2dcfa1904ee88d0686d6fd1:diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors"
 )
@@ -31,23 +35,19 @@ class VideoSettings(Settings):
     # A production's chunk is ref2va (references, and an fl2va first frame beside them), so it renders on
     # Comfy's pruned ref2va with larryvrh's turbo LoRA: the `ref2va_4step` preset. `HYBRID` was the
     # default until 2026-10-04 and serves both tasks, but its TURBO file has a turbo delta baked in, so the
-    # turbo LoRA below was applied twice; production 9 grew blotches in flat areas within every chunk.
+    # turbo LoRA in `loras` was applied twice; production 9 grew blotches in flat areas within every chunk.
     checkpoint: str = setting(
         f"{COMFY}:diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors",
         "model",
         "the int8 DiT: repo@commit:path",
         role="video-model",
     )
-    lora: str = setting(
-        "larryvrh/MiniMax-H3-Turbo-Lora@43a74557ac3f6539db8e0f2a959d03feb7a81480:minimax_h3_turbo_v4_step600_ema.safetensors",
-        "turbo LoRA",
-        "repo@commit:path",
-        role="video-lora",
-    )
+    # The turbo LoRA is the stack's first line: it belongs to the checkpoint, and a checkpoint with its
+    # own turbo fused in (`HYBRID`) takes the stack without it.
     loras: str = setting(
-        "",
+        f"{TURBO_V4}*1",
         "LoRAs",
-        "stacked on the video model with the turbo LoRA",
+        "stacked on the video model in order, one per line as reference*strength; the turbo LoRA first",
         role="video-loras",
         multiple=True,
     )
@@ -137,7 +137,7 @@ class VideoSettings(Settings):
         return out
 
     def key_part(self) -> dict[str, Any]:
-        # Absent while empty, so the clips rendered before `loras` existed keep their keys.
+        # As pairs, so a line's spacing or a LoRA at strength 0 does not move a clip's key.
         part = super().key_part()
         part.pop("loras")
         if stack := self.stack():
