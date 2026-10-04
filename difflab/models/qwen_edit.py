@@ -1,6 +1,7 @@
 """Edit stage: QwenImageEditPlusPipeline assembled from the AIO checkpoint."""
 
 import gc
+from collections.abc import Sequence
 
 import torch
 from diffusers import QwenImageEditPlusPipeline
@@ -39,12 +40,14 @@ class Editor:
         cfg: float,
         seed: int,
         negative_prompt: str = prompts.NEGATIVE_PROMPT,
+        donors: Sequence[Image.Image] = (),
     ) -> Image.Image:
-        """`image` is already at the target size; the output is that size floored to /16."""
+        """`image` is already at the target size; the output is that size floored to /16. `donors` follow it
+        as Picture 2, 3, ...: the prompt names them, the output keeps `image`'s geometry."""
         pipe = self.pipe
         with ui.EditProgress(pipe.transformer, steps) as progress:
             result = pipe(
-                image=image,
+                image=[image, *donors] if donors else image,
                 prompt=prompt,
                 # CFG off at cfg<=1: the negative prompt would be ignored anyway (ComfyUI skips it too).
                 negative_prompt=negative_prompt if cfg > 1 else None,

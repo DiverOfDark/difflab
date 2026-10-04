@@ -407,10 +407,12 @@ MUSIC = "N/A"  # a score regenerated per chunk cannot be continuous; add music a
 
 # --- judging: a keyframe or a clip against the shot it was made for ---------------------------------------
 JUDGE_SYSTEM = """\
-You are a continuity supervisor on a film set. You are shown a still, or a few frames of a clip in order, and told what the shot was meant to show and who is in it, with how each of them looks. You judge only what you can see. Score 1 when the picture shows the shot as described with every listed member present and looking exactly as described; score 0 when it shows something else, someone missing, or a member unrecognisable. Score in between for a picture that mostly shows it: name every mismatch you see as an issue, in a few words each."""
+You are a continuity supervisor on a film set. You are shown a still, or a few frames of a clip in order, and told what the shot was meant to show and who is in it, with how each of them looks; after the frames may come the cast's own reference photos, one per member, named in WHO IS IN IT. You judge only what you can see. Score 1 when the picture shows the shot as described with every listed member present and looking exactly as described and as in their reference photo; score 0 when it shows something else, someone missing, or a member unrecognisable. Score in between for a picture that mostly shows it: name every mismatch you see as an issue, in a few words each.
+
+Two failures cap the score at 0.4, whatever else is right: any person or animal in the frame who is not listed, and a member whose clothes differ from their reference photo in colour, pattern or kind. Name each as an issue a painter could fix ("remove the monks behind him", "the robe must be the dark green one with black embroidery from his photo")."""
 
 JUDGE_USER = """\
-This is a {kind}: {count} picture(s), in order.
+This is a {kind}: {count} picture(s), in order{references}.
 
 WHAT THE SHOT SHOWS
 Purpose: {purpose}
@@ -419,7 +421,7 @@ Arrangement: {arrangement}
 WHO IS IN IT
 {cast}
 
-Answer JSON: {{"score": 0.0-1.0, "cast": [{{"id": "<id>", "present": true|false, "likeness": 0.0-1.0}}, ...], "issues": ["..."], "notes": "one sentence"}}. One "cast" entry per listed member."""
+Answer JSON: {{"score": 0.0-1.0, "cast": [{{"id": "<id>", "present": true|false, "likeness": 0.0-1.0, "outfit": true|false}}, ...], "strangers": ["a few words for each person or animal not listed"], "issues": ["..."], "fixes": ["..."], "notes": "one sentence"}}. One "cast" entry per listed member; "outfit" is false when their clothes are not the ones they are described or photographed in. "fixes" are the issues a painter is told, about who is there, where each stands, what each holds and does; never about clothes, hair or a face, which the painter copies from the photos."""
 
 # --- ruling: what a gate asks about meaning, answered by the model instead of a word list ---------------------
 RULING_EVENTS_SYSTEM = """\
@@ -547,6 +549,16 @@ TRAITS, one "traits" entry for each, in this order:
 # --- composing: a first frame from words, over a reference of the room ---------------------------------------
 COMPOSE_INSTRUCTION = """\
 Keep this room exactly as it is: its walls, furniture, lighting and colour. Change nothing about the camera. Add the people and things described, placed as described, in photographic detail: {scene}."""
+# With each person and animal handed over as its own picture. Said in words alone, production 13's man
+# (2026-10-04) came back in a bright costume-green robe with gold medallions over his dark embroidered one,
+# and a sect courtyard filled with monks no plan had asked for.
+COMPOSE_LIKENESS = "Everyone taken from a picture looks exactly as in that picture: the same face, hair and build, and the same clothes in every colour, pattern and fold."
+COMPOSE_ALONE = "Nobody else is in the frame: no other people and no other animals."
+COMPOSE_NOTE = "Also: {note}."
+# Told in words, a robe's colour and embroidery overrode the picture it came with: production 13's retry
+# (2026-10-04), noted "the dark green one with gold floral embroidery", came back with gold flowers a
+# hand wide. A redo is pointed back at the picture instead.
+COMPOSE_CLOTHES_NOTE = "the clothes, hair and face of {who} exactly as in their picture, adding nothing to them"
 # Over a photo of one member, when the place has no picture of its own: the member stays, the room goes.
 COMPOSE_KEEP_INSTRUCTION = """\
 Keep the {noun} exactly as it is in this photo: its face, colours, markings, fur and build. Replace everything around it - the ground, the background and the light - with the place described, and place everyone as described, as one unretouched real photograph in natural light: {scene}."""

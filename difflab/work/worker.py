@@ -136,11 +136,11 @@ class Worker(threading.Thread):
                 )
             )
             ctx.job_id = None
-            for chapter_id in made.pending_rerenders():
+            for chapter_id, keyframes_only in made.pending_rerenders():
                 from difflab.screenplay import planner
 
                 try:
-                    again = planner.render_chapter(chapter_id, asked_by="judge")
+                    again = planner.render_chapter(chapter_id, asked_by="judge", keyframes_only=keyframes_only)
                     ui.note(f"the judge asked for another attempt: run {again} queued")
                 except (LookupError, ValueError, sqlite3.Error) as problem:
                     ui.note(f"the judge asked for another attempt, but none could be queued ({problem})")

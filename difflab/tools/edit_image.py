@@ -8,6 +8,7 @@ rendered again.
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from typing import Any
 
 from difflab import prompts
@@ -42,13 +43,13 @@ def edit(
     settings: EditSettings | None = None,
     negative_prompt: str = prompts.NEGATIVE_PROMPT,
     size: tuple[int, int] | None = None,
+    donors: Sequence[Frame] = (),
 ) -> Frame:
     """Apply `instruction` to `frame`, delivered at `size` (default: the settings' megapixels).
 
-    The input is resized to the output size before it is handed over.
-
-    If a donor picture is ever added here, the size must stay explicit - diffusers otherwise takes the
-    output geometry from the LAST image passed, which for a donor-first call is the wrong picture.
+    The input is resized to the output size before it is handed over. `donors` are Picture 2 onward,
+    passed as they are: the size stays explicit, since diffusers otherwise takes the output geometry
+    from the LAST image passed, which for a donor is the wrong picture.
     """
     settings = settings or EditSettings()
     target = size or megapixel_size(frame.width, frame.height, settings.megapixels)
@@ -63,6 +64,7 @@ def edit(
             steps=settings.steps,
             cfg=settings.cfg,
             seed=settings.seed,
+            donors=[donor.pil() for donor in donors],
         )
         return Frame.from_pil(edited, origin=f"edited({frame.origin})" if frame.origin else "edited")
 
@@ -74,6 +76,7 @@ def edit(
         settings=settings,
         negative=negative_prompt,
         size=size,
+        **({"donors": [donor.pixels for donor in donors]} if donors else {}),
     )
     return default_cache.frame(made, produce)
 

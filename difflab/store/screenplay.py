@@ -246,6 +246,10 @@ def compose_keyframe(connection: sqlite3.Connection, shot_id: int, seed: int | N
     return keyframe_of(connection, shot_id)
 
 
+def set_keyframe_note(connection: sqlite3.Connection, keyframe_id: int, note: str) -> None:
+    connection.execute("UPDATE keyframes SET note = ? WHERE id = ?", (note, keyframe_id))
+
+
 def land_keyframe(connection: sqlite3.Connection, shot_id: int, landed: bool) -> Keyframe:
     connection.execute("UPDATE keyframes SET landed = ? WHERE shot_id = ?", (int(landed), shot_id))
     return keyframe_of(connection, shot_id)

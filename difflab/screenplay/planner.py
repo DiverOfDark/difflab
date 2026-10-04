@@ -63,8 +63,10 @@ def check(connection: Any, shots: list[store.Shot], production: store.Production
     return problems
 
 
-def render_chapter(chapter_id: int, asked_by: str = "person") -> str:
-    """The chapter's clips, then the join, as rows the worker takes in order. Returns the run id."""
+def render_chapter(chapter_id: int, asked_by: str = "person", keyframes_only: bool = False) -> str:
+    """The chapter's clips, then the join, as rows the worker takes in order. Returns the run id.
+    `keyframes_only` stops after the composed keyframes and their verdicts: minutes of clips are not
+    spent on a first frame that is still being decided."""
     with store.connect() as connection, store.transaction(connection):
         chapter = store.chapter(connection, chapter_id)
         if chapter is None:
@@ -94,7 +96,10 @@ def render_chapter(chapter_id: int, asked_by: str = "person") -> str:
         run_id = store.next_run_id(connection, datetime.now().strftime("%Y-%m-%d-%H%M%S"))
         chapters = store.chapters_of(connection, production.id)
         title = production.title if len(chapters) == 1 else f"{production.title} · chapter {chapter.position + 1}"
-        spec = {"production": production.id, "chapter": chapter.id, "items": _items(shots)}
+        spec = {
+            "production": production.id, "chapter": chapter.id, "items": _items(shots),
+            **({"keyframes_only": True} if keyframes_only else {}),
+        }  # fmt: skip
         store.add_run(
             connection,
             run_id,
@@ -128,7 +133,9 @@ def render_chapter(chapter_id: int, asked_by: str = "person") -> str:
                         "production": production.id,
                         "shot": shot.id,
                         "arrangement": arrangement,
-                        **(base(connection, production, arrangement, where) or {}),
+                        **(under := base(connection, production, arrangement, where) or {}),
+                        "pictures": pictures(connection, production, arrangement, under.get("keep")),
+                        "note": keyframe.note,
                         "size": _canvas(production),
                         "seed": seed,
                     },
@@ -139,7 +146,10 @@ def render_chapter(chapter_id: int, asked_by: str = "person") -> str:
                 if judged:
                     framed.append((
                         {"production": production.id, "kind": "keyframe", "path": _output(composed.id, "frame"),
-                         "purpose": shot.action, "arrangement": arrangement, "cast": cast},
+                         "purpose": f"the shot's first frame, as the arrangement says, before its action starts "
+                                    f"({shot.action})",
+                         "arrangement": arrangement, "cast": cast,
+                         "pictures": pictures(connection, production, arrangement)},
                         f"shot {shot.position + 1}: judge the keyframe", keyframe.id,
                     ))  # fmt: skip
                 openings.append(_output(composed.id, "frame"))
@@ -162,6 +172,8 @@ def render_chapter(chapter_id: int, asked_by: str = "person") -> str:
                 for_kind="keyframe",
                 for_id=keyframe_id,
             )
+        if keyframes_only:
+            return run_id
         previous: int | None = None
         clip_jobs: list[int] = []
         judges: list[tuple[dict[str, Any], str, int]] = []
@@ -201,7 +213,8 @@ def render_chapter(chapter_id: int, asked_by: str = "person") -> str:
             if judged:
                 judges.append((
                     {"production": production.id, "kind": "clip", "path": _output(job.id, "chunk"),
-                     "purpose": shot.action, "arrangement": str(shot.plan.get("closing", "")), "cast": cast},
+                     "purpose": shot.action, "arrangement": str(shot.plan.get("closing", "")), "cast": cast,
+                     "pictures": pictures(connection, production, " ".join(f"{{{m}}}" for m in cast))},
                     f"shot {shot.position + 1}: judge the clip", clip.id,
                 ))  # fmt: skip
             previous = job.id
@@ -278,6 +291,28 @@ def base(
         if own:
             return {"base": own[0].photo, "box": own[0].box, "keep": slug}
     return None
+
+
+# Picture 1 is the place: three more is what the editor still holds each one to.
+PICTURES = 3
+
+
+def pictures(
+    connection: Any, production: store.Production, arrangement: str, keep: str | None = None
+) -> dict[str, str]:
+    """Each person and animal the arrangement names, by id, as the picture the editor and the judge are
+    handed of it: a whole body cut from a photo before a face, a given or drawn one when that is all."""
+    members = {m.slug: m for m in store.members_of(connection, production.id)}
+    out: dict[str, str] = {}
+    for slug in dict.fromkeys(re.findall(r"\{([a-z_]+)\}", arrangement)):
+        member = members.get(slug)
+        if member is None or member.kind not in ("person", "animal") or slug == keep or len(out) == PICTURES:
+            continue
+        own = [r for r in store.refs_of(connection, member.id) if r.artifact]
+        own.sort(key=lambda r: (r.role not in ("body", "view"), r.generated, r.role == "face", -r.quality))
+        if own:
+            out[slug] = str(own[0].artifact)
+    return out
 
 
 def _opening(

@@ -3,7 +3,7 @@ the cast looking like their identities say?"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from difflab.core import media
@@ -23,24 +23,48 @@ class Verdict:
     cast: dict[str, float]  # each member's likeness, 0..1, by slug; 0 when absent
     issues: list[str]
     notes: str
+    fixes: list[str] = field(default_factory=list)  # what a redo is told: never looks, which come from pictures
+    restyle: list[str] = field(default_factory=list)  # members whose clothes differ from their photo
 
     def data(self) -> dict[str, Any]:
-        return {"score": self.score, "cast": self.cast, "issues": self.issues, "notes": self.notes}
+        return {
+            "score": self.score, "cast": self.cast, "issues": self.issues, "notes": self.notes,
+            "fixes": self.fixes, "restyle": self.restyle,
+        }  # fmt: skip
 
 
 def judge(
-    frames: list[Frame], kind: str, purpose: str, arrangement: str, cast: list[compiler.Card], settings: JudgeSettings
+    frames: list[Frame],
+    kind: str,
+    purpose: str,
+    arrangement: str,
+    cast: list[compiler.Card],
+    settings: JudgeSettings,
+    pictures: dict[str, Frame] | None = None,
 ) -> Verdict:
-    """`kind` is keyframe or clip; `arrangement` is what should be seen, members as {id}."""
+    """`kind` is keyframe or clip; `arrangement` is what should be seen, members as {id}; `pictures` are
+    members' own reference photos by id, shown after the frames so clothes are judged against them."""
+    given = {slug: frame for slug, frame in (pictures or {}).items() if slug in {card.id for card in cast}}
+    numbered = {slug: len(frames) + n for n, slug in enumerate(given, 1)}
     expected = {card.id for card in cast}
 
     def parse(data: Any) -> Verdict:
         likeness = {str(m["id"]): float(m["likeness"]) for m in data.get("cast", [])}
+        strangers = [f"not in the shot: {s}" for s in map(str, data.get("strangers", [])) if s.strip()]
+        restyle = [str(m["id"]) for m in data.get("cast", []) if m.get("outfit") is False and str(m["id"]) in given]
+        changed = [f"{member}: clothes differ from their photo" for member in restyle]
+        score = float(data["score"])
+        # Held in code as well as asked: the model rounds its own rule. Not on a clip, whose retry is a blind
+        # re-seed of minutes; a keyframe's retry is told what to fix (`made._judged`).
+        if (strangers or changed) and kind != "clip":
+            score = min(score, 0.4)
         return Verdict(
-            float(data["score"]),
+            score,
             {member: likeness.get(member, 0.0) for member in expected},
-            [str(issue) for issue in data.get("issues", [])],
+            [str(issue) for issue in data.get("issues", [])] + strangers + changed,
             str(data.get("notes", "")),
+            [str(fix) for fix in data.get("fixes", [])] + [f"remove {s}" for s in data.get("strangers", []) if s],
+            restyle,
         )
 
     def gate(data: Any) -> list[caption.Problem]:
@@ -59,10 +83,16 @@ def judge(
         kind=kind,
         purpose=purpose.strip() or "-",
         arrangement=arrangement.strip() or "-",
-        cast="\n".join(f"- {c.id}: the {c.noun}, {c.full()}" for c in cast) or "- nobody in particular",
+        cast="\n".join(
+            f"- {c.id}: the {c.noun}, {c.full()}"
+            + (f" (reference photo: Picture {numbered[c.id]})" if c.id in numbered else "")
+            for c in cast
+        )
+        or "- nobody in particular",
         count=len(frames),
+        references=f", then {len(given)} reference photo(s)" if given else "",
     )
-    images = [direct.shrink(frame, h3.DIRECTOR_PHOTO_PIXELS) for frame in frames]
+    images = [direct.shrink(frame, h3.DIRECTOR_PHOTO_PIXELS) for frame in [*frames, *given.values()]]
     data = direct.ask_json(words.JUDGE_SYSTEM, question, images, gate, f"judge · {kind}", settings.max_new_tokens)
     return parse(data)
 

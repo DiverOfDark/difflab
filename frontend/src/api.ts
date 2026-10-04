@@ -193,7 +193,14 @@ export interface ShotInfo {
   chained: boolean
   /** Its plan was edited by hand: a re-plan leaves it as written. */
   pinned: boolean
-  keyframe: MadeThing & { source: string; provided: string | null; note: string; landed: boolean }
+  keyframe: MadeThing & {
+    source: string
+    provided: string | null
+    note: string
+    landed: boolean
+    /** A composed keyframe's inputs: the place it was made over, and each cast member's picture by id. */
+    made_from: { base: string | null; pictures: Record<string, string>; note: string | null } | null
+  }
   prompt: MadeThing & { text: string; written_by: string; pictures: string[]; checks: { severity: string; code: string; message: string }[] }
   clip: MadeThing & { seed: number; handoff: number | null }
   plan: Record<string, unknown>
@@ -235,6 +242,8 @@ export interface MemberInfo {
   pinned: boolean
   /** Role `generated`: drawn by the editor from the member's words, with the seed it was drawn with. */
   references: (MadeThing & { role: string; photo: string; box: number[]; size: number[]; shows: string[]; seed?: number | null })[]
+  /** Drawings from its newest "draw 3" run, waiting to be picked as its reference. */
+  variants?: { seed: number; frame: string | null; state: string }[]
   /** Pictures its prompts want that the last cut could not make from the photographs, and why. */
   gaps?: { role: string; why: string }[]
   conflicts: Conflict[]
@@ -350,9 +359,17 @@ export const rerollShot = (shotId: number, seed?: number) =>
   json<{ seed: number; run: string }>(`/api/shots/${shotId}/reroll`, post(seed === undefined ? {} : { seed }))
 /** Every member with no usable picture, drawn from its words, as a run. */
 export const drawReferences = (id: number) => json<{ run: string }>(`/api/productions/${id}/references`, post({}))
-/** One member's picture; drawn again, a new seed unless one is given. */
-export const drawReference = (memberId: number, seed?: number) =>
-  json<{ run: string }>(`/api/members/${memberId}/reference`, post(seed === undefined ? {} : { seed }))
+/** One member's picture; drawn again, a new seed unless one is given. `describe` has a place's words
+ *  written from the story first. */
+export const drawReference = (memberId: number, seed?: number, describe = false) =>
+  json<{ run: string }>(`/api/members/${memberId}/reference`, post({ ...(seed === undefined ? {} : { seed }), ...(describe ? { describe } : {}) }))
+export const drawVariants = (memberId: number) => json<{ run: string }>(`/api/members/${memberId}/variants`, post({}))
+export const pickVariant = (memberId: number, seed: number) =>
+  json<Production & { stale: Stale }>(`/api/members/${memberId}/variants/pick`, post({ seed }))
+/** The shot's keyframe composed again with a note for the editor; only keyframes are made, not clips. */
+export const redoKeyframe = (shotId: number, note: string) => json<{ run: string }>(`/api/shots/${shotId}/keyframe`, post({ note }))
+export const renderKeyframes = (id: number, chapter = 0) =>
+  json<{ run: string }>(`/api/productions/${id}/keyframes?chapter=${chapter}`, post({}))
 
 export const listIdeas = (id: number) => json<IdeaRound[]>(`/api/productions/${id}/ideas`)
 /** `from_round` with `feedback` revises that round; without, a new rewrite of `idea` or of the rounds' own idea. */

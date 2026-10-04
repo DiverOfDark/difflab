@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { outputUrl, patchProduction, patchShot, type Production, type ShotInfo } from '../../api'
+import { outputUrl, patchProduction, patchShot, redoKeyframe, renderKeyframes, type Production, type ShotInfo } from '../../api'
 import { castOf, phaseOf, shotId, type Phase, type StageId } from '../../production'
 import PhotoPicker from '../PhotoPicker.vue'
 
@@ -81,6 +81,47 @@ const bring = (s: ShotInfo, photos: string[]) => {
   if (last) props.act(`keyframe ${s.id}`, () => patchShot(s.id, { keyframe: last })).then(() => (own.value = []))
 }
 
+/** The judge's verdict, parsed: its score, what it would fix, and its one-line summary. */
+interface Verdict {
+  score: number | null
+  issues: string[]
+  notes: string
+}
+function verdictOf(review: string): Verdict | null {
+  if (!review) return null
+  try {
+    const v = JSON.parse(review)
+    return { score: typeof v.score === 'number' ? v.score : null, issues: v.issues ?? [], notes: v.notes ?? '' }
+  } catch {
+    return { score: null, issues: [], notes: review }
+  }
+}
+const verdict = computed(() => (shot.value ? verdictOf(shot.value.keyframe.review) : null))
+/** What the frame was composed from, in the editor's own numbering: the place is Picture 1. */
+const madeFrom = computed(() => {
+  const m = shot.value?.keyframe.made_from
+  if (!m) return []
+  return [
+    ...(m.base ? [{ label: 'Picture 1 · the place', path: m.base }] : []),
+    ...Object.entries(m.pictures).map(([slug, path], i) => ({ label: `Picture ${i + 2} · ${slug}`, path })),
+  ]
+})
+
+const JUDGED = 'Fix:'
+const note = ref('')
+watch(
+  () => shot.value?.id,
+  () => (note.value = (shot.value?.keyframe.note ?? '').split(JUDGED)[0].trim()),
+  { immediate: true },
+)
+const takeIssues = () => {
+  const issues = verdict.value?.issues ?? []
+  note.value = [note.value.trim(), ...issues].filter(Boolean).join('; ')
+}
+const redo = (s: ShotInfo) => props.act(`keyframe ${s.id}`, () => redoKeyframe(s.id, note.value))
+const makeAll = () => props.act('keyframes', () => renderKeyframes(props.production.id, props.chapter))
+const composedCount = computed(() => props.shots.filter((s) => s.keyframe.source === 'composed').length)
+
 const landable = (s: ShotInfo) => s.position > 0 && s.keyframe.source !== 'chained'
 const landed = (s: ShotInfo) => landable(s) && s.keyframe.landed
 const setLanded = (s: ShotInfo, on: boolean) => props.act(`keyframe ${s.id}`, () => patchShot(s.id, { landed: on }))
@@ -135,15 +176,48 @@ const impact = computed(() => {
 
         <section class="card">
           <div class="head slim">
-            <h5>QA · the judge against the shot</h5>
-            <span class="mono dim small">when the judge gate is above 0</span>
+            <h5>QA · the judge against the shot and the cast's photos</h5>
+            <span v-if="verdict?.score != null" class="mono small" :class="{ warn: verdict.score < 0.5 }">{{ verdict.score.toFixed(2) }}</span>
           </div>
           <div class="check">
             <i class="dot" :class="phaseOf(shot.keyframe.state)" />
             <span class="what">
-              <span>{{ shot.keyframe.review ? 'Verdict' : 'No verdict' }}</span>
-              <span class="why">{{ shot.keyframe.review || 'Nothing flagged this frame.' }}</span>
+              <span>{{ verdict ? verdict.notes || 'Verdict' : 'Not judged yet' }}</span>
+              <ul v-if="verdict?.issues.length" class="issues">
+                <li v-for="i in verdict.issues" :key="i">{{ i }}</li>
+              </ul>
+              <span v-else class="why">{{ verdict ? 'Nothing to fix.' : 'Composed frames are judged as they are made.' }}</span>
             </span>
+          </div>
+        </section>
+
+        <section v-if="shot.keyframe.source === 'composed'" class="card">
+          <div class="head slim">
+            <h5>Redo this frame</h5>
+            <span class="note">a new seed, and your note to the editor</span>
+          </div>
+          <div class="body">
+            <textarea v-model="note" rows="3" class="prose" placeholder="the robe is the dark green one from his photo; nobody else in the courtyard" />
+            <div class="row">
+              <button class="link" :disabled="!verdict?.issues.length" @click="takeIssues">add the judge's issues</button>
+              <button class="primary" :disabled="!!busy" @click="redo(shot)">
+                {{ busy === `keyframe ${shot.id}` ? 'queueing…' : 'Redo the frame' }}
+              </button>
+            </div>
+            <span class="note">Only the keyframes are made, not the clips; render the chapter when they are right.</span>
+          </div>
+        </section>
+
+        <section v-if="madeFrom.length" class="card">
+          <div class="head slim">
+            <h5>Made from</h5>
+            <span class="note">what the editor was handed</span>
+          </div>
+          <div class="refs">
+            <a v-for="m in madeFrom" :key="m.label" class="ref" :href="outputUrl(m.path)" target="_blank">
+              <img class="frame chip-img" :src="outputUrl(m.path)" alt="" />
+              <span class="what"><span class="mono">{{ m.label }}</span><span class="why">{{ m.path.split('/').at(-1) }}</span></span>
+            </a>
           </div>
         </section>
       </div>
@@ -255,7 +329,12 @@ const impact = computed(() => {
           {{ f.label }} <span class="n">{{ f.count }}</span>
         </button>
       </div>
-      <span class="note">composed and chained frames are made by the chapter run</span>
+      <span class="acts">
+        <span class="note">chained frames are made by the chapter run</span>
+        <button class="primary" :disabled="!!busy || !composedCount" title="compose and judge every composed keyframe, without rendering clips" @click="makeAll">
+          {{ busy === 'keyframes' ? 'queueing…' : `Make ${composedCount} keyframe${composedCount === 1 ? '' : 's'}` }}
+        </button>
+      </span>
     </div>
     <p v-if="!rows.length" class="band hint">Nothing here.</p>
     <div class="grid">
@@ -268,7 +347,9 @@ const impact = computed(() => {
         </button>
         <div class="text">
           <span class="action">{{ s.action || '—' }}</span>
-          <span v-if="s.keyframe.review" class="review">{{ s.keyframe.review }}</span>
+          <span v-if="verdictOf(s.keyframe.review)" class="review">
+            {{ verdictOf(s.keyframe.review)!.score?.toFixed(2) ?? '' }} · {{ verdictOf(s.keyframe.review)!.issues.join('; ') || verdictOf(s.keyframe.review)!.notes }}
+          </span>
           <span class="meta mono"><span>{{ s.keyframe.source }}{{ landed(s) ? ' · landed' : '' }}{{ s.keyframe.pinned ? ' · pinned' : '' }}</span><span>{{ s.seconds }} s</span></span>
         </div>
         <div class="acts mono">
@@ -619,5 +700,22 @@ const impact = computed(() => {
 
 .push {
   margin-left: auto;
+}
+
+.issues {
+  margin: 4px 0 0;
+  padding-left: 16px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.warn {
+  color: var(--status-degraded);
+}
+
+.acts {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 </style>

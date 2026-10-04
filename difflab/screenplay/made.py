@@ -8,7 +8,7 @@ import sqlite3
 from typing import Any
 
 from difflab import store
-from difflab.screenplay import production
+from difflab.screenplay import production, words
 
 
 def settle(connection: sqlite3.Connection, job: store.Job, outputs: dict[str, Any], state: str) -> None:
@@ -127,18 +127,31 @@ def _judged(connection: sqlite3.Connection, job: store.Job, outputs: dict[str, A
         shot = store.shot(connection, thing.shot_id)
     elif isinstance(thing, store.Keyframe):
         store.set_made(connection, "keyframe", made_id, store.STALE, seed=seed)
+        fixes = [str(fix) for fix in outputs.get("fixes") or []]
+        restyle = [str(member) for member in outputs.get("restyle") or []]
+        if restyle:
+            fixes.append(
+                words.COMPOSE_CLOTHES_NOTE.format(who=" and ".join(f"the {m.replace('_', ' ')}" for m in restyle))
+            )
+        if fixes:  # the next composition is told what to fix; a note of the user's own stays in front
+            own = (thing.note or "").split(JUDGED, 1)[0].strip()
+            store.set_keyframe_note(connection, made_id, f"{own} {JUDGED} {'; '.join(fixes)}".strip())
         shot = store.shot(connection, thing.shot_id)
     else:
         return
     if shot is not None:
-        _again.append(shot.chapter_id)
+        run = store.run(connection, job.run_id)
+        _again.append((shot.chapter_id, bool(run is not None and (run.data() or {}).get("keyframes_only"))))
 
+
+JUDGED = "Fix:"  # where a keyframe's note turns from the user's words to the judge's
 
 # Chapters a verdict asked to render again, taken by the worker once the job's rows are written: a run
 # queued from inside the settle transaction would open a second connection mid-transaction.
-_again: list[int] = []
+_again: list[tuple[int, bool]] = []
 
 
-def pending_rerenders() -> list[int]:
+def pending_rerenders() -> list[tuple[int, bool]]:
+    """(chapter, keyframes only), as the run that asked was."""
     taken, _again[:] = list(dict.fromkeys(_again)), []
     return taken

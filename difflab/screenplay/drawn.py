@@ -3,6 +3,7 @@ is keyed by, and the run that draws them."""
 
 from __future__ import annotations
 
+import json
 import math
 import random
 from datetime import datetime
@@ -99,9 +100,16 @@ def live_run(connection: Any, production_id: int) -> store.Run | None:
     )
 
 
-def draw(production_id: int, member_id: int | None = None, seed: int | None = None, asked_by: str = "person") -> str:
+def draw(
+    production_id: int,
+    member_id: int | None = None,
+    seed: int | None = None,
+    asked_by: str = "person",
+    describe: bool = False,
+) -> str:
     """A run drawing every missing reference, or one member's. One member's drawn again without a
-    `seed` takes a new one; a first drawing takes the editor's. Returns the run id."""
+    `seed` takes a new one; a first drawing takes the editor's. `describe` has a place's look written
+    from the story first, over its own words. Returns the run id."""
     with store.connect() as connection, store.transaction(connection):
         production = store.production(connection, production_id)
         if production is None:
@@ -143,7 +151,8 @@ def draw(production_id: int, member_id: int | None = None, seed: int | None = No
             reference = store.put_generated_ref(connection, member.id, chosen_seed, size)
             job = store.add_job(
                 connection, run_id, "draw_reference",
-                {"production": production_id, "member": member.id, "seed": chosen_seed, "size": size},
+                {"production": production_id, "member": member.id, "seed": chosen_seed, "size": size,
+                 **({"describe": True} if describe else {})},
                 label=f"draw {member.slug}", settings=editor.data(), for_kind="reference", for_id=reference.id,
             )  # fmt: skip
             store.set_made(connection, "reference", reference.id, store.QUEUED, current_job=job.id)
@@ -151,7 +160,8 @@ def draw(production_id: int, member_id: int | None = None, seed: int | None = No
                 connection, run_id, "judge",
                 {"production": production_id, "kind": "reference picture",
                  "path": {"from_job": job.id, "output": "frame"},
-                 "purpose": f"a reference picture of the {member.noun} alone, whole and sharp",
+                 "purpose": f"a reference picture of the {member.noun} alone, whole and sharp, matching every "
+                            "listed trait",
                  "arrangement": f"{{{member.slug}}} alone on a plain backdrop" if member.kind != "environment"
                  else f"{{{member.slug}}}, empty of people and animals",
                  "cast": [member.slug]},
@@ -170,3 +180,74 @@ def editor_for(production_id: int) -> EditSettings:
     editor, _ = settings.effective("edit_image", production_id)
     assert isinstance(editor, EditSettings)
     return editor.with_(megapixels=MEGAPIXELS)
+
+
+VARIANTS = 3
+
+
+def variants(production_id: int, member_id: int, count: int = VARIANTS) -> str:
+    """`count` drawings of one member on new seeds, none of them its reference until one is picked."""
+    with store.connect() as connection, store.transaction(connection):
+        production = store.production(connection, production_id)
+        member = store.member(connection, member_id)
+        if production is None or member is None or member.production_id != production_id:
+            raise LookupError(f"no member {member_id} in production {production_id}")
+        if (running := live_run(connection, production_id)) is not None:
+            raise ValueError(f"references are being drawn already, in run {running.id}")
+        editor = editor_for(production_id)
+        run_id = store.next_run_id(connection, datetime.now().strftime("%Y-%m-%d-%H%M%S"))
+        store.add_run(
+            connection, run_id, title=f"{production.title} · {member.slug} · {count} drawings", asked_by="person",
+            scope=SCOPE.format(production=production_id), production_id=production_id,
+            spec={"production": production_id, "items": [f"{member.slug} {n + 1}" for n in range(count)]},
+        )  # fmt: skip
+        size = size_for(member.kind, production.manifest)
+        for n in range(count):
+            store.add_job(
+                connection, run_id, "draw_reference",
+                {"production": production_id, "member": member.id, "seed": random.randrange(2**32), "size": size},
+                label=f"draw {member.slug} · {n + 1}", settings=editor.data(), for_kind=VARIANT, for_id=member.id,
+            )  # fmt: skip
+    return run_id
+
+
+VARIANT = "variant"  # a drawing that waits to be picked: `made.settle` leaves the member's reference alone
+
+
+def drawn_variants(connection: Any, member_id: int) -> list[dict[str, Any]]:
+    """The member's drawings from its newest variants run, as {seed, frame}."""
+    rows = connection.execute(
+        "SELECT run_id FROM jobs WHERE tool = 'draw_reference' AND for_kind = ? AND for_id = ? "
+        "ORDER BY id DESC LIMIT 1",
+        (VARIANT, member_id),
+    ).fetchone()
+    if rows is None:
+        return []
+    jobs = connection.execute(
+        "SELECT inputs, outputs, state FROM jobs WHERE run_id = ? AND for_kind = ? AND for_id = ? ORDER BY position",
+        (rows["run_id"], VARIANT, member_id),
+    ).fetchall()
+    out = []
+    for job in jobs:
+        made = json.loads(job["outputs"] or "{}")
+        out.append({"seed": int(json.loads(job["inputs"])["seed"]), "frame": made.get("frame"), "state": job["state"]})
+    return out
+
+
+def pick(member_id: int, seed: int) -> None:
+    """One of the member's drawings becomes its reference, as if it had been drawn on that seed."""
+    with store.connect() as connection, store.transaction(connection):
+        member = store.member(connection, member_id)
+        production = None if member is None else store.production(connection, member.production_id)
+        if member is None or production is None:
+            raise LookupError(f"no member {member_id}")
+        chosen = next((v for v in drawn_variants(connection, member_id) if v["seed"] == seed and v["frame"]), None)
+        if chosen is None:
+            raise ValueError(f"{member.slug} has no finished drawing on seed {seed}")
+        editor = editor_for(production.id).with_(seed=seed)
+        size = size_for(member.kind, production.manifest)
+        reference = store.put_generated_ref(connection, member.id, seed, size)
+        store.set_made(
+            connection, "reference", reference.id, store.MADE, artifact=chosen["frame"],
+            wanted_key=str(wanted(member, editor, size)),
+        )  # fmt: skip

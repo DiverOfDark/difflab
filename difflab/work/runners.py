@@ -33,9 +33,11 @@ from difflab.core.types import Clip, Frame
 from difflab.models.minimax_h3 import pipeline
 from difflab.models.minimax_h3.settings import VideoPromptSettings, VideoSettings
 from difflab.screenplay import compiler, drawn
+from difflab.screenplay import production as production_module
 from difflab.tools import (
     assemble,
     compose_keyframe,
+    direct,
     draw_reference,
     edit_image,
     enlarge_pixels,
@@ -47,6 +49,7 @@ from difflab.tools import (
     retime,
     write_prompt,
 )
+from difflab.tools import cards as cast_cards
 from difflab.work import Skipped
 from difflab.work.plan_runners import PLAN_RUNNERS
 
@@ -244,16 +247,22 @@ def run_compose_keyframe(inputs: dict[str, Any], settings: dict[str, Any]) -> di
     if inputs.get("box") and size is not None:
         base = compose_keyframe.around(base, [float(v) for v in inputs["box"]], size[0] / size[1])
     arrangement = str(inputs["arrangement"])
+    pictures = {str(slug): _frame(path) for slug, path in (inputs.get("pictures") or {}).items()}
+    note = str(inputs.get("note") or "")
     made = key(
-        "compose_keyframe", 1, base=base.pixels, arrangement=arrangement,
+        "compose_keyframe", 2, base=base.pixels, arrangement=arrangement,
         cards={slug: dataclasses.asdict(card) for slug, card in cards.items()}, settings=chosen,
         **({"size": size, "keep": keep} if size or keep else {}),
+        **({"pictures": {slug: frame.pixels for slug, frame in pictures.items()}} if pictures else {}),
+        **({"note": note} if note else {}),
     )  # fmt: skip
     target = cache.path(made, ".png")
     if target.is_file():
         ui.note(f"keyframe already composed as {made}")
         return Skipped({"frame": store.relative(target), "key": str(made)})
-    frame = compose_keyframe.compose(base, arrangement, cards, chosen, keep=keep, size=size)
+    frame = compose_keyframe.compose(
+        base, arrangement, cards, chosen, keep=keep, size=size, pictures=pictures, note=note
+    )
     frame.pil().save(target)
     record.artifact_made(target, store.IMAGE, chosen.seed, key=str(made))
     return {"frame": store.relative(target), "key": str(made)}
@@ -264,6 +273,7 @@ def run_draw_reference(inputs: dict[str, Any], settings: dict[str, Any]) -> dict
         member = store.member(connection, int(inputs["member"]))
     if member is None:
         raise LookupError(f"member {inputs['member']} was deleted before it was drawn")
+    member = _place_from_story(member, forced=bool(inputs.get("describe")))
     chosen = EditSettings(**settings).with_(seed=int(inputs["seed"]))
     size = [int(v) for v in inputs["size"]]
     made = drawn.wanted(member, chosen, size)
@@ -277,6 +287,41 @@ def run_draw_reference(inputs: dict[str, Any], settings: dict[str, Any]) -> dict
     return {"frame": store.relative(target), "key": str(made)}
 
 
+def _place_from_story(member: store.Member, forced: bool = False) -> store.Member:
+    """A place no photo of its own shows, its look written again from the story before it is drawn.
+
+    The look was tidied from a photo the place turned out not to be in: production 13's courtyard
+    (2026-10-04) was left one trait, "mountain sect courtyard", and the editor drew a Tibetan
+    monastery where the story asked for dark wood eaves, red banners and cherry blossom. A place
+    edited by hand keeps its words unless `forced`, which also writes them for a place a photo shows."""
+    with store.connect() as connection:
+        production = store.production(connection, member.production_id)
+        own = [r for r in store.refs_of(connection, member.id) if r.artifact and not r.generated]
+        members = store.members_of(connection, member.production_id)
+    if member.kind != "environment" or production is None or not production.story.strip():
+        return member
+    if not forced and (member.pinned or own):
+        return member
+
+    def asked(m: store.Member) -> direct.Member:
+        return direct.Member(m.slug, m.kind, m.noun, m.possessive, m.find)
+
+    card = cast_cards.invent(production.story, asked(member), {m.slug: asked(m) for m in members})
+    identity = {
+        **member.identity,
+        "traits": [dataclasses.asdict(trait) for trait in card.traits],
+        "lights": list(card.lights),
+    }
+    if identity == member.identity:
+        return member
+    with store.connect() as connection, store.transaction(connection):
+        store.set_identity(connection, member.id, identity)
+        production_module.recompile_casting(connection, member.id)
+        written = store.member(connection, member.id)
+    assert written is not None
+    return written
+
+
 def run_judge(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
     chosen = JudgeSettings(**settings)
     production_id, kind = int(inputs["production"]), str(inputs["kind"])
@@ -287,8 +332,9 @@ def run_judge(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any
         frames = judge.sampled(media.clip_from_video(_path(inputs["path"]), with_audio=False))
     else:
         frames = [_frame(inputs["path"])]
+    pictures = {str(slug): _frame(path) for slug, path in (inputs.get("pictures") or {}).items()}
     verdict = judge.judge(
-        frames, kind, str(inputs.get("purpose", "")), str(inputs.get("arrangement", "")), cards, chosen
+        frames, kind, str(inputs.get("purpose", "")), str(inputs.get("arrangement", "")), cards, chosen, pictures
     )
     ui.panel(
         f"judge · {kind}",

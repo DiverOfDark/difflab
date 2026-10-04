@@ -269,6 +269,27 @@ def recompile(connection: Any, production: store.Production, chapter: store.Chap
         _stale(connection, [shots[position]], prompts=prompt.state == store.STALE)
 
 
+def pick_drawn(member_id: int, seed: int) -> dict[str, int]:
+    """One of a member's variant drawings made its reference; the shots casting it go stale."""
+    drawn.pick(member_id, seed)
+    with store.connect() as connection, store.transaction(connection):
+        member = store.member(connection, member_id)
+        assert member is not None
+        recompile_casting(connection, member_id)
+        return _stale(connection, _shots_of(connection, member.production_id, member.slug))
+
+
+def redo_keyframe(shot_id: int, note: str = "") -> int:
+    """The shot's first frame composed again on a new seed, told `note` as well. Returns its chapter."""
+    with store.connect() as connection, store.transaction(connection):
+        shot = store.shot(connection, shot_id)
+        if shot is None:
+            raise LookupError(f"no shot {shot_id}")
+        store.compose_keyframe(connection, shot_id, seed=random.randrange(2**32), note=" ".join(note.split()))
+        _stale(connection, [shot])
+        return shot.chapter_id
+
+
 def recompile_casting(connection: Any, member_id: int) -> None:
     """Every prompt of a shot that casts the member, compiled again: its pictures changed."""
     member = store.member(connection, member_id)
@@ -742,6 +763,7 @@ def _member(
         "position": member.position,
         "pinned": member.pinned,
         "references": [reference(ref) for ref in store.refs_of(connection, member.id)],
+        "variants": drawn.drawn_variants(connection, member.id),
         "gaps": gaps(production, member, store.refs_of(connection, member.id)),
         "conflicts": [
             {"id": conflict.id, "says": conflict.novel_says, "resolution": conflict.resolution}
@@ -770,6 +792,7 @@ def _shot(connection: Any, shot: store.Shot) -> dict[str, Any]:
             "provided": keyframe.provided,
             "note": keyframe.note,
             "landed": keyframe.landed,
+            "made_from": _made_from(connection, keyframe),
         },
         "prompt": {
             **_made(prompt),
@@ -780,6 +803,18 @@ def _shot(connection: Any, shot: store.Shot) -> dict[str, Any]:
         },
         "plan": shot.plan,
         "clip": {**_made(clip), "seed": clip.seed, "handoff": clip.handoff},
+    }
+
+
+def _made_from(connection: Any, keyframe: store.Keyframe) -> dict[str, Any] | None:
+    """What a composed keyframe was made over and handed: the place's picture and the cast's, by id."""
+    job = store.job(connection, keyframe.current_job) if keyframe.current_job else None
+    if job is None or job.tool != "compose_keyframe":
+        return None
+    return {
+        "base": job.inputs.get("base"),
+        "pictures": job.inputs.get("pictures") or {},
+        "note": job.inputs.get("note"),
     }
 
 

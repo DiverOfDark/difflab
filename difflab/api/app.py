@@ -20,7 +20,7 @@ from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from difflab import config
+from difflab import config, store
 from difflab.api import assets, runs
 from difflab.core import hub
 from difflab.core.settings import Continuity
@@ -186,24 +186,78 @@ def draw_references(production_id: int) -> dict[str, Any]:
 
 @app.post("/api/members/{member_id}/reference")
 async def draw_reference(member_id: int, request: Request) -> dict[str, Any]:
-    """One member's picture drawn from its words; drawn again, a new seed unless `seed` is given."""
+    """One member's picture drawn from its words; drawn again, a new seed unless `seed` is given.
+    `describe` has a place's words written from the story first."""
     body = await request.json()
     owner = production.production_of_member(member_id)
     if owner is None:
         raise HTTPException(404, "no such member")
     seed = None if body.get("seed") in (None, "") else int(body["seed"])
-    return {"run": _draw(owner, member_id, seed)}
+    return {"run": _draw(owner, member_id, seed, bool(body.get("describe")))}
 
 
-def _draw(production_id: int, member_id: int | None = None, seed: int | None = None) -> str:
+def _draw(production_id: int, member_id: int | None = None, seed: int | None = None, describe: bool = False) -> str:
     try:
-        return drawn.draw(production_id, member_id, seed)
+        return drawn.draw(production_id, member_id, seed, describe=describe)
     except LookupError as problem:
         raise HTTPException(404, str(problem)) from problem
     except ValueError as problem:
         raise HTTPException(400, str(problem)) from problem
     except (sqlite3.Error, OSError) as problem:
         raise HTTPException(500, f"the run could not be queued ({problem})") from problem
+
+
+@app.post("/api/members/{member_id}/variants")
+def draw_variants(member_id: int) -> dict[str, Any]:
+    """Three drawings of the member on new seeds, to pick one of."""
+    owner = production.production_of_member(member_id)
+    if owner is None:
+        raise HTTPException(404, "no such member")
+    try:
+        return {"run": drawn.variants(owner, member_id)}
+    except (LookupError, ValueError) as problem:
+        raise HTTPException(400, str(problem)) from problem
+
+
+@app.post("/api/members/{member_id}/variants/pick")
+async def pick_variant(member_id: int, request: Request) -> dict[str, Any]:
+    body = await request.json()
+    try:
+        moved = production.pick_drawn(member_id, int(body["seed"]))
+    except LookupError as problem:
+        raise HTTPException(404, str(problem)) from problem
+    except (KeyError, ValueError) as problem:
+        raise HTTPException(400, str(problem)) from problem
+    owner = production.production_of_member(member_id)
+    assert owner is not None
+    return {**_production(owner), "stale": moved}
+
+
+@app.post("/api/shots/{shot_id}/keyframe")
+async def redo_keyframe(shot_id: int, request: Request) -> dict[str, Any]:
+    """The shot's keyframe composed again with `note` added to what the editor is told, and only the
+    chapter's keyframes made, not its clips."""
+    body = await request.json()
+    try:
+        chapter = production.redo_keyframe(shot_id, str(body.get("note", "")))
+        return {"run": planner.render_chapter(chapter, keyframes_only=True)}
+    except LookupError as problem:
+        raise HTTPException(404, str(problem)) from problem
+    except ValueError as problem:
+        raise HTTPException(400, str(problem)) from problem
+
+
+@app.post("/api/productions/{production_id}/keyframes")
+def render_keyframes(production_id: int, chapter: int = 0) -> dict[str, Any]:
+    """The chapter's composed keyframes and their verdicts, without its clips."""
+    with store.connect() as connection:
+        chapters = store.chapters_of(connection, production_id)
+    if not chapters or chapter >= len(chapters):
+        raise HTTPException(404, "no such chapter")
+    try:
+        return {"run": planner.render_chapter(chapters[chapter].id, keyframes_only=True)}
+    except ValueError as problem:
+        raise HTTPException(400, str(problem)) from problem
 
 
 @app.post("/api/members/{member_id}/given")
