@@ -32,7 +32,7 @@ def check(
     if not shots:
         problems.append("the chapter has no shots")
     _, lands = compiler.joins([store.keyframe_of(connection, shot.id) for shot in shots], shots, True)
-    for shot, landing in zip(shots, lands if not keyframes_only else []):
+    for shot, landing in [] if keyframes_only else zip(shots, lands, strict=True):
         text = store.prompt_of(connection, shot.id).text
         if text.strip() and landing != (_LAST_FRAME in text):
             problems.append(
