@@ -95,9 +95,9 @@ def _chain_forward(connection: sqlite3.Connection, shot_id: int, frame: str | No
 
 
 def _judged(connection: sqlite3.Connection, job: store.Job, outputs: dict[str, Any], state: str) -> None:
-    """A verdict on a keyframe or a clip. Below the gate, one more attempt with a new seed until the
-    retries are spent; then it goes to review. The retry is a re-roll and the chapter queued again,
-    which the shots chained after it follow by key."""
+    """A verdict on a keyframe, a clip or a drawn reference. A keyframe below the gate is composed again
+    on a new seed, told the judge's fixes, until the retries are spent; anything else below it, and a
+    keyframe out of retries, goes to review."""
     if state != store.DONE or job.for_kind not in ("keyframe", "clip", "reference"):
         return
     kind, made_id = job.for_kind, int(job.for_id or 0)
@@ -108,7 +108,9 @@ def _judged(connection: sqlite3.Connection, job: store.Job, outputs: dict[str, A
     if outputs.get("passed"):
         store.set_made(connection, kind, made_id, store.APPROVED, review=review, reviewed_by="judge")
         return
-    if kind == "reference":  # no retries: a new seed replaces the picture every prompt casting it hands
+    # No retries for a reference, whose new seed replaces the picture every prompt casting it hands, nor for a
+    # clip: its retry is a blind re-seed that re-renders it and every shot chained after it, minutes each.
+    if kind in ("reference", "clip"):
         store.set_made(connection, kind, made_id, store.NEEDS_REVIEW, review=review, reviewed_by="judge")
         return
     attempts = int(

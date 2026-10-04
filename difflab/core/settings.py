@@ -183,7 +183,7 @@ class JudgeSettings(Settings):
     retries: int = setting(
         2,
         "retries",
-        "attempts with a new seed before a failing score goes to review",
+        "keyframe attempts, told the judge's fixes, before a failing one goes to review; a clip goes there at once",
         low=0,
         high=5,
         keyed=False,
