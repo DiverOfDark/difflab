@@ -39,7 +39,7 @@ const ROLE_NOTES: Record<string, string> = {
   vlm: 'every question, prompt and plan, and the judge; loaded as published if it is already 4-bit, quantized to 4-bit as it loads if it is not quantized',
   editor: 'edits photos and draws keyframes',
   'video-model': 'samples every clip',
-  'video-loras': 'stacked on the video model in order; the turbo LoRA first, unless the video model has one fused in; strength 0 turns one off without removing it',
+  'video-loras': 'stacked on the video model in order; a video model without a turbo fused in needs a turbo LoRA first; strength 0 turns one off without removing it',
   'video-text-encoder': 'reads the caption for the video model',
   'video-vae': 'turns sampled latents into frames',
   'audio-vae': 'turns sampled latents into sound',
