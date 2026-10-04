@@ -16,16 +16,24 @@ Schedule = Literal["beta57", "shifted"]
 COMFY = "Comfy-Org/MiniMax-H3@7e75982b97cd5a41d2dcfa1904ee88d0686d6fd1"
 
 
+# A community merge of grafts over H3, both tasks in one file, with a turbo delta fused in: pair it with
+# `lora=""`, never with the turbo LoRA as well.
+HYBRID = (
+    "Comfy-Org/MiniMax-H3@7e75982b97cd5a41d2dcfa1904ee88d0686d6fd1:diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors"
+)
+
+
 @dataclass(frozen=True)
 class VideoSettings(Settings):
     """MiniMax H3. The dev defaults are 2 s at 0.4 MP (~25 s of sampling); a full render is 15 s at
     0.8 MP (~15 min)."""
 
-    # One checkpoint serves both the first-frame and the reference tasks: the hybrid replaced Comfy's two
-    # pruned files (`diffusion_models/minimax_h3_{fl2va,ref2va}_pruned_int8_convrot.safetensors`, still
-    # under COMFY).
+    # A production's chunk is ref2va (references, and an fl2va first frame beside them), so it renders on
+    # Comfy's pruned ref2va with larryvrh's turbo LoRA: the `ref2va_4step` preset. `HYBRID` was the
+    # default until 2026-10-04 and serves both tasks, but its TURBO file has a turbo delta baked in, so the
+    # turbo LoRA below was applied twice; production 9 grew blotches in flat areas within every chunk.
     checkpoint: str = setting(
-        "Comfy-Org/MiniMax-H3@7e75982b97cd5a41d2dcfa1904ee88d0686d6fd1:diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+        f"{COMFY}:diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors",
         "model",
         "the int8 DiT: repo@commit:path",
         role="video-model",

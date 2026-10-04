@@ -67,7 +67,8 @@ def text_encoder_spec(settings: VideoSettings) -> models.ModelSpec:
 def dit_spec(settings: VideoSettings) -> models.ModelSpec:
     """One registry entry per checkpoint and LoRA stack, so two never share a slot."""
     weights = HubFile.parse(settings.checkpoint)
-    loras = [(HubFile.parse(settings.lora), 1.0), *((parse_file(ref), strength) for ref, strength in settings.stack())]
+    turbo = [(HubFile.parse(settings.lora), 1.0)] if settings.lora else []
+    loras = [*turbo, *((parse_file(ref), strength) for ref, strength in settings.stack())]
     stack = ",".join(f"{lora.filename}*{strength:g}" for lora, strength in loras)
     return models.ModelSpec(
         name=f"h3_dit:{weights.filename}:{stack}",
