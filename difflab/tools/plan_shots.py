@@ -107,9 +107,14 @@ def plan(base: compose.Take, idea: str, total: float) -> compose.Take:
                 out.append(direct.problem(f'clip {number}: "seconds" is {clip["seconds"]}; make it {shortest:g} to '
                                           f"{longest:g}, or merge it into a neighbour or split it"))  # fmt: skip
         planned = sum(float(clip["seconds"]) for clip in data["clips"])
+        # The count as well as the rule: told only the sum, production 13's 9-clip plan (2026-10-05) kept every
+        # move at 7.3 s through three repairs and came back 68-73 s for a 60 s take, though 6 s clips fit.
         if planned > (1 + h3.DIRECTOR_TAKE_SLACK) * total:
+            count = len(data["clips"])
             out.append(direct.problem(f'the clips\' "seconds" add up to {planned:g}; the take lasts at most {total:g}, '
-                                      "so shorten clips or merge two"))  # fmt: skip
+                                      f"so cut {planned - total:g} seconds: {count} clips average at most "
+                                      f"{total / count:.1f} s, so shorten each clip's main beat and its settle "
+                                      f"toward the least they may be, or merge two"))  # fmt: skip
         # Never returned alone: an answer stopped here counted one problem and was kept over answers that
         # broke fewer rules, unchecked - a 72 s plan whose closings named members missing from the next cast.
         take = _take_from_plan(data, base)
