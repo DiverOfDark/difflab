@@ -15,6 +15,7 @@ the activation and measured 1.8-3.5x slower (59-105 TOPS against 178-210).
 
 import functools
 import json
+from typing import cast
 
 import comfy_kitchen
 import torch
@@ -75,14 +76,14 @@ class ConvRotLinear(nn.Module):
         # Buffers rather than plain attributes, so a LoRA travels with its block when it is streamed.
         self.register_buffer("lora_a", None, persistent=False)
         self.register_buffer("lora_b", None, persistent=False)
-        self.lora_scale = 1.0
 
     @property
     def out_features(self) -> int:
         return int(self.weight.shape[0])
 
-    def set_lora(self, a: torch.Tensor, b: torch.Tensor, scale: float = 1.0) -> None:
-        self.lora_a, self.lora_b, self.lora_scale = a, b, scale
+    def add_lora(self, a: torch.Tensor, b: torch.Tensor) -> None:
+        # bf16 because the trunk is: the LoRA multiplies the activations as they arrive.
+        stack_lora(self, a.to(torch.bfloat16), b.to(torch.bfloat16))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         out: torch.Tensor = comfy_kitchen.int8_linear(
@@ -90,5 +91,16 @@ class ConvRotLinear(nn.Module):
         )
         lora_a, lora_b = self.lora_a, self.lora_b
         if lora_a is not None and lora_b is not None:
-            out += ((x @ lora_a.t()) @ lora_b.t()) * self.lora_scale
+            out += (x @ lora_a.t()) @ lora_b.t()
         return out
+
+
+def stack_lora(module: nn.Module, a: torch.Tensor, b: torch.Tensor) -> None:
+    """Concatenated along the rank, `B @ A` is the sum of the LoRAs at one pair of matmuls; `b` carries its strength."""
+    held_a = cast("torch.Tensor | None", module.lora_a)
+    held_b = cast("torch.Tensor | None", module.lora_b)
+    if held_a is None or held_b is None:
+        module.lora_a, module.lora_b = a, b
+        return
+    module.lora_a = torch.cat([held_a, a.to(held_a.dtype)], dim=0)
+    module.lora_b = torch.cat([held_b, b.to(held_b.dtype)], dim=1)

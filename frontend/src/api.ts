@@ -375,6 +375,7 @@ export interface SettingField {
   keyed: boolean
   advanced: boolean
   role: string
+  multiple: boolean
 }
 
 export interface ToolInfo {
@@ -403,6 +404,7 @@ export const settingsImpact = (tool: string, scopeKind: string, scopeId: string,
   )
 export const listModels = () => json<Record<string, string[]>>('/api/models')
 export const rememberModel = (role: string, value: string) => json<Record<string, string[]>>('/api/models', post({ role, value }))
+export const resolveModel = (text: string) => json<{ value: string }>('/api/models/resolve', post({ text }))
 export const forgetModel = (role: string, value: string) =>
   json<Record<string, string[]>>('/api/models', send('DELETE', { role, value }))
 export const outputUrl = (path: string) => `/output/${path}`

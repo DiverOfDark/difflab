@@ -10,7 +10,7 @@ import dataclasses
 from typing import Any
 
 from difflab import store, tools
-from difflab.core.hub import Checkpoint
+from difflab.core import hub
 from difflab.core.settings import Settings
 
 MACHINE = "machine"
@@ -77,15 +77,32 @@ def put(scope_kind: str, scope_id: str, tool: str, values: dict[str, Any]) -> di
         and not any(f".{name}:" in note or f"called {name!r}" in note for note in notes)
         and getattr(resolved, name) != getattr(defaults, name)
     }
-    roles = {f.name: f.metadata.get("role", "") for f in dataclasses.fields(cls)}
+    fields = {f.name: f for f in dataclasses.fields(cls)}
+    chosen = [
+        (fields[name].metadata["role"], model)
+        for name, value in kept.items()
+        if fields[name].metadata.get("role") and value
+        for model in (_models_in(str(value)) if fields[name].metadata.get("multiple") else [str(value)])
+    ]
+    for _, model in chosen:
+        hub.check(model)
     with store.connect() as connection, store.transaction(connection):
         store.put_overrides(connection, scope_kind, scope_id, tool, kept)
-        for name, value in kept.items():
-            if roles.get(name) and value:
-                store.remember_model(connection, roles[name], str(value))
+        for role, model in chosen:
+            store.remember_model(connection, role, model)
     production_id = int(scope_id) if scope_kind == PRODUCTION and scope_id else None
     now, _ = effective(tool, production_id)
     return {"overrides": kept, "effective": now.data(), "notes": notes}
+
+
+def _models_in(value: str) -> list[str]:
+    """The references of a `multiple` field; a strength that is not a number refuses the lot."""
+    out = []
+    for line in filter(str.strip, value.splitlines()):
+        reference, _, strength = line.partition("*")
+        float(strength or 1.0)
+        out.append(reference.strip())
+    return out
 
 
 def impact(scope_kind: str, scope_id: str, tool: str, values: dict[str, Any]) -> dict[str, Any]:
@@ -144,8 +161,7 @@ def models() -> dict[str, list[str]]:
 
 
 def remember(role: str, value: str) -> None:
-    """Refuses what is not `org/repo@<commit>[:files]`, which is all a model field can load."""
-    Checkpoint.parse(value)
+    hub.check(value)
     with store.connect() as connection, store.transaction(connection):
         store.remember_model(connection, role, value)
 

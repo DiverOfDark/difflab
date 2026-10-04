@@ -22,6 +22,7 @@ from fastapi.staticfiles import StaticFiles
 
 from difflab import config
 from difflab.api import assets, runs
+from difflab.core import hub
 from difflab.core.settings import Continuity
 from difflab.models.minimax_h3.settings import VideoSettings
 from difflab.screenplay import drawn, ideas, ingest, planner, production, settings
@@ -435,6 +436,16 @@ async def remember_model(request: Request) -> dict[str, list[str]]:
     except ValueError as problem:
         raise HTTPException(400, str(problem)) from problem
     return settings.models()
+
+
+@app.post("/api/models/resolve")
+async def resolve_model(request: Request) -> dict[str, str]:
+    """`{"text": ...}`: a pasted Hugging Face or Civitai page, pinned as a model field stores it."""
+    body = await request.json()
+    try:
+        return {"value": await asyncio.to_thread(hub.resolve, str(body.get("text", "")))}
+    except (ValueError, KeyError, OSError) as problem:
+        raise HTTPException(400, str(problem)) from problem
 
 
 @app.delete("/api/models")

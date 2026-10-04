@@ -26,7 +26,7 @@ from difflab.core import models, ui
 from difflab.core.audio import trim_to_frames
 from difflab.core.cache import Cache
 from difflab.core.cache import cache as default_cache
-from difflab.core.hub import HubFile
+from difflab.core.hub import HubFile, parse_file
 from difflab.core.keys import Key, key
 from difflab.core.types import Clip, Frame
 from difflab.models.minimax_h3 import config as h3_config
@@ -65,11 +65,13 @@ def text_encoder_spec(settings: VideoSettings) -> models.ModelSpec:
 
 
 def dit_spec(settings: VideoSettings) -> models.ModelSpec:
-    """One registry entry per checkpoint and LoRA pair, so two never share a slot."""
-    weights, lora = HubFile.parse(settings.checkpoint), HubFile.parse(settings.lora)
+    """One registry entry per checkpoint and LoRA stack, so two never share a slot."""
+    weights = HubFile.parse(settings.checkpoint)
+    loras = [(HubFile.parse(settings.lora), 1.0), *((parse_file(ref), strength) for ref, strength in settings.stack())]
+    stack = ",".join(f"{lora.filename}*{strength:g}" for lora, strength in loras)
     return models.ModelSpec(
-        name=f"h3_dit:{weights.filename}:{lora.filename}",
-        build=lambda: transformer.load(weights, lora),
+        name=f"h3_dit:{weights.filename}:{stack}",
+        build=lambda: transformer.load(weights, loras),
         checkpoints=(weights.path,),
     )
 

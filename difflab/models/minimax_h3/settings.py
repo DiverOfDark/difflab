@@ -36,6 +36,13 @@ class VideoSettings(Settings):
         "repo@commit:path",
         role="video-lora",
     )
+    loras: str = setting(
+        "",
+        "LoRAs",
+        "stacked on the video model with the turbo LoRA",
+        role="video-loras",
+        multiple=True,
+    )
     # Qwen3-VL-32B truncated to 50 layers, int8 ConvRot (26 GB).
     text_encoder: str = setting(
         "Comfy-Org/MiniMax-H3@7e75982b97cd5a41d2dcfa1904ee88d0686d6fd1"
@@ -111,6 +118,23 @@ class VideoSettings(Settings):
         advanced=True,
         role="preview-decoder",
     )
+
+    def stack(self) -> list[tuple[str, float]]:
+        """`loras` as (reference, strength), without the ones at strength 0."""
+        out = []
+        for line in self.loras.splitlines():
+            reference, _, strength = line.strip().partition("*")
+            if reference and (value := float(strength or 1.0)) != 0.0:
+                out.append((reference.strip(), value))
+        return out
+
+    def key_part(self) -> dict[str, Any]:
+        # Absent while empty, so the clips rendered before `loras` existed keep their keys.
+        part = super().key_part()
+        part.pop("loras")
+        if stack := self.stack():
+            part["loras"] = stack
+        return part
 
     @classmethod
     def full_length(cls, **changes: Any) -> VideoSettings:

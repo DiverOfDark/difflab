@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
+import { resolveModel } from '../api'
 
 const props = defineProps<{
   value: string | null
   fallback: string
   codeDefault: string
   remembered: string[]
+  empty?: string
 }>()
 const emit = defineEmits<{ pick: [value: string]; forget: [value: string] }>()
 
@@ -15,10 +17,12 @@ const problem = ref('')
 const root = ref<HTMLElement | null>(null)
 const field = ref<HTMLInputElement | null>(null)
 
-const REF = /^[\w.-]+\/[\w.-]+@[0-9a-f]{40}(:.+)?$/
+const REF = /^([\w.-]+\/[\w.-]+@[0-9a-f]{40}(:.+)?|civitai:\d+@[0-9a-f]{64}:.+)$/
 
 function parts(value: string) {
-  if (!value) return { name: 'none', where: 'made on first load' }
+  if (!value) return { name: props.empty ?? 'none', where: props.empty ? 'Hugging Face or Civitai' : 'made on first load' }
+  const civitai = value.match(/^civitai:(\d+)@[0-9a-f]{64}:(.+)$/)
+  if (civitai) return { name: civitai[2].replace(/\.(safetensors|pth|bin)$/, ''), where: `civitai · version ${civitai[1]}` }
   const [head, files = ''] = value.split(/:(.*)/s, 2)
   const [repo, commit = ''] = head.split('@')
   const file = files
@@ -31,7 +35,7 @@ function parts(value: string) {
 const current = computed(() => props.value ?? props.fallback)
 const shown = computed(() => parts(current.value))
 const options = computed(() => {
-  const all = [props.codeDefault, ...props.remembered.filter((v) => v !== props.codeDefault)]
+  const all = [...(props.codeDefault ? [props.codeDefault] : []), ...props.remembered.filter((v) => v !== props.codeDefault)]
   if (current.value && !all.includes(current.value)) all.push(current.value)
   return all
 })
@@ -41,14 +45,23 @@ function choose(value: string) {
   open.value = false
 }
 
-function useCustom() {
-  const value = custom.value.trim()
+const resolving = ref(false)
+
+async function useCustom() {
+  let value = custom.value.trim()
+  problem.value = ''
   if (!REF.test(value)) {
-    problem.value = 'org/repo@<40-character commit>, then :path/to/file for a single file'
-    return
+    resolving.value = true
+    try {
+      value = (await resolveModel(value)).value
+    } catch (error) {
+      problem.value = `${String(error).replace(/^Error: /, '')} — paste a Hugging Face or Civitai link, or org/repo@<commit>[:file]`
+      return
+    } finally {
+      resolving.value = false
+    }
   }
   custom.value = ''
-  problem.value = ''
   choose(value)
 }
 
@@ -93,8 +106,8 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', outside))
         </button>
       </div>
       <form class="custom" @submit.prevent="useCustom">
-        <input ref="field" v-model="custom" placeholder="org/repo@commit[:file] — paste another" spellcheck="false" />
-        <button type="submit" :disabled="!custom.trim()">Use</button>
+        <input ref="field" v-model="custom" placeholder="a Hugging Face or Civitai link, or org/repo@commit[:file]" spellcheck="false" />
+        <button type="submit" :disabled="!custom.trim() || resolving">{{ resolving ? 'Pinning…' : 'Use' }}</button>
       </form>
       <p v-if="problem" class="problem">{{ problem }}</p>
     </div>

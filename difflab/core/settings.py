@@ -30,10 +30,12 @@ def setting(
     keyed: bool = True,
     advanced: bool = False,
     role: str = "",
+    multiple: bool = False,
 ) -> Any:
     """A dataclass field with the metadata the page and the keys read. `keyed=False` for a knob that
     changes how a run is shown rather than what it makes. Fields of one `role` name the same model in
-    different tools, and the page sets them together."""
+    different tools, and the page sets them together; a `multiple` one holds a list of them, one
+    `reference*strength` per line."""
     return dataclasses.field(
         default=default,
         metadata={
@@ -46,6 +48,7 @@ def setting(
             "keyed": keyed,
             "advanced": advanced,
             "role": role,
+            "multiple": multiple,
         },
     )
 

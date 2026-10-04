@@ -1,4 +1,5 @@
-"""Every downloaded model by name: a Hugging Face repo at a pinned commit, or a pinned URL.
+"""Every downloaded model by name: a Hugging Face repo at a pinned commit, a Civitai file pinned by its
+sha256, or a pinned URL.
 
 A checkpoint's place on disk is known from its name alone (`path`), so a fingerprint, a page-cache
 drop or an output's filename can use it before anything is downloaded.
@@ -11,12 +12,16 @@ HF's own progress bars stay off (`difflab/__init__.py`): a download reports its 
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
+import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from fnmatch import fnmatch
 from pathlib import Path
+from typing import Any
 
 from huggingface_hub import HfApi, snapshot_download
 from huggingface_hub.constants import HF_HUB_CACHE
@@ -120,19 +125,142 @@ class UrlFile:
 
     def fetch(self) -> Path:
         if not self.path.exists():
-            from difflab.core import ui
-
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            partial = self.path.with_suffix(self.path.suffix + ".partial")
-            digest = hashlib.sha256()
-            with urllib.request.urlopen(self.url) as response, partial.open("wb") as out:
-                total = int(response.headers.get("Content-Length") or 0)
-                with ui.transfer(f"Fetching {self.path.name}", total, lambda: out.tell()):
-                    while block := response.read(1 << 20):
-                        digest.update(block)
-                        out.write(block)
-            if digest.hexdigest() != self.sha256:
-                partial.unlink()
-                raise RuntimeError(f"{self.url} has sha256 {digest.hexdigest()}, not the pinned {self.sha256}")
-            partial.rename(self.path)
+            _download(self.url, self.path, self.sha256)
         return self.path
+
+
+# civitai.com and civitai.red answer the same API; mature files download only from .red.
+CIVITAI = "https://civitai.red"
+_CIVITAI_REF = re.compile(r"^civitai:(\d+)@([0-9a-f]{64}):(.+)$")
+
+
+@dataclass(frozen=True)
+class CivitaiFile:
+    """One file of a Civitai model version. Civitai has no commits, so the sha256 it lists is the pin."""
+
+    version: int
+    sha256: str
+    filename: str
+
+    def __str__(self) -> str:
+        return f"civitai:{self.version}@{self.sha256}:{self.filename}"
+
+    @classmethod
+    def parse(cls, text: str) -> CivitaiFile:
+        match = _CIVITAI_REF.match(text.strip())
+        if match is None:
+            raise ValueError(f"{text!r}: write it as civitai:<version id>@<sha256>:<file>")
+        return cls(int(match[1]), match[2], match[3])
+
+    @property
+    def path(self) -> Path:
+        return URL_CACHE / self.sha256 / self.filename
+
+    def fetch(self) -> Path:
+        if not self.path.exists():
+            files = _civitai(f"/api/v1/model-versions/{self.version}")["files"]
+            url = next((f["downloadUrl"] for f in files if f["name"] == self.filename), None)
+            if url is None:
+                raise FileNotFoundError(f"Civitai version {self.version} no longer lists {self.filename}")
+            token = os.environ.get("CIVITAI_TOKEN", "")
+            if token:
+                url += ("&" if "?" in url else "?") + urllib.parse.urlencode({"token": token})
+            try:
+                _download(url, self.path, self.sha256)
+            except urllib.error.HTTPError as problem:
+                if problem.code not in (401, 403):
+                    raise
+                raise PermissionError(
+                    f"Civitai refused {self.filename} ({problem.code}): most files need a logged-in download. Put "
+                    "an API key from civitai.com/user/account in CIVITAI_TOKEN and restart difflab."
+                ) from None
+        return self.path
+
+
+ModelFile = HubFile | CivitaiFile
+
+
+def parse_file(text: str) -> ModelFile:
+    return CivitaiFile.parse(text) if text.strip().startswith("civitai:") else HubFile.parse(text)
+
+
+def check(text: str) -> None:
+    """Refuses what no model field can load."""
+    if text.strip().startswith("civitai:"):
+        CivitaiFile.parse(text)
+    else:
+        Checkpoint.parse(text)
+
+
+_HF_URL = re.compile(
+    r"^https?://(?:www\.)?(?:huggingface\.co|hf\.co)/([\w.-]+/[\w.-]+)(?:/(?:blob|resolve|tree)/([^/]+)(?:/(.+))?)?/?$"
+)
+_HF_LOOSE = re.compile(r"^([\w.-]+/[\w.-]+)(?:@([^:]+))?(?::(.+))?$")
+
+
+def resolve(text: str) -> str:
+    """A pasted page URL, a branch name or a bare Civitai id, as the pinned reference a field stores."""
+    text = text.strip().split("#", 1)[0]
+    if text.startswith("civitai:") and "@" not in text:
+        return _civitai_ref(int(text.removeprefix("civitai:").split(":", 1)[0]), None)
+    if "civitai." in text:
+        return _civitai_url(text)
+    if (match := _HF_URL.match(text)) or (match := _HF_LOOSE.match(text)):
+        repo, revision, path = match[1], match[2] or "main", match[3]
+        if not _REVISION.match(revision):
+            revision = HfApi().model_info(repo, revision=urllib.parse.unquote(revision)).sha or revision
+        return f"{repo}@{revision}" + (f":{urllib.parse.unquote(path)}" if path else "")
+    check(text)
+    return text
+
+
+def _civitai_url(url: str) -> str:
+    parsed = urllib.parse.urlparse(url)
+    query = urllib.parse.parse_qs(parsed.query)
+    file_id = int(query["fileId"][0]) if "fileId" in query else None
+    if "modelVersionId" in query:
+        return _civitai_ref(int(query["modelVersionId"][0]), file_id)
+    if match := re.search(r"/(?:api/download/models|model-versions)/(\d+)", parsed.path):
+        return _civitai_ref(int(match[1]), file_id)
+    if match := re.search(r"/models/(\d+)", parsed.path):
+        return _civitai_ref(int(_civitai(f"/api/v1/models/{match[1]}")["modelVersions"][0]["id"]), file_id)
+    raise ValueError(f"{url!r}: not a Civitai model or version page")
+
+
+def _civitai_ref(version: int, file_id: int | None) -> str:
+    files = [f for f in _civitai(f"/api/v1/model-versions/{version}")["files"] if f.get("hashes", {}).get("SHA256")]
+    chosen = next((f for f in files if f["id"] == file_id), None) if file_id is not None else None
+    chosen = (
+        chosen
+        or next((f for f in files if f.get("primary")), None)
+        or next((f for f in files if f.get("type") == "Model"), None)
+    )
+    if chosen is None:
+        raise ValueError(f"Civitai version {version} lists no model file with a hash")
+    return str(CivitaiFile(version, chosen["hashes"]["SHA256"].lower(), chosen["name"]))
+
+
+def _civitai(path: str) -> dict[str, Any]:
+    request = urllib.request.Request(CIVITAI + path, headers={"User-Agent": "difflab"})
+    with urllib.request.urlopen(request, timeout=30) as response:
+        found: dict[str, Any] = json.load(response)
+    return found
+
+
+def _download(url: str, path: Path, sha256: str) -> None:
+    from difflab.core import ui  # not at the top: config names checkpoints, and ui imports config
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    partial = path.with_suffix(path.suffix + ".partial")
+    digest = hashlib.sha256()
+    request = urllib.request.Request(url, headers={"User-Agent": "difflab"})
+    with urllib.request.urlopen(request) as response, partial.open("wb") as out:
+        total = int(response.headers.get("Content-Length") or 0)
+        with ui.transfer(f"Fetching {path.name}", total, lambda: out.tell()):
+            while block := response.read(1 << 20):
+                digest.update(block)
+                out.write(block)
+    if digest.hexdigest() != sha256:
+        partial.unlink()
+        raise RuntimeError(f"{path.name} has sha256 {digest.hexdigest()}, not the pinned {sha256}")
+    partial.rename(path)

@@ -6,6 +6,7 @@
  */
 import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import LoraList from '../components/LoraList.vue'
 import ModelPicker from '../components/ModelPicker.vue'
 import { forgetModel, listModels, listTools, putSettings, settingsImpact, type SettingField, type ToolInfo } from '../api'
 import { state } from '../store'
@@ -15,6 +16,7 @@ const ROLES: Record<string, string> = {
   editor: 'Image editor',
   'video-model': 'Video model',
   'video-lora': 'Turbo LoRA',
+  'video-loras': 'LoRAs',
   'video-text-encoder': 'Video text encoder',
   'video-vae': 'Video VAE',
   'audio-vae': 'Audio VAE',
@@ -28,6 +30,7 @@ const ROLE_NOTES: Record<string, string> = {
   editor: 'edits photos and draws keyframes',
   'video-model': 'samples every clip',
   'video-lora': 'what makes eight steps enough; it has to suit the video model',
+  'video-loras': 'stacked on the video model with the turbo LoRA; strength 0 turns one off without removing it',
   'video-text-encoder': 'reads the caption for the video model',
   'video-vae': 'turns sampled latents into frames',
   'audio-vae': 'turns sampled latents into sound',
@@ -203,7 +206,7 @@ const describe = (f: SettingField) =>
     <section class="card">
       <div class="head"><h5>Models</h5><span class="note">pick one, paste another, or forget one you no longer use</span></div>
       <div class="rows">
-        <div v-for="r in roles" :key="r.role" class="row">
+        <div v-for="r in roles" :key="r.role" class="row" :class="{ list: r.uses[0].field.multiple }">
           <div class="what">
             <span class="title">
               {{ ROLES[r.role] ?? r.role }}
@@ -213,7 +216,15 @@ const describe = (f: SettingField) =>
             </span>
             <span class="hint">{{ ROLE_NOTES[r.role] ?? r.uses[0].field.hint }}</span>
           </div>
+          <LoraList
+            v-if="r.uses[0].field.multiple"
+            :value="roleValue(r.uses) ?? ''"
+            :remembered="remembered[r.role] ?? []"
+            @pick="(v) => pickRole(r.uses, v)"
+            @forget="(v) => forget(r.role, v)"
+          />
           <ModelPicker
+            v-else
             :value="roleValue(r.uses)"
             :fallback="String(r.uses[0].field.default)"
             :code-default="String(r.uses[0].field.default)"
@@ -361,6 +372,11 @@ const describe = (f: SettingField) =>
 
 .tool .row {
   grid-template-columns: minmax(0, 1fr) 160px;
+}
+
+.row.list {
+  grid-template-columns: minmax(0, 1fr) 380px;
+  align-items: start;
 }
 
 .what {

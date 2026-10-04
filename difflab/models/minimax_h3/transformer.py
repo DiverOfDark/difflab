@@ -11,9 +11,12 @@ The turbo LoRAs were trained against the *unpruned* 2688-dim AdaLN input, which 
 longer have, so that part cannot be merged. ComfyUI re-injects it from a bundled
 `silu_t_emb_grid [1025, 2688]`: the delta is a pure function of `t`, so it is evaluated once per
 timestep and added to the projection's output. Backbone LoRAs are applied in activation space by
-`ConvRotLinear` (merging into int8 would round most of the delta away).
+`ConvRotLinear` (merging into int8 would round most of the delta away). Further LoRAs stack on the
+same layers by concatenating ranks.
 """
 
+import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -25,9 +28,9 @@ from torch import nn
 
 from difflab import config as app_config
 from difflab.core import ui
-from difflab.core.hub import HubFile
+from difflab.core.hub import HubFile, ModelFile
 from difflab.models import offload
-from difflab.models.convrot import ConvRotLinear
+from difflab.models.convrot import ConvRotLinear, stack_lora
 from difflab.models.minimax_h3 import config, weights
 from difflab.models.minimax_h3.attention import use_int8_attention
 
@@ -94,11 +97,10 @@ class CurveAdaLayerNormModulation(nn.Module):
         # Buffers, so the LoRA travels with the block when it is streamed onto the GPU.
         self.register_buffer("lora_a", None, persistent=False)
         self.register_buffer("lora_b", None, persistent=False)
-        self.lora_scale = 1.0
 
-    def set_lora(self, a: torch.Tensor, b: torch.Tensor, scale: float = 1.0) -> None:
+    def add_lora(self, a: torch.Tensor, b: torch.Tensor) -> None:
         """LoRA in the unpruned 2688-dim space; applied via the silu grid, never merged."""
-        self.lora_a, self.lora_b, self.lora_scale = a, b, scale
+        stack_lora(self, a, b)
 
     def forward(self, temb: torch.Tensor) -> tuple[torch.Tensor, ...]:
         # The projection is fp16 in the checkpoint while the trunk is bf16, and mixing the two promotes
@@ -110,7 +112,7 @@ class CurveAdaLayerNormModulation(nn.Module):
             if grid is None:
                 raise RuntimeError("the AdaLN LoRA needs the silu time grid; load it with the checkpoint")
             delta = (grid.float() @ self.lora_a.float().t()) @ self.lora_b.float().t()
-            out = out + delta * self.lora_scale
+            out = out + delta
         modulation = out.to(torch.bfloat16)
         return tuple(modulation.view(-1, 6 * self.hidden_size).chunk(6, dim=-1))
 
@@ -128,10 +130,9 @@ class CurveAdaLayerNormOut(nn.Module):
         self.grid = grid
         self.register_buffer("lora_a", None, persistent=False)
         self.register_buffer("lora_b", None, persistent=False)
-        self.lora_scale = 1.0
 
-    def set_lora(self, a: torch.Tensor, b: torch.Tensor, scale: float = 1.0) -> None:
-        self.lora_a, self.lora_b, self.lora_scale = a, b, scale
+    def add_lora(self, a: torch.Tensor, b: torch.Tensor) -> None:
+        stack_lora(self, a, b)
 
     def forward(self, hidden_states: torch.Tensor, temb: torch.Tensor, timestep_indices: torch.Tensor) -> torch.Tensor:
         out = nn.functional.linear(temb.float(), self.linear.weight.float(), _bias(self.linear))
@@ -139,7 +140,7 @@ class CurveAdaLayerNormOut(nn.Module):
             grid = self.grid.value
             if grid is not None:
                 delta = (grid.float() @ self.lora_a.float().t()) @ self.lora_b.float().t()
-                out = out + delta * self.lora_scale
+                out = out + delta
         shift, scale = out.chunk(2, dim=-1)
         normed: torch.Tensor = self.norm(hidden_states)
         rows = timestep_indices.to(hidden_states.device)
@@ -149,73 +150,102 @@ class CurveAdaLayerNormOut(nn.Module):
 
 @dataclass
 class LoraWeights:
-    """`W_eff = W + B @ A`, keyed by the checkpoint's module path (e.g. `blocks.3.attn.qkv_proj`)."""
+    """`W_eff = W + B @ A`, keyed by module path in the checkpoint's naming or diffusers'."""
 
     pairs: dict[str, tuple[torch.Tensor, torch.Tensor]]
     scales: dict[str, float]
 
     @property
     def has_adaln(self) -> bool:
-        return any("adaln" in module for module in self.pairs)
+        return any("adaln" in module or module.startswith("norm_out.") for module in self.pairs)
+
+
+_PREFIXES = ("diffusion_model.", "transformer.", "base_model.model.")
+_DOWN = (".lora_A.weight", ".lora_A.default.weight", ".lora_down.weight", ".lora_down")
+_UP = (".lora_B.weight", ".lora_B.default.weight", ".lora_up.weight", ".lora_up")
+_KOHYA_LEAVES = {
+    "attn_qkv_proj": "attn.qkv_proj",
+    "attn_out_proj": "attn.out_proj",
+    "mlp_fc1": "mlp.fc1",
+    "mlp_fc2": "mlp.fc2",
+    "adaln_proj_linear": "adaln_proj.linear",
+}
+_KOHYA = re.compile(rf"^lora_unet_(token_refiner_blocks|blocks)_(\d+)_({'|'.join(_KOHYA_LEAVES)})$")
+
+
+def _module_name(name: str) -> str:
+    for prefix in _PREFIXES:
+        name = name.removeprefix(prefix)
+    if name == "lora_unet_final_layer_adaln_proj_linear":
+        return "final_layer.adaln_proj.linear"
+    if match := _KOHYA.match(name):
+        return f"{match[1].replace('_blocks', '.blocks')}.{match[2]}.{_KOHYA_LEAVES[match[3]]}"
+    return name
 
 
 def load_lora(path: str | Path) -> LoraWeights:
-    """Read either turbo format: bare `lora_A/lora_B` (no alpha) or `diffusion_model.`-prefixed kohya."""
+    """Every naming H3 LoRAs ship in: Comfy's, kohya's underscores, PEFT's `.default`, diffusers' paths."""
     down: dict[str, torch.Tensor] = {}
     up: dict[str, torch.Tensor] = {}
     alphas: dict[str, float] = {}
     with safe_open(str(path), framework="pt", device="cpu") as f:
         for key in list(f.keys()):  # safe_open is not a mapping
-            name = key.removeprefix("diffusion_model.")
-            if name.endswith((".lora_A.weight", ".lora_down.weight")):
-                down[name.removesuffix(".lora_A.weight").removesuffix(".lora_down.weight")] = f.get_tensor(key)
-            elif name.endswith((".lora_B.weight", ".lora_up.weight")):
-                up[name.removesuffix(".lora_B.weight").removesuffix(".lora_up.weight")] = f.get_tensor(key)
-            elif name.endswith(".alpha"):
-                alphas[name.removesuffix(".alpha")] = float(f.get_tensor(key).item())
+            if suffix := next((s for s in _DOWN if key.endswith(s)), None):
+                down[_module_name(key.removesuffix(suffix))] = f.get_tensor(key)
+            elif suffix := next((s for s in _UP if key.endswith(s)), None):
+                up[_module_name(key.removesuffix(suffix))] = f.get_tensor(key)
+            elif key.endswith(".alpha"):
+                alphas[_module_name(key.removesuffix(".alpha"))] = float(f.get_tensor(key).item())
     pairs = {module: (down[module], up[module]) for module in sorted(down.keys() & up.keys())}
     # Per module: alpha / rank, or 1.0 when the file has no alphas (alpha == rank, as in the v4 LoRA).
     scales = {module: alphas.get(module, pair[0].shape[0]) / pair[0].shape[0] for module, pair in pairs.items()}
     return LoraWeights(pairs=pairs, scales=scales)
 
 
-def apply_lora(model: MiniMaxH3Transformer3DModel, lora: LoraWeights) -> int:
+def apply_lora(model: MiniMaxH3Transformer3DModel, lora: LoraWeights, strength: float = 1.0) -> int:
     """The base conversion split the fused `qkv_proj` into `to_q/to_k/to_v` and swapped the two halves
-    of `mlp.fc1`; the LoRA's `B` has to follow both, while `A` is shared."""
+    of `mlp.fc1`; a checkpoint-named LoRA's `B` has to follow both, while `A` is shared. A diffusers-named
+    one is already in that layout."""
     applied = 0
     for module, (a, b) in lora.pairs.items():
         target = _lora_target(module)
         if target is None:
             continue
         path, kind = target
-        scale = lora.scales[module]
         try:
             owner = model.get_submodule(path)
         except AttributeError:
             continue
+        scale = lora.scales[module] * strength
+        if scale != 1.0:
+            b = (b.float() * scale).to(b.dtype)
         if kind == "qkv":
             for name, part in zip(("to_q", "to_k", "to_v"), b.chunk(3, dim=0), strict=True):
-                _set_lora(model.get_submodule(f"{path}.{name}"), a, part.contiguous(), scale)
+                _add_lora(model.get_submodule(f"{path}.{name}"), a, part.contiguous())
                 applied += 1
             continue
         if kind == "ff":
             gate, value = b.chunk(2, dim=0)
             b = torch.cat([value, gate], dim=0).contiguous()
-        _set_lora(owner, a, b, scale)
+        _add_lora(owner, a, b)
         applied += 1
     return applied
 
 
 def _lora_target(module: str) -> tuple[str, str] | None:
-    """Checkpoint module path -> (diffusers module path, kind)."""
+    """Module path in either naming -> (diffusers module path, kind)."""
+    if module == "norm_out.linear" or module == "final_layer.adaln_proj.linear":
+        return "norm_out", "adaln"
+    if module.startswith(("transformer_blocks.", "token_refiner.refiner_blocks.")):
+        if module.endswith(".adaln_proj.linear"):
+            return module.removesuffix(".linear"), "adaln"
+        return module, "linear"
     if module.startswith("blocks."):
         index, _, rest = module.removeprefix("blocks.").partition(".")
         prefix = f"transformer_blocks.{index}"
     elif module.startswith("token_refiner.blocks."):
         index, _, rest = module.removeprefix("token_refiner.blocks.").partition(".")
         prefix = f"token_refiner.refiner_blocks.{index}"
-    elif module == "final_layer.adaln_proj.linear":
-        return "norm_out", "adaln"
     else:
         return None
     mapping = {
@@ -228,18 +258,18 @@ def _lora_target(module: str) -> tuple[str, str] | None:
     return mapping.get(rest)
 
 
-def _set_lora(module: nn.Module, a: torch.Tensor, b: torch.Tensor, scale: float) -> None:
+def _add_lora(module: nn.Module, a: torch.Tensor, b: torch.Tensor) -> None:
     """int8 layers keep the LoRA in activation space; bf16 layers merge it.
 
     Merging into int8 would round most of the delta away, which is why ComfyUI bypasses there — but
     the token refiner is plain bf16, where the delta sits far above the ULP and merging is exact enough.
     """
-    setter = getattr(module, "set_lora", None)
-    if setter is not None:
-        setter(a, b, scale)
+    adder = getattr(module, "add_lora", None)
+    if adder is not None:
+        adder(a, b)
         return
     if isinstance(module, nn.Linear):
-        delta = (b.to(torch.float32) @ a.to(torch.float32)) * scale
+        delta = b.to(torch.float32) @ a.to(torch.float32)
         module.weight.data = (module.weight.data.float() + delta).to(module.weight.dtype)
         return
     raise TypeError(f"{type(module).__name__} cannot take a LoRA")
@@ -247,12 +277,13 @@ def _set_lora(module: nn.Module, a: torch.Tensor, b: torch.Tensor, scale: float)
 
 def load(
     weights_file: HubFile,
-    lora_source: HubFile,
+    loras: Sequence[tuple[ModelFile, float]],
     device: str | torch.device = app_config.DEVICE,
     chunk_tokens: int = config.MATMUL_CHUNK_TOKENS,
 ) -> MiniMaxH3Transformer3DModel:
-    """Build the DiT: int8 weights, curve-mode AdaLN, turbo LoRA, blocks streaming from CPU."""
-    dit, lora_file, grid_file = weights_file.fetch(), lora_source.fetch(), config.SILU_TEMB_GRID.fetch()
+    """Build the DiT: int8 weights, curve-mode AdaLN, the LoRAs in order, blocks streaming from CPU."""
+    dit, grid_file = weights_file.fetch(), config.SILU_TEMB_GRID.fetch()
+    lora_files = [(source.fetch(), strength) for source, strength in loras]
     with ui.step(f"Loading DiT ({dit.stem})") as detail:
         checkpoint = weights.load_checkpoint(dit)
         with init_empty_weights():
@@ -279,16 +310,21 @@ def load(
         if checkpoint.rope_inv_freq is not None:
             model.rope.inv_freq = checkpoint.rope_inv_freq.to(model.rope.inv_freq.dtype)
 
-        lora = load_lora(lora_file)
-        if lora.has_adaln and silu_grid is None:
-            raise FileNotFoundError(
-                f"{lora_file.name} carries AdaLN pairs in the unpruned 2688-dim space, which this pruned checkpoint "
-                f"does not have. They are injected from {grid_file}, which is missing."
-            )
-        applied = apply_lora(model, lora)
+        sites = []
+        for lora_file, strength in lora_files:
+            lora = load_lora(lora_file)
+            if lora.has_adaln and silu_grid is None:
+                raise FileNotFoundError(
+                    f"{lora_file.name} carries AdaLN pairs in the unpruned 2688-dim space, which this pruned "
+                    f"checkpoint does not have. They are injected from {grid_file}, which is missing."
+                )
+            applied = apply_lora(model, lora, strength)
+            if not applied:
+                raise ValueError(f"{lora_file.name} matches no layer of the H3 DiT: a LoRA for another model?")
+            sites.append(f"{lora_file.stem} {applied}")
         _chunk_feed_forwards(model, chunk_tokens)
         attentions = use_int8_attention(model)
-        detail(f"{_int8_size(model):.1f} GB int8 · {applied} LoRA sites · {attentions} int8 attn")
+        detail(f"{_int8_size(model):.1f} GB int8 · LoRA sites: {', '.join(sites)} · {attentions} int8 attn")
 
     model.requires_grad_(False).eval()
     offload.stream_blocks(model.transformer_blocks, device)
