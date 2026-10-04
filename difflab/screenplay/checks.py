@@ -26,8 +26,10 @@ META = re.compile(r"\b(chunk|segment|previous clip|next clip|stitch\w*|this prom
 NEGATION = re.compile(r"\b(no|not|never|without|nothing|nobody|don't|doesn't)\b", re.I)
 PERSISTENCE = re.compile(r"\b(must not reappear|do not restore|do not regenerate|must not return|no cuts?)\b", re.I)
 WRITER_TIMING = re.compile(
-    r"\bAt \d|\[Shot|\b\d+(\.\d+)?\s*(s|sec|seconds)\b|\b(for the first|early in the clip|in the middle seconds|"
-    r"later in the clip|toward the end of the clip|in the final)\b",
+    r"\bAt \d|\[Shot|\b\d+(\.\d+)?\s*(s|sec|seconds)\b|\b(early in the clip|in the middle seconds|"
+    r"later in the clip|toward the end of the clip)\b"
+    # The compiler's own "For the first two seconds" and "in the final second", not "the first meow".
+    r"|\b(for the first|in the final)(\s+\w+)?\s+(seconds?|moments?)\b",
     re.I,
 )
 # A side from a person's own point of view: an 8B model mirrors it, and a take planned on a mirrored
