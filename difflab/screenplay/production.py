@@ -138,7 +138,7 @@ def update_shot(shot_id: int, **changes: Any) -> store.Shot:
         return updated
 
 
-PLAN_FIELDS = ("actions", "closing", "cast", "camera_move", "camera_toward", "dialogue")
+PLAN_FIELDS = ("actions", "closing", "cast", "camera_move", "camera_toward", "dialogue", "looks")
 
 
 def _edit_plan(connection: Any, chapter: store.Chapter, shot: store.Shot, **planned: Any) -> None:
@@ -229,12 +229,22 @@ def _edit_plan(connection: Any, chapter: store.Chapter, shot: store.Shot, **plan
         spoken = [f"{{{who}}}'s spoken line" for who in dict.fromkeys(line["who"] for line in lines)]
         kept = [m for m in plan.get("mouths", []) if not str(m).endswith("'s spoken line")]
         plan["mouths"] = [*kept, *spoken]
+    if "looks" in planned:  # how a member looks from the end of this shot on, until a cut back
+        looks = {str(m): " ".join(str(v).split()) for m, v in (planned["looks"] or {}).items()}
+        unknown = sorted(m for m in looks if m not in plan.get("cast", []))
+        if unknown:
+            raise ValueError(f"{', '.join(unknown)} is not in this shot's cast")
+        plan["looks"] = {m: v for m, v in looks.items() if v}
     move, toward = plan.get("camera_move", ""), plan.get("camera_toward", "")
     dialogue = " / ".join(f"{line['who']}: {line['line']}" for line in plan.get("dialogue", []))
     store.update_shot(connection, shot.id, plan=plan, camera=f"{move} → {toward}", dialogue=dialogue, pinned=True)
     recompile(connection, production, chapter, shot.id)
     if "closing" in planned and following is not None:
         recompile(connection, production, chapter, following.id)  # it opens on this closing
+    if "looks" in planned:  # every later shot says the look it carries
+        for later in shots[shot.position + 1 :]:
+            if later.plan.get("beats"):
+                recompile(connection, production, chapter, later.id)
 
 
 def _said(plan: dict[str, Any]) -> str:

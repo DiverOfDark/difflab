@@ -140,6 +140,7 @@ def render_chapter(chapter_id: int, asked_by: str = "person", keyframes_only: bo
                         **(under := base(connection, production, arrangement, where) or {}),
                         "pictures": pictures(connection, production, arrangement, under.get("keep")),
                         "note": keyframe.note,
+                        "looks": _looks(connection, production, shot)[0],
                         "size": _canvas(production),
                         "seed": seed,
                     },
@@ -153,7 +154,8 @@ def render_chapter(chapter_id: int, asked_by: str = "person", keyframes_only: bo
                          "purpose": f"the shot's first frame, as the arrangement says, before its action starts "
                                     f"({shot.action})",
                          "arrangement": arrangement, "cast": cast,
-                         "pictures": pictures(connection, production, arrangement)},
+                         "pictures": pictures(connection, production, arrangement),
+                         "looks": _looks(connection, production, shot)[0]},
                         f"shot {shot.position + 1}: judge the keyframe", keyframe.id,
                     ))  # fmt: skip
                 openings.append(_output(composed.id, "frame"))
@@ -221,7 +223,8 @@ def render_chapter(chapter_id: int, asked_by: str = "person", keyframes_only: bo
                     connection, run_id, "judge",
                     {"production": production.id, "kind": "clip", "path": _output(job.id, "chunk"),
                      "purpose": shot.action, "arrangement": str(shot.plan.get("closing", "")), "cast": cast,
-                     "pictures": pictures(connection, production, " ".join(f"{{{m}}}" for m in cast))},
+                     "pictures": pictures(connection, production, " ".join(f"{{{m}}}" for m in cast)),
+                     "looks": (changed := _looks(connection, production, shot))[0], "becomes": changed[1]},
                     label=f"shot {shot.position + 1}: judge the clip", settings=verdicts.data(),
                     for_kind="clip", for_id=clip.id,
                 )  # fmt: skip
@@ -308,6 +311,16 @@ def pictures(
         if own:
             out[slug] = str(own[0].artifact)
     return out
+
+
+def _looks(connection: Any, production: store.Production, shot: store.Shot) -> tuple[dict[str, str], dict[str, str]]:
+    """What earlier shots changed about each member of this one for good, and what this one changes."""
+    chapter = store.chapter(connection, shot.chapter_id)
+    assert chapter is not None
+    take = compiler.take_of(connection, production, chapter)
+    chunk = take.chunks[shot.position]
+    carried = {m: look for m in chunk.cast if (look := compiler.look(take, shot.position, m))}
+    return carried, {m: v for m, v in chunk.looks.items() if v}
 
 
 def _opening(

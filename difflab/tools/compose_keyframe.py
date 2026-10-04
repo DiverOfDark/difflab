@@ -22,9 +22,12 @@ def instruction(
     keep: str | None = None,
     pictured: Sequence[str] = (),
     note: str = "",
+    looks: dict[str, str] | None = None,
 ) -> str:
     """The plan's opening sentence with each {id} said as the member it names, in the editor's words: a
-    member in `pictured` by its picture (Picture 2 onward, in that order), the others by their traits."""
+    member in `pictured` by its picture (Picture 2 onward, in that order), the others by their traits,
+    and each with `looks`, what an earlier shot changed about it for good."""
+    changed = looks or {}
     said: set[str] = set()
 
     def member(match: re.Match[str]) -> str:
@@ -34,9 +37,10 @@ def instruction(
         if card.id in said:
             return f"the {card.noun}"
         said.add(card.id)
+        now = f", now with {changed[card.id]}" if changed.get(card.id) else ""
         if card.id in pictured:
-            return f"the {card.noun} from Picture {list(pictured).index(card.id) + 2}"
-        return f"the {card.noun} with {card.short()}"
+            return f"the {card.noun} from Picture {list(pictured).index(card.id) + 2}{now}"
+        return f"the {card.noun} with {card.short()}{now}"
 
     scene = PLACEHOLDER.sub(member, arrangement).strip().rstrip(".")
     if keep is not None and keep in cards:
@@ -69,8 +73,9 @@ def compose(
     size: tuple[int, int] | None = None,
     pictures: dict[str, Frame] | None = None,
     note: str = "",
+    looks: dict[str, str] | None = None,
 ) -> Frame:
     """`pictures` is each member handed over as its own picture, by id, in the order they are named."""
     given = pictures or {}
-    said = instruction(arrangement, cards, keep, list(given), note)
+    said = instruction(arrangement, cards, keep, list(given), note, looks)
     return edit_image.edit(base, said, settings, size=size, donors=list(given.values()))

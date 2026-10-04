@@ -249,19 +249,21 @@ def run_compose_keyframe(inputs: dict[str, Any], settings: dict[str, Any]) -> di
     arrangement = str(inputs["arrangement"])
     pictures = {str(slug): _frame(path) for slug, path in (inputs.get("pictures") or {}).items()}
     note = str(inputs.get("note") or "")
+    looks = {str(m): str(v) for m, v in (inputs.get("looks") or {}).items() if v}
     made = key(
         "compose_keyframe", 2, base=base.pixels, arrangement=arrangement,
         cards={slug: dataclasses.asdict(card) for slug, card in cards.items()}, settings=chosen,
         **({"size": size, "keep": keep} if size or keep else {}),
         **({"pictures": {slug: frame.pixels for slug, frame in pictures.items()}} if pictures else {}),
         **({"note": note} if note else {}),
+        **({"looks": looks} if looks else {}),
     )  # fmt: skip
     target = cache.path(made, ".png")
     if target.is_file():
         ui.note(f"keyframe already composed as {made}")
         return Skipped({"frame": store.relative(target), "key": str(made)})
     frame = compose_keyframe.compose(
-        base, arrangement, cards, chosen, keep=keep, size=size, pictures=pictures, note=note
+        base, arrangement, cards, chosen, keep=keep, size=size, pictures=pictures, note=note, looks=looks
     )
     frame.pil().save(target)
     record.artifact_made(target, store.IMAGE, chosen.seed, key=str(made))
@@ -341,10 +343,13 @@ def run_judge(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any
     else:
         frames = [_frame(inputs["path"])]
     pictures = {str(slug): _frame(path) for slug, path in (inputs.get("pictures") or {}).items()}
+    looks = {str(m): str(v) for m, v in (inputs.get("looks") or {}).items() if v}
+    becomes = {str(m): str(v) for m, v in (inputs.get("becomes") or {}).items() if v}
     try:
         verdict = judge.judge(
-            frames, kind, str(inputs.get("purpose", "")), str(inputs.get("arrangement", "")), cards, chosen, pictures
-        )
+            frames, kind, str(inputs.get("purpose", "")), str(inputs.get("arrangement", "")), cards, chosen, pictures,
+            looks, becomes,
+        )  # fmt: skip
     except RuntimeError as problem:  # an unusable verdict is a thing to look at, never a reason to end a render
         ui.note(f"judge · {kind}: no usable verdict ({problem})")
         return {"score": None, "issues": ["the judge gave no usable answer"], "gate": chosen.gate, "unjudged": True}

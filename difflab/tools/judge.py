@@ -41,9 +41,12 @@ def judge(
     cast: list[compiler.Card],
     settings: JudgeSettings,
     pictures: dict[str, Frame] | None = None,
+    looks: dict[str, str] | None = None,
+    becomes: dict[str, str] | None = None,
 ) -> Verdict:
     """`kind` is keyframe or clip; `arrangement` is what should be seen, members as {id}; `pictures` are
-    members' own reference photos by id, shown after the frames so clothes are judged against them."""
+    members' own reference photos by id, shown after the frames so clothes are judged against them;
+    `looks` is what earlier shots changed about a member for good, and `becomes` what this one changes."""
     given = {slug: frame for slug, frame in (pictures or {}).items() if slug in {card.id for card in cast}}
     numbered = {slug: len(frames) + n for n, slug in enumerate(given, 1)}
     expected = {card.id for card in cast}
@@ -85,6 +88,8 @@ def judge(
         arrangement=arrangement.strip() or "-",
         cast="\n".join(
             f"- {c.id}: the {c.noun}, {c.full()}"
+            + (f"; changed since its photo: {looks[c.id]}" if looks and looks.get(c.id) else "")
+            + (f"; during this shot it changes to: {becomes[c.id]}" if becomes and becomes.get(c.id) else "")
             + (f" (reference photo: Picture {numbered[c.id]})" if c.id in numbered else "")
             for c in cast
         )

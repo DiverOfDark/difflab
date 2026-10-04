@@ -421,7 +421,7 @@ Arrangement: {arrangement}
 WHO IS IN IT
 {cast}
 
-Answer JSON: {{"score": 0.0-1.0, "cast": [{{"id": "<id>", "present": true|false, "likeness": 0.0-1.0, "outfit": true|false}}, ...], "strangers": ["a few words for each person or animal not listed"], "issues": ["..."], "fixes": ["..."], "notes": "one sentence"}}. One "cast" entry per listed member; "outfit" is false only when a garment is a different garment or a different colour from the one in their photo (a bright robe with gold medallions for a dark embroidered one); a missing accessory, a detail of embroidery or the way the hair is worn is an issue, not a changed outfit. "fixes" are the issues a painter is told, about who is there, where each stands, what each holds and does; never about clothes, hair or a face, which the painter copies from the photos."""
+Answer JSON: {{"score": 0.0-1.0, "cast": [{{"id": "<id>", "present": true|false, "likeness": 0.0-1.0, "outfit": true|false}}, ...], "strangers": ["a few words for each person or animal not listed"], "issues": ["..."], "fixes": ["..."], "notes": "one sentence"}}. One "cast" entry per listed member; "outfit" is false only when a garment is a different garment or a different colour from the one in their photo (a bright robe with gold medallions for a dark embroidered one) and WHO IS IN IT does not say it has changed; a missing accessory, a detail of embroidery or the way the hair is worn is an issue, not a changed outfit. "fixes" are the issues a painter is told, about who is there, where each stands, what each holds and does; never about clothes, hair or a face, which the painter copies from the photos."""
 
 # --- ruling: what a gate asks about meaning, answered by the model instead of a word list ---------------------
 RULING_EVENTS_SYSTEM = """\
@@ -552,7 +552,7 @@ Keep this room exactly as it is: its walls, furniture, lighting and colour. Chan
 # With each person and animal handed over as its own picture. Said in words alone, production 13's man
 # (2026-10-04) came back in a bright costume-green robe with gold medallions over his dark embroidered one,
 # and a sect courtyard filled with monks no plan had asked for.
-COMPOSE_LIKENESS = "Everyone taken from a picture looks exactly as in that picture: the same face, hair and build, and the same clothes in every colour, pattern and fold."
+COMPOSE_LIKENESS = "Everyone taken from a picture looks exactly as in that picture: the same face, hair and build, and the same clothes in every colour, pattern and fold, except what is said to be different now."
 COMPOSE_ALONE = "Nobody else is in the frame: no other people and no other animals."
 COMPOSE_NOTE = "Also: {note}."
 # Told in words, a robe's colour and embroidery overrode the picture it came with: production 13's retry
