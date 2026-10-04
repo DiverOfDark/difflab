@@ -16,26 +16,15 @@ Schedule = Literal["beta57", "shifted"]
 COMFY = "Comfy-Org/MiniMax-H3@7e75982b97cd5a41d2dcfa1904ee88d0686d6fd1"
 
 
-TURBO_V4 = (
-    "larryvrh/MiniMax-H3-Turbo-Lora@43a74557ac3f6539db8e0f2a959d03feb7a81480"
-    ":minimax_h3_turbo_v4_step600_ema.safetensors"
-)
-# A community merge of grafts over H3, both tasks in one file, with a turbo delta fused in: give it a
-# stack without TURBO_V4, or the turbo is applied twice.
-HYBRID = (
-    "Comfy-Org/MiniMax-H3@7e75982b97cd5a41d2dcfa1904ee88d0686d6fd1:diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors"
-)
-
-
 @dataclass(frozen=True)
 class VideoSettings(Settings):
     """MiniMax H3. The dev defaults are 2 s at 0.4 MP (~25 s of sampling); a full render is 15 s at
     0.8 MP (~15 min)."""
 
     # A production's chunk is ref2va (references, and an fl2va first frame beside them), so it renders on
-    # Comfy's pruned ref2va with larryvrh's turbo LoRA: the `ref2va_4step` preset. `HYBRID` was the
-    # default until 2026-10-04 and serves both tasks, but its TURBO file has a turbo delta baked in, so the
-    # turbo LoRA in `loras` was applied twice; production 9 grew blotches in flat areas within every chunk.
+    # Comfy's pruned ref2va with larryvrh's turbo LoRA: the `ref2va_4step` preset. A checkpoint with a turbo
+    # fused in, as a community hybrid's TURBO files have, takes a `loras` stack without the turbo LoRA: the hybrid
+    # was the default until 2026-10-04 with both, and production 9 grew blotches in every chunk.
     checkpoint: str = setting(
         f"{COMFY}:diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors",
         "model",
@@ -43,9 +32,10 @@ class VideoSettings(Settings):
         role="video-model",
     )
     # The turbo LoRA is the stack's first line: it belongs to the checkpoint, and a checkpoint with its
-    # own turbo fused in (`HYBRID`) takes the stack without it.
+    # own turbo fused in takes the stack without it.
     loras: str = setting(
-        f"{TURBO_V4}*1",
+        "larryvrh/MiniMax-H3-Turbo-Lora@43a74557ac3f6539db8e0f2a959d03feb7a81480"
+        ":minimax_h3_turbo_v4_step600_ema.safetensors*1",
         "LoRAs",
         "stacked on the video model in order, one per line as reference*strength; the turbo LoRA first",
         role="video-loras",
