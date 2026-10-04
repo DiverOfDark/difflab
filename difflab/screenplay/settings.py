@@ -7,6 +7,7 @@ has since changed; and only `keyed` fields move a made thing's key, which is wha
 from __future__ import annotations
 
 import dataclasses
+import os
 from typing import Any
 
 from difflab import store, tools
@@ -169,3 +170,31 @@ def remember(role: str, value: str) -> None:
 def forget(role: str, value: str) -> None:
     with store.connect() as connection, store.transaction(connection):
         store.forget_model(connection, role, value)
+
+
+def accounts() -> dict[str, dict[str, str]]:
+    """Per service, where its token comes from and whose it is; never the token."""
+    with store.connect() as connection:
+        saved = store.tokens(connection)
+    out = {}
+    for service, variable in hub.TOKEN_ENV.items():
+        if service in saved:
+            out[service] = {"source": "settings", "account": saved[service][1], "tail": saved[service][0][-4:]}
+        elif os.environ.get(variable):
+            out[service] = {"source": f"${variable}", "account": "", "tail": os.environ[variable][-4:]}
+        else:
+            out[service] = {"source": "", "account": "", "tail": ""}
+    return out
+
+
+def save_token(service: str, value: str) -> None:
+    """Checked with the service before it is kept; an empty value forgets the saved one."""
+    if service not in hub.TOKEN_ENV:
+        raise ValueError(f"no service called {service!r}")
+    value = value.strip()
+    account = hub.account(service, value) if value else ""
+    with store.connect() as connection, store.transaction(connection):
+        if value:
+            store.put_token(connection, service, value, account)
+        else:
+            store.drop_token(connection, service)

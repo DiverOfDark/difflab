@@ -407,4 +407,8 @@ export const rememberModel = (role: string, value: string) => json<Record<string
 export const resolveModel = (text: string) => json<{ value: string }>('/api/models/resolve', post({ text }))
 export const forgetModel = (role: string, value: string) =>
   json<Record<string, string[]>>('/api/models', send('DELETE', { role, value }))
+export type Account = { source: string; account: string; tail: string }
+export const listAccounts = () => json<Record<string, Account>>('/api/accounts')
+export const saveAccount = (service: string, token: string) =>
+  json<Record<string, Account>>(`/api/accounts/${service}`, send('PUT', { token }))
 export const outputUrl = (path: string) => `/output/${path}`

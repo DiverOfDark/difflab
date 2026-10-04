@@ -8,7 +8,18 @@ import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import LoraList from '../components/LoraList.vue'
 import ModelPicker from '../components/ModelPicker.vue'
-import { forgetModel, listModels, listTools, putSettings, settingsImpact, type SettingField, type ToolInfo } from '../api'
+import {
+  forgetModel,
+  listAccounts,
+  listModels,
+  listTools,
+  putSettings,
+  saveAccount,
+  settingsImpact,
+  type Account,
+  type SettingField,
+  type ToolInfo,
+} from '../api'
 import { state } from '../store'
 
 const ROLES: Record<string, string> = {
@@ -171,6 +182,35 @@ async function forget(role: string, model: string) {
   remembered.value = await forgetModel(role, model)
 }
 
+// --- accounts: tokens for downloads, checked with the service as they are saved -----------------
+const SERVICES: { name: string; title: string; note: string; where: string }[] = [
+  { name: 'huggingface', title: 'Hugging Face', note: 'gated and private repos', where: 'https://huggingface.co/settings/tokens' },
+  { name: 'civitai', title: 'Civitai', note: 'most Civitai files will not download without one', where: 'https://civitai.com/user/account' },
+]
+const accounts = ref<Record<string, Account>>({})
+const typed = ref<Record<string, string>>({})
+const checking = ref('')
+listAccounts().then((a) => (accounts.value = a))
+
+async function saveToken(service: string, token: string) {
+  failure.value = ''
+  checking.value = service
+  try {
+    accounts.value = await saveAccount(service, token)
+    typed.value[service] = ''
+  } catch (error) {
+    failure.value = String(error).replace(/^Error: /, '')
+  } finally {
+    checking.value = ''
+  }
+}
+
+function signedIn(a: Account | undefined) {
+  if (!a?.source) return 'no token: public files only'
+  if (a.source === 'settings') return `saved · ${a.account || 'account unknown'} · …${a.tail}`
+  return `from ${a.source} · …${a.tail}`
+}
+
 // --- knobs -------------------------------------------------------------------------------------
 const knobs = (tool: ToolInfo) => tool.settings.filter((f) => !f.role && (advanced.value || !f.advanced))
 const groups = computed(() =>
@@ -232,6 +272,25 @@ const describe = (f: SettingField) =>
             @pick="(v) => pickRole(r.uses, v)"
             @forget="(v) => forget(r.role, v)"
           />
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="head"><h5>Accounts</h5><span class="note">tokens for downloading models; kept on this machine, never shown again</span></div>
+      <div class="rows">
+        <div v-for="svc in SERVICES" :key="svc.name" class="row">
+          <div class="what">
+            <span class="title">
+              {{ svc.title }}
+              <button v-if="accounts[svc.name]?.source === 'settings'" class="link" :disabled="checking === svc.name" @click="saveToken(svc.name, '')">remove</button>
+            </span>
+            <span class="hint">{{ signedIn(accounts[svc.name]) }} · {{ svc.note }} · <a :href="svc.where" target="_blank" rel="noopener">get a token</a></span>
+          </div>
+          <form class="token" @submit.prevent="saveToken(svc.name, typed[svc.name] ?? '')">
+            <input v-model="typed[svc.name]" type="password" autocomplete="off" placeholder="paste a token" spellcheck="false" />
+            <button type="submit" :disabled="!typed[svc.name]?.trim() || checking === svc.name">{{ checking === svc.name ? 'Checking…' : 'Save' }}</button>
+          </form>
         </div>
       </div>
     </section>
@@ -372,6 +431,16 @@ const describe = (f: SettingField) =>
 
 .tool .row {
   grid-template-columns: minmax(0, 1fr) 160px;
+}
+
+.token {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px;
+}
+
+.row .token input {
+  text-align: left;
 }
 
 .row.list {

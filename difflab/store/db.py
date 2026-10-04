@@ -393,6 +393,18 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
     # A composed or provided keyframe the shot before it ends on, as its last frame, so the join does
     # not jump. Off, that shot ends where the model takes it and this one opens fresh, without its tail.
     ("ALTER TABLE keyframes ADD COLUMN landed INTEGER NOT NULL DEFAULT 1",),
+    # Access tokens set on the settings page, which win over the environment. `account` is who the
+    # service said the token belongs to when it was saved; the page never gets the value back.
+    (
+        """
+        CREATE TABLE tokens (
+            service  TEXT PRIMARY KEY,
+            value    TEXT NOT NULL,
+            account  TEXT NOT NULL DEFAULT '',
+            saved_at REAL NOT NULL
+        )
+        """,
+    ),
 )
 
 SCHEMA_VERSION = len(MIGRATIONS)

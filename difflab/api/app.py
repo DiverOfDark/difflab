@@ -456,6 +456,22 @@ async def forget_model(request: Request) -> dict[str, list[str]]:
     return settings.models()
 
 
+@app.get("/api/accounts")
+def list_accounts() -> dict[str, dict[str, str]]:
+    return settings.accounts()
+
+
+@app.put("/api/accounts/{service}")
+async def save_account(service: str, request: Request) -> dict[str, dict[str, str]]:
+    """`{"token": ...}`: checked with the service, then used for every download; "" forgets it."""
+    body = await request.json()
+    try:
+        await asyncio.to_thread(settings.save_token, service, str(body.get("token", "")))
+    except (ValueError, OSError) as problem:
+        raise HTTPException(400, str(problem)) from problem
+    return settings.accounts()
+
+
 @app.post("/api/settings/impact")
 async def settings_impact(request: Request) -> dict[str, Any]:
     """What saving these overrides would move, before they are saved."""

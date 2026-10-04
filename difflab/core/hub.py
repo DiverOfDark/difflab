@@ -76,13 +76,23 @@ class Checkpoint:
         if not marker.exists():
             from difflab.core import ui  # not at the top: config names checkpoints, and ui imports config
 
-            listed = HfApi().model_info(self.repo, revision=self.revision, files_metadata=True).siblings or []
+            listed = (
+                HfApi(token=token(HUGGINGFACE))
+                .model_info(self.repo, revision=self.revision, files_metadata=True)
+                .siblings
+                or []
+            )
             wanted = [f for f in listed if not self.files or any(fnmatch(f.rfilename, p) for p in self.files)]
             missing = sum(f.size or 0 for f in wanted if not (self.path / f.rfilename).exists())
             blobs = self.path.parent.parent / "blobs"
             before = _bytes_in(blobs)
             with ui.transfer(f"Fetching {self.repo}", missing, lambda: _bytes_in(blobs) - before):
-                snapshot_download(self.repo, revision=self.revision, allow_patterns=list(self.files) or None)
+                snapshot_download(
+                    self.repo,
+                    revision=self.revision,
+                    allow_patterns=list(self.files) or None,
+                    token=token(HUGGINGFACE),
+                )
             marker.touch()
         return self.path
 
@@ -130,7 +140,7 @@ class UrlFile:
 
 
 # civitai.com and civitai.red answer the same API; mature files download only from .red.
-CIVITAI = "https://civitai.red"
+CIVITAI_URL = "https://civitai.red"
 _CIVITAI_REF = re.compile(r"^civitai:(\d+)@([0-9a-f]{64}):(.+)$")
 
 
@@ -162,22 +172,44 @@ class CivitaiFile:
             url = next((f["downloadUrl"] for f in files if f["name"] == self.filename), None)
             if url is None:
                 raise FileNotFoundError(f"Civitai version {self.version} no longer lists {self.filename}")
-            token = os.environ.get("CIVITAI_TOKEN", "")
-            if token:
-                url += ("&" if "?" in url else "?") + urllib.parse.urlencode({"token": token})
+            if key := token(CIVITAI):
+                url += ("&" if "?" in url else "?") + urllib.parse.urlencode({"token": key})
             try:
                 _download(url, self.path, self.sha256)
             except urllib.error.HTTPError as problem:
                 if problem.code not in (401, 403):
                     raise
                 raise PermissionError(
-                    f"Civitai refused {self.filename} ({problem.code}): most files need a logged-in download. Put "
-                    "an API key from civitai.com/user/account in CIVITAI_TOKEN and restart difflab."
+                    f"Civitai refused {self.filename} ({problem.code}): most files need a logged-in download. Save "
+                    "an API key from civitai.com/user/account under Settings → Accounts."
                 ) from None
         return self.path
 
 
 ModelFile = HubFile | CivitaiFile
+
+HUGGINGFACE, CIVITAI = "huggingface", "civitai"
+# Read when nothing is saved on the settings page. Hugging Face then falls back to its own login file.
+TOKEN_ENV = {HUGGINGFACE: "HF_TOKEN", CIVITAI: "CIVITAI_TOKEN"}
+
+
+def token(service: str) -> str | None:
+    from difflab import store  # not at the top: store imports config, which names checkpoints
+
+    with store.connect() as connection:
+        saved = store.tokens(connection).get(service)
+    return saved[0] if saved else os.environ.get(TOKEN_ENV[service]) or None
+
+
+def account(service: str, key: str) -> str:
+    """Whom the service says `key` belongs to; raises when it refuses the key."""
+    if service == HUGGINGFACE:
+        return str(HfApi(token=key).whoami()["name"])
+    try:
+        me = _civitai("/api/v1/me", key)
+    except urllib.error.HTTPError as problem:
+        raise PermissionError(f"Civitai refused the key ({problem.code})") from None
+    return str(me.get("username") or me.get("id") or "")
 
 
 def parse_file(text: str) -> ModelFile:
@@ -208,7 +240,10 @@ def resolve(text: str) -> str:
     if (match := _HF_URL.match(text)) or (match := _HF_LOOSE.match(text)):
         repo, revision, path = match[1], match[2] or "main", match[3]
         if not _REVISION.match(revision):
-            revision = HfApi().model_info(repo, revision=urllib.parse.unquote(revision)).sha or revision
+            revision = (
+                HfApi(token=token(HUGGINGFACE)).model_info(repo, revision=urllib.parse.unquote(revision)).sha
+                or revision
+            )
         return f"{repo}@{revision}" + (f":{urllib.parse.unquote(path)}" if path else "")
     check(text)
     return text
@@ -240,8 +275,9 @@ def _civitai_ref(version: int, file_id: int | None) -> str:
     return str(CivitaiFile(version, chosen["hashes"]["SHA256"].lower(), chosen["name"]))
 
 
-def _civitai(path: str) -> dict[str, Any]:
-    request = urllib.request.Request(CIVITAI + path, headers={"User-Agent": "difflab"})
+def _civitai(path: str, key: str | None = None) -> dict[str, Any]:
+    headers = {"User-Agent": "difflab"} | ({"Authorization": f"Bearer {key}"} if key else {})
+    request = urllib.request.Request(CIVITAI_URL + path, headers=headers)
     with urllib.request.urlopen(request, timeout=30) as response:
         found: dict[str, Any] = json.load(response)
     return found

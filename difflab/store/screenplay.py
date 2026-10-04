@@ -616,6 +616,24 @@ def forget_model(connection: sqlite3.Connection, role: str, value: str) -> None:
     connection.execute("DELETE FROM model_choices WHERE role = ? AND value = ?", (role, value))
 
 
+def tokens(connection: sqlite3.Connection) -> dict[str, tuple[str, str]]:
+    """Per service, (token, account)."""
+    return {row["service"]: (row["value"], row["account"]) for row in connection.execute("SELECT * FROM tokens")}
+
+
+def put_token(connection: sqlite3.Connection, service: str, value: str, account: str) -> None:
+    connection.execute(
+        "INSERT INTO tokens (service, value, account, saved_at) VALUES (?, ?, ?, ?) "
+        "ON CONFLICT(service) DO UPDATE SET value = excluded.value, account = excluded.account, "
+        "saved_at = excluded.saved_at",
+        (service, value, account, time.time()),
+    )
+
+
+def drop_token(connection: sqlite3.Connection, service: str) -> None:
+    connection.execute("DELETE FROM tokens WHERE service = ?", (service,))
+
+
 def overrides(connection: sqlite3.Connection, scope_kind: str, scope_id: str, tool: str) -> dict[str, Any]:
     row = connection.execute(
         "SELECT * FROM settings WHERE scope_kind = ? AND scope_id = ? AND tool = ?", (scope_kind, scope_id, tool)
