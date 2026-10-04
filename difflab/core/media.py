@@ -87,6 +87,11 @@ def color_gain(frame: Frame, toward: Frame, strength: float) -> torch.Tensor:
     return torch.pow(target / source, strength)
 
 
+# Measured on production 9's second take (2026-10-04): the mottle of the frame each chunk handed on ran
+# 1.51, 1.92, 1.53, 2.94, 4.67 against the photo's 1.11 - blotches in the dark ceiling that each chunk
+# took for texture and grew. `texture_eps` on the handoff brought the fourth to 1.53 by changing its
+# pixels 1.6/255 on average, the face and the wall's relief kept.
+#
 # Measured on a take of production 9 (2026-10-04), five chunks: within each chunk a* rose by
 # 2-3 and the spread of a*, b* and L by about x1.15, and each chunk opened on the one before's colour,
 # so a* ran 2.4 (the photo) to 11.0 and chroma spread x2.3 by 38 s. A change of place is far larger than
@@ -139,6 +144,61 @@ def hold_colour(clip: Clip, toward: Frame, strength: float) -> Clip:
         lab = _lab(frames[index].float())
         frames[index] = _rgb((lab - mean) * ratio + mean + shift).to(frames.dtype)
     return replace(clip, frames=frames)
+
+
+def _box(x: torch.Tensor, radius: int) -> torch.Tensor:
+    return torch.nn.functional.avg_pool2d(
+        torch.nn.functional.pad(x, (radius, radius, radius, radius), mode="replicate"), 2 * radius + 1, 1
+    )
+
+
+def _guided(pixels: torch.Tensor, eps: float, radius: int = 4) -> torch.Tensor:
+    """He's guided filter, each channel its own guide: flat areas are smoothed, edges are kept."""
+    x = pixels.float().permute(2, 0, 1)[None]
+    mean = _box(x, radius)
+    variance = _box(x * x, radius) - mean * mean
+    a = variance / (variance + eps)
+    out = _box(a, radius) * x + _box(mean - a * mean, radius)
+    return out[0].permute(1, 2, 0).clamp(0, 1).to(pixels.dtype)
+
+
+def mottle(pixels: torch.Tensor) -> float:
+    """The blotchy texture a chain builds up: band-pass luma energy, fine grain to blob size, in the
+    flattest 30% of 16-pixel blocks, where a photograph has almost none."""
+    luma = (pixels.float() @ torch.tensor([0.299, 0.587, 0.114]))[None, None]
+    band = _box(luma, 1) - _box(luma, 6)
+    return float(torch.nn.functional.avg_pool2d(band**2, 16).flatten().sqrt().quantile(0.3)) * 255
+
+
+def texture_eps(frame: Frame, toward: Frame) -> float:
+    """The guided filter's strength that brings `frame`'s mottle down to `toward`'s; 0 if it is not above it."""
+    target = mottle(toward.pixels)
+    if mottle(frame.pixels) <= target:
+        return 0.0
+    low, high = 1e-6, 1e-1
+    for _ in range(20):
+        middle = (low * high) ** 0.5
+        if mottle(_guided(frame.pixels, middle)) > target:
+            low = middle
+        else:
+            high = middle
+    return high
+
+
+@overload
+def smoothed(item: Frame, eps: float) -> Frame: ...
+
+
+@overload
+def smoothed(item: Clip, eps: float) -> Clip: ...
+
+
+def smoothed(item: Clip | Frame, eps: float) -> Clip | Frame:
+    if not eps:
+        return item
+    if isinstance(item, Frame):
+        return Frame(_guided(item.pixels, eps), item.origin)
+    return replace(item, frames=torch.stack([_guided(frame, eps) for frame in item.frames]))
 
 
 def _smooth(rows: torch.Tensor, window: int) -> torch.Tensor:

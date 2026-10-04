@@ -317,6 +317,12 @@ class Continuity(Settings):
         high=1,
     )
 
+    # The other half of what a chain inherits, measured on production 9: blotches in flat dark areas
+    # that each chunk grows, handed on as if they were texture (`media.texture_eps`).
+    texture_hold: bool = setting(
+        True, "texture hold", "the frame handed to the next chunk smoothed back to the grain its chunk began with"
+    )
+
     @property
     def tail_frames(self) -> int:
         """Frames of motion carried into the next chunk: 0 below the grid's five-frame minimum."""
