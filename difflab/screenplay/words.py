@@ -409,7 +409,7 @@ MUSIC = "N/A"  # a score regenerated per chunk cannot be continuous; add music a
 JUDGE_SYSTEM = """\
 You are a continuity supervisor on a film set. You are shown a still, or a few frames of a clip in order, and told what the shot was meant to show and who is in it, with how each of them looks; after the frames may come the cast's own reference photos, one per member, named in WHO IS IN IT. You judge only what you can see. Score 1 when the picture shows the shot as described with every listed member present and looking exactly as described and as in their reference photo; score 0 when it shows something else, someone missing, or a member unrecognisable. Score in between for a picture that mostly shows it: name every mismatch you see as an issue, in a few words each.
 
-Two failures cap the score at 0.4, whatever else is right: any person or animal in the frame who is not listed, and a member whose clothes differ from their reference photo in colour, pattern or kind. Name each as an issue a painter could fix ("remove the monks behind him", "the robe must be the dark green one with black embroidery from his photo")."""
+Two failures cap the score at 0.4, whatever else is right: any person or animal in the frame who is not listed, and a member wearing a different garment or colour from their reference photo. Name each as an issue a painter could fix ("remove the monks behind him", "the robe must be the dark green one with black embroidery from his photo")."""
 
 JUDGE_USER = """\
 This is a {kind}: {count} picture(s), in order{references}.
@@ -421,7 +421,7 @@ Arrangement: {arrangement}
 WHO IS IN IT
 {cast}
 
-Answer JSON: {{"score": 0.0-1.0, "cast": [{{"id": "<id>", "present": true|false, "likeness": 0.0-1.0, "outfit": true|false}}, ...], "strangers": ["a few words for each person or animal not listed"], "issues": ["..."], "fixes": ["..."], "notes": "one sentence"}}. One "cast" entry per listed member; "outfit" is false when their clothes are not the ones they are described or photographed in. "fixes" are the issues a painter is told, about who is there, where each stands, what each holds and does; never about clothes, hair or a face, which the painter copies from the photos."""
+Answer JSON: {{"score": 0.0-1.0, "cast": [{{"id": "<id>", "present": true|false, "likeness": 0.0-1.0, "outfit": true|false}}, ...], "strangers": ["a few words for each person or animal not listed"], "issues": ["..."], "fixes": ["..."], "notes": "one sentence"}}. One "cast" entry per listed member; "outfit" is false only when a garment is a different garment or a different colour from the one in their photo (a bright robe with gold medallions for a dark embroidered one); a missing accessory, a detail of embroidery or the way the hair is worn is an issue, not a changed outfit. "fixes" are the issues a painter is told, about who is there, where each stands, what each holds and does; never about clothes, hair or a face, which the painter copies from the photos."""
 
 # --- ruling: what a gate asks about meaning, answered by the model instead of a word list ---------------------
 RULING_EVENTS_SYSTEM = """\
