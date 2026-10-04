@@ -189,8 +189,9 @@ class JudgeSettings(Settings):
         keyed=False,
         advanced=True,
     )
+    # 512 cut a clip's verdict off mid-string once it named strangers and fixes (production 14, 2026-10-04).
     max_new_tokens: int = setting(
-        512, "answer length", "a cap, in tokens", low=64, high=4096, keyed=False, advanced=True
+        1536, "answer length", "a cap, in tokens", low=64, high=4096, keyed=False, advanced=True
     )
 
 

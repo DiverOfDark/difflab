@@ -326,16 +326,28 @@ def run_judge(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any
     chosen = JudgeSettings(**settings)
     production_id, kind = int(inputs["production"]), str(inputs["kind"])
     cast = [str(m) for m in inputs.get("cast", [])]
+    # A shot's place is in its arrangement, not rated as a member: asked for its likeness the judge left it
+    # out of its answer twice running and the verdict failed (production 14, 2026-10-04). A drawn place's own
+    # picture is the place.
+    framed = kind in ("clip", "keyframe")
     with store.connect() as connection:
-        cards = [compiler.card_of(m) for m in store.members_of(connection, production_id) if m.slug in cast]
+        cards = [
+            compiler.card_of(m)
+            for m in store.members_of(connection, production_id)
+            if m.slug in cast and not (framed and m.kind == "environment")
+        ]
     if kind == "clip":
         frames = judge.sampled(media.clip_from_video(_path(inputs["path"]), with_audio=False))
     else:
         frames = [_frame(inputs["path"])]
     pictures = {str(slug): _frame(path) for slug, path in (inputs.get("pictures") or {}).items()}
-    verdict = judge.judge(
-        frames, kind, str(inputs.get("purpose", "")), str(inputs.get("arrangement", "")), cards, chosen, pictures
-    )
+    try:
+        verdict = judge.judge(
+            frames, kind, str(inputs.get("purpose", "")), str(inputs.get("arrangement", "")), cards, chosen, pictures
+        )
+    except RuntimeError as problem:  # an unusable verdict is a thing to look at, never a reason to end a render
+        ui.note(f"judge · {kind}: no usable verdict ({problem})")
+        return {"score": None, "issues": ["the judge gave no usable answer"], "gate": chosen.gate, "unjudged": True}
     ui.panel(
         f"judge · {kind}",
         {

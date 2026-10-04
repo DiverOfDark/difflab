@@ -105,6 +105,9 @@ def _judged(connection: sqlite3.Connection, job: store.Job, outputs: dict[str, A
     if thing is None:
         return
     review = json.dumps({k: outputs.get(k) for k in ("score", "cast", "issues", "notes", "gate")})
+    if outputs.get("unjudged"):
+        store.set_made(connection, kind, made_id, store.NEEDS_REVIEW, review=review, reviewed_by="judge")
+        return
     if outputs.get("passed"):
         store.set_made(connection, kind, made_id, store.APPROVED, review=review, reviewed_by="judge")
         return
