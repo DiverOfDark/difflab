@@ -339,7 +339,7 @@ def plan_rules(take: compose.Take) -> list[Problem]:
             if wrong := possessive(text):
                 fail("possessive", f"{clip}: {wrong}")
                 break
-        for text in (chunk.closing, *(beat.action for beat in beats)):
+        for text in (chunk.closing, *(beat.action for beat in beats), *chunk.looks.values()):
             if side := SIDE.search(text):
                 fail("sides", f"{clip}: say sides as sides of the frame ('at the left of the frame'), not "
                      f"'{side.group(0)}'")  # fmt: skip
