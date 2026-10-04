@@ -24,13 +24,15 @@ from difflab.screenplay import production as productions
 _LAST_FRAME = words.SENTENCES["last_frame"].split(":")[0]
 
 
-def check(connection: Any, shots: list[store.Shot], production: store.Production | None = None) -> list[str]:
-    """What stops a chapter rendering, said before a run exists."""
+def check(
+    connection: Any, shots: list[store.Shot], production: store.Production | None = None, keyframes_only: bool = False
+) -> list[str]:
+    """What stops a chapter rendering, said before a run exists. Making only its keyframes reads no prompt."""
     problems = []
     if not shots:
         problems.append("the chapter has no shots")
     _, lands = compiler.joins([store.keyframe_of(connection, shot.id) for shot in shots], shots, True)
-    for shot, landing in zip(shots, lands, strict=True):
+    for shot, landing in zip(shots, lands if not keyframes_only else []):
         text = store.prompt_of(connection, shot.id).text
         if text.strip() and landing != (_LAST_FRAME in text):
             problems.append(
@@ -43,7 +45,9 @@ def check(connection: Any, shots: list[store.Shot], production: store.Production
         keyframe = store.keyframe_of(connection, shot.id)
         prompt = store.prompt_of(connection, shot.id)
         name = f"shot {shot.position + 1}"
-        if not prompt.text.strip():
+        if keyframes_only:
+            pass
+        elif not prompt.text.strip():
             problems.append(f"{name} has no prompt")
         elif prompt.state == store.STALE and not prompt.pinned:
             problems.append(f"{name}'s prompt was compiled before its story, cast or plan changed: re-plan the chapter")
@@ -82,7 +86,7 @@ def render_chapter(chapter_id: int, asked_by: str = "person", keyframes_only: bo
             if shot.plan.get("beats") and not prompt.pinned and landing != (_LAST_FRAME in prompt.text):
                 productions.recompile(connection, production, chapter, shot.id)
         shots = store.shots_of(connection, chapter_id)
-        problems = check(connection, shots, production)
+        problems = check(connection, shots, production, keyframes_only)
         if problems:
             raise ValueError(problems[0])
         chosen, _ = settings.effective("render_chunk", production.id)
