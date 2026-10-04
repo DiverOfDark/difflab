@@ -136,7 +136,10 @@ class Worker(threading.Thread):
                 )
             )
             ctx.job_id = None
-            for chapter_id, keyframes_only in made.pending_rerenders():
+            # Once the run has ended, one attempt for everything its verdicts asked: queued after each failing
+            # verdict, production 14's eleven clips (2026-10-04) queued seven whole-chapter runs, each with only
+            # the seeds re-rolled before it.
+            for chapter_id, keyframes_only in made.pending_rerenders() if not remaining else []:
                 from difflab.screenplay import planner
 
                 try:
