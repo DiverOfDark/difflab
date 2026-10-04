@@ -665,6 +665,12 @@ def reroll(shot_id: int, seed: int | None = None) -> int:
     with store.connect() as connection, store.transaction(connection):
         clip = store.set_clip_seed(connection, shot_id, chosen)
         store.set_made(connection, "clip", clip.id, store.STALE if clip.artifact else store.MISSING)
+        shot = store.shot(connection, shot_id)
+        assert shot is not None
+        # A run the judge paused on this chapter would build its later shots on the clip being replaced.
+        for run in store.runs(connection):
+            if run.scope == f"chapter:{shot.chapter_id}" and run.state == store.PAUSED:
+                store.add_command(connection, "run", run.id, {"cmd": "cancel"})
     return chosen
 
 

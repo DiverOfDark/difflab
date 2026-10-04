@@ -112,6 +112,11 @@ def _judged(connection: sqlite3.Connection, job: store.Job, outputs: dict[str, A
     # clip: its retry is a blind re-seed that re-renders it and every shot chained after it, minutes each.
     if kind in ("reference", "clip"):
         store.set_made(connection, kind, made_id, store.NEEDS_REVIEW, review=review, reviewed_by="judge")
+        if kind == "clip" and any(
+            one.tool == "render_shot" and not one.settled for one in store.jobs_of(connection, job.run_id)
+        ):  # the shots still to come open on this one: they wait for a re-roll or a resume
+            store.set_run_state(connection, job.run_id, store.PAUSED)
+            _paused.append((job.run_id, job.label, "; ".join(str(i) for i in outputs.get("issues") or [])))
         return
     attempts = int(
         connection.execute(
@@ -151,6 +156,15 @@ JUDGED = "Fix:"  # where a keyframe's note turns from the user's words to the ju
 # Chapters a verdict asked to render again, taken by the worker once the job's rows are written: a run
 # queued from inside the settle transaction would open a second connection mid-transaction.
 _again: list[tuple[int, bool]] = []
+
+
+# Runs a failing clip paused, with what to say about it: the worker's to announce in the run.
+_paused: list[tuple[str, str, str]] = []
+
+
+def pending_pauses() -> list[tuple[str, str, str]]:
+    taken, _paused[:] = list(_paused), []
+    return taken
 
 
 def pending_rerenders() -> list[tuple[int, bool]]:

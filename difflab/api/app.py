@@ -343,7 +343,7 @@ async def reroll_shot(shot_id: int, request: Request) -> dict[str, Any]:
     if owner is None:
         raise HTTPException(404, "no such shot")
     seed = production.reroll(shot_id, None if body.get("seed") in (None, "") else int(body["seed"]))
-    return {"seed": seed, "run": _render(owner)}
+    return {"seed": seed, "run": _render(owner)}  # a run the judge paused for this shot is let go first
 
 
 @app.post("/api/ingest/idea")

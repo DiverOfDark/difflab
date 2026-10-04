@@ -176,7 +176,6 @@ def render_chapter(chapter_id: int, asked_by: str = "person", keyframes_only: bo
             return run_id
         previous: int | None = None
         clip_jobs: list[int] = []
-        judges: list[tuple[dict[str, Any], str, int]] = []
         for shot, keyframe in zip(shots, keyframes, strict=True):
             prompt = store.prompt_of(connection, shot.id)
             clip = store.clip_of(connection, shot.id)
@@ -210,28 +209,20 @@ def render_chapter(chapter_id: int, asked_by: str = "person", keyframes_only: bo
             store.set_made(connection, "clip", clip.id, store.QUEUED, current_job=job.id)
             if keyframe.source == store.CHAINED and previous is not None:
                 store.set_made(connection, "keyframe", keyframe.id, store.QUEUED, current_job=previous)
+            # Right after its clip, so a failing shot pauses the chain before the shots built on it are
+            # rendered (`made._judged`). Measured on production 9: the VLM loads in 11 s and judges in ~10 s,
+            # and H3 reloads in ~9 s, beside 633 s for the clip.
             if judged:
-                judges.append((
+                store.add_job(
+                    connection, run_id, "judge",
                     {"production": production.id, "kind": "clip", "path": _output(job.id, "chunk"),
                      "purpose": shot.action, "arrangement": str(shot.plan.get("closing", "")), "cast": cast,
                      "pictures": pictures(connection, production, " ".join(f"{{{m}}}" for m in cast))},
-                    f"shot {shot.position + 1}: judge the clip", clip.id,
-                ))  # fmt: skip
+                    label=f"shot {shot.position + 1}: judge the clip", settings=verdicts.data(),
+                    for_kind="clip", for_id=clip.id,
+                )  # fmt: skip
             previous = job.id
             clip_jobs.append(job.id)
-        # After every clip, not between them: the judge is the VLM and a clip is H3, and only one fits on
-        # the card, so judging each clip as it came swapped both models in and out at every shot.
-        for inputs, label, clip_id in judges:
-            store.add_job(
-                connection,
-                run_id,
-                "judge",
-                inputs,
-                label=label,
-                settings=verdicts.data(),
-                for_kind="clip",
-                for_id=clip_id,
-            )
         store.add_job(
             connection,
             run_id,
