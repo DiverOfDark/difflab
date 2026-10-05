@@ -20,7 +20,7 @@ RULES
 - The first member of kind "environment" is the place shown in Picture 1, where the video starts. When the IDEA moves somewhere else (out of the window into the sky, onto the street), each further place is an environment member of its own; a place no picture shows is listed in no picture's "shows" and is created from words. The other pictures are used only for the members they show, never for their places.
 - Add an object only when the IDEA's action moves it, uses it or passes it on (the hookah that is smoked, the ball that is thrown). Anything that only sits in the place - furniture, a mouse on a desk, a blanket lain on, walls, lights - belongs to the environment, however clearly a picture shows it.
 - Add no person or animal that the IDEA does not need, even when a picture shows one: people in the background are bystanders, not members.
-- A person or animal the IDEA brings in that no picture shows is a member too: list it in no picture's "shows" and it is created from words alone ("a man enters the scene" where every picture is of the woman). Only a person, an animal or a further place may be a member no picture shows; an object is a member only where a picture shows it.
+- A person or animal the IDEA brings in that no picture shows is a member too: list it in no picture's "shows" and it is created from words alone ("a man enters the scene" where every picture is of the woman). So is an object the IDEA's action moves, uses or passes on that no picture shows (the sword he fights with): it is drawn from words, so it looks the same in every shot.
 - Two or more animals the IDEA treats as one group (two pigeons that fly together) are one member whose noun says how many ("two pigeons"), with "their".
 - "id": one lowercase English word, or two joined by "_" ("man", "woman", "cat", "hookah", "lounge"); every id is different.
 - "kind": "person", "animal", "object" or "environment".
@@ -140,7 +140,7 @@ INVENT_SYSTEM = """\
 You decide what ONE member of a live-action video looks like, as JSON. No photograph shows this member: the IDEA brings it in, and your words are the only thing the video has to go on. They are pasted where a photographed member's observed traits go, so they must read the same way - what is on the body, not what happens to it.
 
 RULES
-- Invent an ordinary look that the IDEA allows and nothing in it contradicts. Keep it plain: hair, one or two garments, at most one accessory. An animal: only what its species really has and a camera would see - a cat its coat, markings, tail and ears; a bird its plumage (part "coat"), markings and tail, never ears. A place: what stands in it, what it is made of and what fills the view (parts landmark, furniture, surface), and in "lights" every source of its light ("bright midday sun from above").
+- Invent an ordinary look that the IDEA allows and nothing in it contradicts. Keep it plain: hair, one or two garments, at most one accessory. An animal: only what its species really has and a camera would see - a cat its coat, markings, tail and ears; a bird its plumage (part "coat"), markings and tail, never ears. A place: what stands in it, what it is made of and what fills the view (parts landmark, furniture, surface), and in "lights" every source of its light ("bright midday sun from above"). An object: its size against a person, its shape, what each part is made of and its colours (parts component, material): a sword's blade length, guard and hilt.
 - Decide nothing the IDEA has already decided. Where it says what the member wears or looks like, that is the look.
 - Say nothing about the place, the light, the camera or any other member: this member's own look only.
 - Nothing held and nothing done: a thing carried belongs to the action, not to the look, and the take moves it.
@@ -148,7 +148,7 @@ RULES
 - "phrase": the full noun phrase, at most 14 words, reading after "with" ("a charcoal-grey open-collar shirt").
 - "short": the same thing in at most 5 words, keeping its colour, with "a" or "an" in front of a single countable thing.
 - "name": what it is in one or two plain words, without colour ("shirt", "hair", "watch").
-- "part": one of hair, coat, markings, face, top, bottom, footwear, accessory, tail, ears, landmark, furniture, surface.
+- "part": one of hair, coat, markings, face, top, bottom, footwear, accessory, tail, ears, component, material, landmark, furniture, surface.
 - 4 to 6 traits. "lights": [] for anything but a place.
 
 Answer only JSON, in this shape:

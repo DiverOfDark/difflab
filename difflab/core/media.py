@@ -96,6 +96,7 @@ def color_gain(frame: Frame, toward: Frame, strength: float) -> torch.Tensor:
 # 2-3 and the spread of a*, b* and L by about x1.15, and each chunk opened on the one before's colour,
 # so a* ran 2.4 (the photo) to 11.0 and chroma spread x2.3 by 38 s. A change of place is far larger than
 # one chunk's drift (a blue sky moves b* by tens), so a correction capped at drift's size leaves it alone.
+TEXTURE_EPS_MAX = 2e-3  # the turbo LoRA's blotches needed 1.2e-3; anything stronger is smoothing real detail
 HOLD_SHIFT = 4.0  # most a*/b* mean moved per chunk, in Lab units
 HOLD_RATIO = (0.8, 1.25)  # most a spread is scaled per chunk
 _XYZ = torch.tensor([[0.4124, 0.3576, 0.1805], [0.2126, 0.7152, 0.0722], [0.0193, 0.1192, 0.9505]])
@@ -175,7 +176,7 @@ def texture_eps(frame: Frame, toward: Frame) -> float:
     target = mottle(toward.pixels)
     if mottle(frame.pixels) <= target:
         return 0.0
-    low, high = 1e-6, 1e-1
+    low, high = 1e-6, TEXTURE_EPS_MAX
     for _ in range(20):
         middle = (low * high) ** 0.5
         if mottle(_guided(frame.pixels, middle)) > target:

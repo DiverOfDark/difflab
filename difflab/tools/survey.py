@@ -33,7 +33,7 @@ def survey(idea: str, frames: list[Frame]) -> tuple[dict[str, direct.Member], li
         return members, shows
 
     def gate(data: Any) -> list[caption.Problem]:
-        members, shows = parse(data)
+        members, _ = parse(data)
         ids = [str(m["id"]) for m in data["members"]]
         out = [
             direct.problem(f'"{i}" is not a valid id: one lowercase word, or two joined by "_"')
@@ -62,14 +62,9 @@ def survey(idea: str, frames: list[Frame]) -> tuple[dict[str, direct.Member], li
         out += [
             direct.problem(f'"{i}" is in a picture but is not one of the members') for i in sorted(listed - set(ids))
         ]
-        # A person, an animal or a further place no picture shows is created from words alone (`invent`).
-        # An object is there to be seen, or it is not a member.
-        unseen = [m.id for m in members.values() if m.kind == "object" and not any(m.id in s for s in shows)]
-        only_living = "an object is a member only where a picture shows it"
-        out += [
-            direct.problem(f"{m} is in no picture: list it where it is seen, or leave it out - {only_living}")
-            for m in unseen
-        ]
+        # A member no picture shows is created from words alone (`cards.invent`) and drawn, an object the
+        # action uses included: production 13's jian (2026-10-05), left out as in no picture, came back a
+        # different length in every clip and a scabbard for a moment mid-guard.
         return out
 
     images = [direct.shrink(frame, h3.DIRECTOR_SURVEY_PIXELS) for frame in frames]
