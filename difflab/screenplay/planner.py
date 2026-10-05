@@ -14,7 +14,7 @@ import time
 from datetime import datetime
 from typing import Any
 
-from difflab import store
+from difflab import config, store
 from difflab.core.settings import Continuity, JudgeSettings
 from difflab.models.minimax_h3.settings import VideoSettings
 from difflab.screenplay import compiler, settings, words
@@ -182,6 +182,7 @@ def render_chapter(chapter_id: int, asked_by: str = "person", keyframes_only: bo
             return run_id
         previous: int | None = None
         clip_jobs: list[int] = []
+        opened: list[Any] = []
         for shot, keyframe in zip(shots, keyframes, strict=True):
             prompt = store.prompt_of(connection, shot.id)
             clip = store.clip_of(connection, shot.id)
@@ -230,6 +231,7 @@ def render_chapter(chapter_id: int, asked_by: str = "person", keyframes_only: bo
                 )  # fmt: skip
             previous = job.id
             clip_jobs.append(job.id)
+            opened.append(opening)
         store.add_job(
             connection,
             run_id,
@@ -243,6 +245,36 @@ def render_chapter(chapter_id: int, asked_by: str = "person", keyframes_only: bo
                 "name": production.slug,
             },
             label="join the chapter",
+        )
+        # After the native join, so a watchable chapter exists an hour before the 4K one does.
+        enlarging, _ = settings.effective("enlarge_latents", production.id)
+        retiming, _ = settings.effective("retime", production.id)
+        enlarged = [
+            store.add_job(
+                connection,
+                run_id,
+                "enlarge_shot",
+                {"latents": _output(job_id, "latents"), "key": _output(job_id, "key"), "opening": opening},
+                label=f"shot {position + 1}: enlarge",
+                settings={"video": video, "continuity": continuity_data, "enlarge": enlarging.data()},
+            ).id
+            for position, (job_id, opening) in enumerate(zip(clip_jobs, opened, strict=True))
+        ]
+        store.add_job(
+            connection,
+            run_id,
+            "finish",
+            {
+                "chunks": [_output(job_id, "chunk") for job_id in enlarged],
+                "audios": [_output(job_id, "audio") for job_id in clip_jobs],
+                "cuts": [_output(job_id, "cut") for job_id in clip_jobs],
+                "keys": [_output(job_id, "key") for job_id in enlarged],
+                "crossfade": continuity.crossfade,
+                "name": production.slug,
+                "fps": config.FINISH_FPS,
+            },
+            label=f"the chapter enlarged and at {config.FINISH_FPS} fps",
+            settings={"retime": retiming.data()},
         )
     return run_id
 

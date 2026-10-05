@@ -17,9 +17,9 @@ What it makes:
 ```
 difflab/
   core/        types (Frame, Clip) · settings kit · keys · cache · context · events · protocol · record · ui · hub · media
-  models/      exl3vl · qwen_edit_aio · convrot · offload · video_io · esrgan · rife · tae
+  models/      exl3vl · qwen_edit_aio · convrot · offload · video_io · esrgan · rife · tae · latent_upscaler
                minimax_h3/ (the port, its settings, and caption: the Ref2VA format)
-  tools/       edit_image · ask_vlm · write_prompt · render_chunk · handoff · assemble
+  tools/       edit_image · ask_vlm · write_prompt · render_chunk · handoff · assemble · enlarge_latents
                enlarge_pixels · retime · grade · judge · compose_keyframe
                direct · survey · ground · cut_crops · cards · opening · plan_shots · write_shot   (the director)
   screenplay/  production · ingest · planner · made · settings · compiler · checks · crops · words · captions
@@ -303,13 +303,13 @@ machine with 32 GB or less will swap even though the card is fine.
 Generating large is expensive and enlarging afterwards is not: sampling cost grows with the square of
 the packed sequence, so pixels are the costly thing to *generate* and a cheap thing to *add*.
 
-`tools.enlarge_pixels.upscale` runs an ESRGAN over finished frames. It can only sharpen what the decoder
-already drew, which is a ceiling rather than a tuning problem.
+**Latent** (`tools.enlarge_latents`) enlarges the latent before it is decoded, so the extra pixels are
+rendered by H3's own decoder. Scale is a conditioning input over 1.0–4.0×.
 
-A latent route measured better and is not in the code: `LBH-123-AI/Minimax_h3_latent_Upscaler` enlarges
-the latent before H3's own decoder renders it, 1.0–4.0× in one step. Nothing ever queued it, so it was
-removed (`git log -- difflab/tools/enlarge_latents.py`). Measured on H3's own output, reconstructing a
-native render from a half-size one:
+**Pixel** (`tools.enlarge_pixels.upscale`) runs an ESRGAN over finished frames. It can only sharpen what the
+decoder already drew, which is a ceiling rather than a tuning problem.
+
+Measured on H3's own output, reconstructing a native render from a half-size one:
 
 | route | detail vs native | shimmer vs native | time |
 |---|---|---|---|
@@ -319,7 +319,14 @@ native render from a half-size one:
 
 The latent route wins on every axis at once — more detail, temporal steadiness at native's own level,
 and 40% less time, because the work happens on a tensor 256× smaller than the frames it becomes. It
-needed no refinement pass, despite the reference workflow using one.
+needs no refinement pass, despite the reference workflow using one.
+
+Every chapter render ends with it. After the native join, each shot's cached latents are enlarged to
+`enlarge_latents.megapixels` (3840×2160; a canvas within a tenth of 16:9 is filled and cropped to it) and decoded a temporal clip at a time straight into
+the file, since a whole 4K chunk is 24 GB of float frames; past the upscaler's 4× (a 0.4 MP canvas
+needs 4.6×) a bicubic pass covers the rest. Each chunk gets the colour hold its native chunk got,
+measured on a native decode of the same latents. The 4K chunks are joined at the native cuts and
+retimed to `config.FINISH_FPS` by RIFE (`finish`).
 
 Among the pixel upscalers, 4xLSDIR measured best of the three on disk and is the default;
 4xNMKDSuperscale hallucinates detail that was never there (sharpness 1.113) and shimmers at 1.705 —

@@ -31,6 +31,7 @@ const ROLES: Record<string, string> = {
   'video-vae': 'Video VAE',
   'audio-vae': 'Audio VAE',
   'preview-decoder': 'Preview decoder',
+  'latent-upscaler': 'Latent upscaler',
   'pixel-upscaler': 'Pixel upscaler',
   'frame-interpolation': 'Frame interpolation',
 }
@@ -43,6 +44,7 @@ const ROLE_NOTES: Record<string, string> = {
   'video-vae': 'turns sampled latents into frames',
   'audio-vae': 'turns sampled latents into sound',
   'preview-decoder': 'the quick picture of each step while a clip samples',
+  'latent-upscaler': 'enlarges a clip before it is decoded',
   'pixel-upscaler': 'enlarges finished frames',
   'frame-interpolation': 'draws the frames between frames, for 48 or 60 fps',
 }

@@ -6,7 +6,7 @@ from collections import deque
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import replace
 from pathlib import Path
-from typing import overload
+from typing import NamedTuple, overload
 
 import av
 import torch
@@ -89,6 +89,14 @@ def color_gain(frame: Frame, toward: Frame, strength: float) -> torch.Tensor:
 # one chunk's drift (a blue sky moves b* by tens), so a correction capped at drift's size leaves it alone.
 HOLD_SHIFT = 4.0  # most a*/b* mean moved per chunk, in Lab units
 HOLD_RATIO = (0.8, 1.25)  # most a spread is scaled per chunk
+
+
+class Hold(NamedTuple):
+    mean: torch.Tensor
+    ratio: torch.Tensor
+    shift: torch.Tensor
+
+
 _XYZ = torch.tensor([[0.4124, 0.3576, 0.1805], [0.2126, 0.7152, 0.0722], [0.0193, 0.1192, 0.9505]])
 _WHITE = torch.tensor([0.95047, 1.0, 1.08883])
 
@@ -121,20 +129,31 @@ def hold_colour(clip: Clip, toward: Frame, strength: float) -> Clip:
     survives, and capped at one chunk's drift (HOLD_SHIFT, HOLD_RATIO) so a real change of place does."""
     if not strength:
         return clip
+    return replace(clip, frames=held(clip.frames, colour_hold(clip.frames, clip.fps, toward, strength)))
+
+
+def colour_hold(frames: torch.Tensor, fps: int, toward: Frame, strength: float) -> list[Hold]:
+    """Per frame, what `hold_colour` does to it: measured on one decode, applicable to another of the same
+    latents at any size."""
     target_mean, target_spread = _lab_stats(toward.pixels)
-    stats = [_lab_stats(frame) for frame in clip.frames]
-    window = max(1, clip.fps)
+    stats = [_lab_stats(frame) for frame in frames]
+    window = max(1, fps)
     means = _smooth(torch.stack([m for m, _ in stats]), window)
     spreads = _smooth(torch.stack([s for _, s in stats]), window)
-    frames = clip.frames.clone()
-    for index in range(len(frames)):
-        mean, spread = means[index], spreads[index]
+    out = []
+    for mean, spread in zip(means, spreads, strict=True):
         shift = ((target_mean - mean) * strength).clamp(-HOLD_SHIFT, HOLD_SHIFT)
         shift[0] = 0.0
-        ratio = ((target_spread / spread) ** strength).clamp(*HOLD_RATIO)
-        lab = _lab(frames[index].float())
-        frames[index] = _rgb((lab - mean) * ratio + mean + shift).to(frames.dtype)
-    return replace(clip, frames=frames)
+        out.append(Hold(mean, ((target_spread / spread) ** strength).clamp(*HOLD_RATIO), shift))
+    return out
+
+
+def held(frames: torch.Tensor, holds: Sequence[Hold]) -> torch.Tensor:
+    out = frames.clone()
+    for index, (mean, ratio, shift) in enumerate(holds):
+        lab = _lab(out[index].float())
+        out[index] = _rgb((lab - mean) * ratio + mean + shift).to(out.dtype)
+    return out
 
 
 def _smooth(rows: torch.Tensor, window: int) -> torch.Tensor:

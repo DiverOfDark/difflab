@@ -16,7 +16,7 @@ import numpy as np
 import torch
 
 from difflab import config, store
-from difflab.core import events, media, protocol, record, ui, video_io
+from difflab.core import events, media, models, protocol, record, ui, video_io
 from difflab.core.cache import cache
 from difflab.core.hub import HubFile
 from difflab.core.imaging import video_length
@@ -30,8 +30,9 @@ from difflab.core.settings import (
     VlmSettings,
 )
 from difflab.core.types import Clip, Frame
-from difflab.models.minimax_h3 import pipeline
-from difflab.models.minimax_h3.settings import VideoPromptSettings, VideoSettings
+from difflab.models.minimax_h3 import config as h3_config
+from difflab.models.minimax_h3 import pipeline, vae
+from difflab.models.minimax_h3.settings import EnlargeLatentsSettings, VideoPromptSettings, VideoSettings
 from difflab.screenplay import compiler, drawn
 from difflab.screenplay import production as production_module
 from difflab.tools import (
@@ -40,6 +41,7 @@ from difflab.tools import (
     direct,
     draw_reference,
     edit_image,
+    enlarge_latents,
     enlarge_pixels,
     grade,
     handoff,
@@ -234,6 +236,64 @@ def run_assemble(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, 
     return {"video": store.relative(destination), "frames": frames, "seconds": seconds}
 
 
+def run_enlarge_shot(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
+    """A rendered shot again at the finish's size: its own latents enlarged, held to the colour its chunk
+    was held to, so the 4K chapter joins and grades exactly as the native one did."""
+    video = VideoSettings(**settings["video"])
+    continuity, _ = Continuity.resolve(settings["continuity"])
+    enlarging, _ = EnlargeLatentsSettings.resolve(settings["enlarge"])
+    hold = continuity.color_hold
+    at = key("enlarged", 1, chunk=str(inputs["key"]), settings=enlarging, hold=hold)
+    mp4 = cache.path(at, ".mp4")
+    outputs = {"chunk": store.relative(mp4), "key": str(at)}
+    if mp4.is_file():
+        ui.note(f"already enlarged as {at}")
+        return Skipped(outputs)
+    stored = torch.load(_path(inputs["latents"]), map_location="cpu", weights_only=True)
+    sampled = stored["video"]
+    side = pipeline.SPATIAL_COMPRESSION
+    geometry = pipeline.Geometry(int(sampled.shape[-1]) * side, int(sampled.shape[-2]) * side, 0)
+    latents = render_chunk.Latents(sampled, stored["audio"], geometry, video, "")
+    holds: list[media.Hold] = []
+    if hold:
+        with ui.step("Measuring the colour hold") as detail:
+            native = vae.decode_video(models.registry.acquire(render_chunk.video_vae_spec(video)), sampled)
+            holds = media.colour_hold(native, h3_config.FPS, _frame(inputs["opening"]), hold)
+            detail(f"{len(holds)} frames")
+            del native
+    partial = mp4.with_name(f"{mp4.stem}.partial.mp4")
+    width, height, frames = enlarge_latents.finish_chunk(latents, partial, holds, enlarging)
+    partial.replace(mp4)
+    record.artifact_made(mp4, store.VIDEO, key=str(at))
+    return {**outputs, "size": [width, height], "frames": frames}
+
+
+def run_finish(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
+    """The enlarged chunks joined at the native join's cuts and crossfade, then retimed by RIFE."""
+    fps = int(inputs["fps"])
+    retiming, _ = RetimeSettings.resolve(settings.get("retime"))
+    cuts = [int(cut) for cut in inputs["cuts"]]
+    crossfade = float(inputs.get("crossfade") or 0.0)
+    joined_key = assemble.assemble_key([str(k) for k in inputs["keys"]], cuts, crossfade)
+    at = key("finish", 1, joined=str(joined_key), fps=fps, settings=retiming)
+    with store.connect() as connection:
+        existing = store.artifact_by_key(connection, str(at))
+    if existing is not None:
+        ui.note(f"already finished as {at}")
+        events.emit(protocol.Final(video=existing.path))
+        return Skipped({"video": existing.path})
+    joined = cache.path(joined_key, ".mp4")
+    parts = list(zip([_path(p) for p in inputs["chunks"]], [_path(p) for p in inputs["audios"]], strict=True))
+    assemble.assemble(parts, cuts, crossfade, joined)
+    destination = video_io.output_path(config.VIDEO_DIR, f"{inputs.get('name') or 'chapter'}_{fps}fps")
+    frames, seconds = retime.retime_file(joined, destination, fps, retiming)
+    # About a gigabyte a minute at 4K, and nothing reads it once the retimed file exists.
+    joined.unlink(missing_ok=True)
+    record.artifact_made(destination, store.VIDEO, key=str(at))
+    events.emit(protocol.Final(video=store.relative(destination), frames=frames, seconds=seconds))
+    return {"video": store.relative(destination), "frames": frames, "seconds": seconds}
+
+
 def run_compose_keyframe(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
     production_id = int(inputs["production"])
     with store.connect() as connection:
@@ -396,6 +456,8 @@ RUNNERS: dict[str, Runner] = {
     "retime": run_retime,
     "render_shot": run_render_shot,
     "assemble": run_assemble,
+    "enlarge_shot": run_enlarge_shot,
+    "finish": run_finish,
     "compose_keyframe": run_compose_keyframe,
     "draw_reference": run_draw_reference,
     "judge": run_judge,

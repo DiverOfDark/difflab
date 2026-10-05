@@ -25,7 +25,10 @@ watch(
       let found = known.get(r.id)
       if (!found) {
         const record = await readRun(r.id).catch(() => null)
-        const job = record?.jobs.find((j) => j.tool === 'assemble')
+        // The finished chapter once there is one; the native join until then.
+        const job =
+          record?.jobs.find((j) => j.tool === 'finish' && typeof j.outputs.video === 'string') ??
+          record?.jobs.find((j) => j.tool === 'assemble')
         found = {
           run: r.id,
           state: r.state,

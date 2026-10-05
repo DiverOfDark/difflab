@@ -32,7 +32,7 @@ Both checkpoints carry per-channel `latents_mean` / `latents_std` instead of a s
 import json
 import re
 import types
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import torch
@@ -375,6 +375,56 @@ def decode_video(
     finally:
         vae._decode_clip = decode_clip
     return from_model_pixels(sample)
+
+
+def stream_video(
+    vae: AutoencoderKLMiniMaxH3, latents: torch.Tensor, on_clip: Callable[[], None] | None = None
+) -> Iterator[torch.Tensor]:
+    """`decode_video` a temporal clip at a time, as frames `[n, H, W, 3]` in [0, 1] on the CPU.
+
+    diffusers' `_decode` concatenates every clip on the card before returning: at 3840x2160 a 10 s
+    chunk is 24 GB of float32. This is its loop with each finished clip handed out instead; the
+    `pad_frames` its last clip decodes past the end are held back and dropped.
+    """
+    device = next(vae.parameters()).device
+    z = denormalize(latents, vae.config.latents_mean, vae.config.latents_std).to(device, weight_dtype(vae))
+    size, drop, ratio = vae.tokens_chunk_size, vae.config.token_drop, vae.temporal_compression_ratio
+    span = size * ratio
+    tokens = z.shape[2] + drop
+    pad = (-tokens) % size
+    clips = (tokens + pad) // size - int(drop > 0)
+    pad_frames = 0
+    if pad:
+        tail = vae.config.clip_length % ratio
+        before = z.shape[2]
+        pad_frames = sum(tail if tail and (before + k) % size == 0 else ratio for k in range(pad))
+        z = torch.cat([z, z[:, :, -1:].repeat(1, 1, pad, 1, 1)], dim=2)
+    held: list[torch.Tensor] = []
+
+    def out(part: torch.Tensor) -> Iterator[torch.Tensor]:
+        held.append(from_model_pixels(part))
+        ready = torch.cat(held)
+        keep = min(pad_frames, len(ready))
+        held[:] = [ready[len(ready) - keep :]]
+        if len(ready) > keep:
+            yield ready[: len(ready) - keep]
+
+    overlap = None
+    with torch.inference_mode():
+        for index in range(clips):
+            start = index * size
+            clip = vae._decode_clip(z[:, :, start : start + size + vae.token_overlap])
+            for j in range(int(drop > 0) + 1):
+                part = clip[:, :, j * span : (j + 1) * span][:, :, vae.frame_pre_padding :]
+                if j:
+                    overlap = part
+                else:
+                    yield from out(part if overlap is None else vae._blend(overlap, part, vae.frame_overlap, dim=-3))
+            del clip
+            if on_clip is not None:
+                on_clip()
+        if overlap is not None:
+            yield from out(overlap)
 
 
 def encode_audio(vae: AutoencoderKLMiniMaxH3Audio, waveform: torch.Tensor) -> torch.Tensor:
