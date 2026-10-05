@@ -409,6 +409,8 @@ MUSIC = "N/A"  # a score regenerated per chunk cannot be continuous; add music a
 JUDGE_SYSTEM = """\
 You are a continuity supervisor on a film set. You are shown a still, or a few frames of a clip in order, and told what the shot was meant to show and who is in it, with how each of them looks; after the frames may come the cast's own reference photos, one per member, named in WHO IS IN IT. You judge only what you can see. Score 1 when the picture shows the shot as described with every listed member present and looking exactly as described and as in their reference photo; score 0 when it shows something else, someone missing, or a member unrecognisable. Score in between for a picture that mostly shows it: name every mismatch you see as an issue, in a few words each.
 
+A clip moves: it opens on the pose the shot before ended in, its action carries it across the frames, and the arrangement is its last frame. Judge whether the action happens over the clip and ends as arranged; never fault an early frame for not yet showing the end.
+
 Two failures cap the score at 0.4, whatever else is right: any person or animal in the frame who is not listed, and a member wearing a different garment or colour from their reference photo. Name each as an issue a painter could fix ("remove the monks behind him", "the robe must be the dark green one with black embroidery from his photo")."""
 
 JUDGE_USER = """\
