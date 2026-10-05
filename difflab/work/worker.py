@@ -115,12 +115,17 @@ class Worker(threading.Thread):
             except Exception as problem:
                 state, error = store.FAILED, f"{type(problem).__name__}: {problem}"
                 sink.emit(protocol.Error(text="".join(traceback.format_exc())[-6000:]))
+            # A run's cancel taken while a job that never looks at it was in flight (composing a keyframe) ended
+            # with that job, and production 13's next seven clips rendered on (2026-10-05): the rest goes now.
+            cancelled = ctx.cancel.is_set() and state in (store.DONE, store.SKIPPED)
             ctx.task_id = None
             with store.connect() as connection:
                 store.end_job(connection, job.id, state, outputs=outputs, error=error)
                 made.settle(connection, job, outputs, state)
                 if state not in (store.DONE, store.SKIPPED):
                     _cancel_rest(connection, job.run_id, f"{error} in job {job.position + 1}")
+                elif cancelled:
+                    _cancel_rest(connection, job.run_id, "cancelled")
                 remaining = [one for one in store.jobs_of(connection, job.run_id) if not one.settled]
                 failed = [one for one in store.jobs_of(connection, job.run_id) if one.state == store.FAILED]
             delivered = next((str(v) for v in outputs.values() if isinstance(v, str)), "")
