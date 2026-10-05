@@ -5,10 +5,6 @@ Every DIRECTOR_* here is hashed by name and value into a direction's fingerprint
 direction on disk. The module they live in is not hashed - only the names and the values.
 """
 
-# Used only when a job forces a shape (`Job.aspect`). Left alone, a take is cut at the first
-# photograph's own aspect: 4:3 forced to 9:16 throws away a third of the picture.
-DIRECTOR_ASPECT_TALL = 9 / 16
-DIRECTOR_ASPECT_WIDE = 16 / 9
 DIRECTOR_SURVEY_PIXELS = 400_000  # per photo when the VLM sees them all at once (~400 vision tokens each)
 DIRECTOR_PHOTO_PIXELS = 1024 * 1024  # per photo when it sees one: grounding, trait cards, the opening frame
 DIRECTOR_ID_LENGTH = 24  # letters in a member id ("man", "hookah", "shisha_lounge")

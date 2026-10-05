@@ -17,9 +17,6 @@ DEVICE = "cuda"
 # model that ever wants coarser rounds again in its own pipeline.
 CANVAS_ALIGN = 32
 
-INPUT_IMAGE = PROJECT_DIR / "samples/input.jpg"
-INPUT_VIDEO = PROJECT_DIR / "samples/input.mp4"
-
 
 # The VLM (`models/exl3vl.py`). 16 full-attention layers of 4 KV heads at 256 cost 64 KiB a token, so
 # this is 2 GiB on the card. Measured 2026-10-03: a plan repair peaks near 11k tokens on a 60 s take of

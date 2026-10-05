@@ -35,19 +35,3 @@ CONSTRAINTS
 # Fixed negative prompt of the edit stage (TextEncodeQwenImageEdit).
 NEGATIVE_PROMPT = """\
 ugly, blurry, distorted, artifacts, bad, wrong, low quality, anime, digital art, semirealistic, cartoon, manga, drawing, unreal, change pose, freckles, mole"""
-
-# Sample rough idea: input for the VLM stage.
-SAMPLE_IDEA = """\
-change the man on the left: he should be wearing a green hoodie instead of the blue jacket, same pose
-
-face should stay exactly the same
-remove the red cup from the table
-same room, same lighting, camera stays in the same place"""
-
-# Sample manual instruction: bypasses the VLM stage.
-SAMPLE_PROMPT = """\
-change the man on the left to wear a plain green hoodie instead of the blue jacket, keeping the same pose
-
-remove the red cup from the table, keeping the table surface and the surrounding area consistent
-
-keep the man's facial features, expression, and hairstyle unchanged; keep the room, the lighting, and the camera position exactly the same"""

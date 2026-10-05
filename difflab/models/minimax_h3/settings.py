@@ -132,11 +132,6 @@ class VideoSettings(Settings):
             part["loras"] = stack
         return part
 
-    @classmethod
-    def full_length(cls, **changes: Any) -> VideoSettings:
-        """15 s at 0.8 MP in 4 steps: the geometry the reference workflow rendered at."""
-        return cls(duration=15.0, megapixels=0.8, steps=4).with_(**changes)
-
 
 @dataclass(frozen=True)
 class VideoPromptSettings(VlmSettings):
@@ -150,19 +145,3 @@ class VideoPromptSettings(VlmSettings):
     # The node leaves top_k unset, so Qwen's generation_config default of 20 applies.
     top_k: int = setting(20, "top k", "rarely worth moving", low=0, advanced=True)
     seed: int = setting(-1, "seed", "-1 draws a new one each call; a fixed one repeats the words", advanced=True)
-
-
-@dataclass(frozen=True)
-class EnlargeLatentsSettings(Settings):
-    """The latent-space upscaler: enlarges before the decode, so H3's own VAE renders the extra detail."""
-
-    # Its weights, and the config.json beside them that holds the normalisation it was trained under.
-    checkpoint: str = setting(
-        "LBH-123-AI/Minimax_h3_latent_Upscaler@3f941d5d182014dd5c0a5e16330420ee2d4aa0c6"
-        ":minimax_h3_latent_upscaler_3d_conv_v1/config.json"
-        ",minimax_h3_latent_upscaler_3d_conv_v1/minimax_h3_latent_upscaler_3d_conv_v1_fp16.safetensors",
-        "model",
-        "repo@commit:config.json,weights.safetensors",
-        advanced=True,
-        role="latent-upscaler",
-    )

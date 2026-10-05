@@ -17,7 +17,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Final, Protocol
 
 import torch
 
@@ -297,34 +296,6 @@ def decode(latents: Latents) -> Clip:
     )
 
 
-class Finish(Protocol):
-    """Latents in, the clip they become out - and the size that clip will be.
-
-    In a chain this is not a post-process: chunk k+1 opens on chunk k's *finished* pixels and is
-    cached by them, so the finish is part of what a take is. `size` is how a finish that lands on a
-    different canvas than the take was planned for is caught before anything renders, rather than
-    when the joiner refuses the frames hours later.
-    """
-
-    def __call__(self, latents: Latents) -> Clip: ...
-
-    def size(self, width: int, height: int) -> tuple[int, int]: ...
-
-
-@dataclass(frozen=True)
-class Decoded:
-    """The plain finish: decode at the size it was sampled."""
-
-    def __call__(self, latents: Latents) -> Clip:
-        return decode(latents)
-
-    def size(self, width: int, height: int) -> tuple[int, int]:
-        return width, height
-
-
-decoded: Final[Decoded] = Decoded()
-
-
 def render(
     frame: Frame | None,
     prompt: str,
@@ -333,7 +304,6 @@ def render(
     reference_clips: Sequence[Clip] = (),
     reference_audio: Sequence[torch.Tensor] = (),
     canvas_from: Frame | None = None,
-    finish: Finish = decoded,
     closing: Frame | None = None,
 ) -> Clip:
     """All the stages, for when you just want the clip.
@@ -342,9 +312,6 @@ def render(
     are `ref2va`: they steer the clip while leaving it free to open anywhere, and the canvas comes from
     `canvas_from` or the first reference. Any combination is legal, and a first frame plus a reference
     is what a chained long video wants. `closing` is the frame the clip ends on.
-
-    `upscale.upscaled(2.0)` as `finish` enlarges the latents first, so the extra pixels are drawn by
-    H3's own VAE rather than guessed at afterwards.
     """
     settings = settings or VideoSettings()
     if frame is None and not references and not reference_clips:
@@ -369,7 +336,7 @@ def render(
     latents = sample(
         conditioning, first_latent, geometry, settings, prompt, encoded_references, last_latent=last_latent
     )
-    return finish(latents)
+    return decode(latents)
 
 
 def chunk_key(

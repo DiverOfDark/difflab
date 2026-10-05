@@ -17,16 +17,15 @@ What it makes:
 ```
 difflab/
   core/        types (Frame, Clip) · settings kit · keys · cache · context · events · protocol · record · ui · hub · media
-  models/      exl3vl · qwen_edit_aio · convrot · offload · video_io · esrgan · rife · tae · latent_upscaler
+  models/      exl3vl · qwen_edit_aio · convrot · offload · video_io · esrgan · rife · tae
                minimax_h3/ (the port, its settings, and caption: the Ref2VA format)
-  tools/       edit_image · ask_vlm · write_prompt · render_chunk · handoff · assemble · enlarge_latents
+  tools/       edit_image · ask_vlm · write_prompt · render_chunk · handoff · assemble
                enlarge_pixels · retime · grade · judge · compose_keyframe
                direct · survey · ground · cut_crops · cards · opening · plan_shots · write_shot   (the director)
   screenplay/  production · ingest · planner · made · settings · compiler · checks · crops · words · captions
   work/        quick (the three quick modes as data) · queue · runners · plan_runners · worker
   store/       db (migrations) · models · repo (runs, jobs, tasks, artifacts, events, commands) · screenplay
   api/         app · serve · runs · assets            the HTTP interface, and the worker thread beside it
-main.py        playground: pick a function, press Run
 frontend/      the page (Vue 3 + Vite), built into difflab/api/static
 ```
 
@@ -126,7 +125,7 @@ Needs [pixi](https://pixi.sh), an NVIDIA driver, a CUDA GPU (developed on an RTX
 ```bash
 pixi run ruff format   # format (also the Python blocks in Markdown files)
 pixi run ruff check    # lint
-pixi run mypy          # strict type check of difflab/ and main.py
+pixi run mypy          # strict type check of difflab/
 ```
 
 mypy treats the large, dynamically typed ML libraries (diffusers, transformers, accelerate, safetensors, av) as `Any`; see `pyproject.toml`.
@@ -144,7 +143,7 @@ Every model is named by where it comes from, pinned to a commit (`core/hub.py`):
 
 ## Usage
 
-Open `main.py`, pick a function at the bottom and run it (PyCharm's Run button or `pixi run python main.py`). Paths and machine-level switches live in `difflab/config.py`; every per-call knob and every model file is a field of a frozen settings dataclass you pass in (and can override per machine or production on the Settings page) — `EditSettings`, `VlmSettings`, `Continuity`, `EnlargePixelsSettings` and `RetimeSettings` in `core.settings`, `VideoSettings` and `EnlargeLatentsSettings` beside the model they configure. Put your input at `samples/input.jpg` (gitignored).
+Start the page with `pixi run serve` and render from it. Paths and machine-level switches live in `difflab/config.py`; every per-call knob and every model file is a field of a frozen settings dataclass you pass in (and can override per machine or production on the Settings page) — `EditSettings`, `VlmSettings`, `Continuity`, `EnlargePixelsSettings` and `RetimeSettings` in `core.settings`, `VideoSettings` beside the model it configures.
 
 A render writes one line to the terminal:
 
@@ -161,27 +160,16 @@ loads no model opens `events.quiet()` because a report with no reader is useless
 to stdout. Library logs and progress bars are silenced in
 `difflab/__init__.py` either way.
 
-| `main.py` function | What it does |
-|---|---|
-| `manual_prompt()` | Manual mode: `prompts.SAMPLE_PROMPT` → edit. No VLM is loaded. |
-| `full_workflow()` | The original graph: `prompts.SAMPLE_IDEA` → VLM instruction (printed) → edit. |
-| `two_seeds()` | One instruction, two renders — the blocks make the middle of a workflow reusable. |
-| `ask_the_vlm()` | Free-form questions to the VLM about the image. |
-| `edit_then_animate()` | Qwen Edit → Qwen-VL → MiniMax H3 in one pass, nothing through disk. |
-| `parity_chain()` | Three hand-written shots on one keyframe: the smallest production, played by `play_production`. |
-| `retime_an_existing_clip()` | A finished clip at 60 fps: RIFE draws the frames between the frames. |
-
 The pieces can also be used on their own:
 
 ```python
-from difflab import prompts
 from difflab.core import media as io
 from difflab.tools import ask_vlm, edit_image, write_prompt
 from difflab.core.settings import EditSettings
 
-frame = io.frame_from_image("samples/input.jpg")
+frame = io.frame_from_image("photo.jpg")
 print(ask_vlm.ask(frame, "What is the man on the left wearing?"))
-instruction = write_prompt.write_edit_instruction(frame, prompts.SAMPLE_IDEA)
+instruction = write_prompt.write_edit_instruction(frame, "give him a green hoodie, same pose")
 
 out = edit_image.edit(frame, instruction, EditSettings(seed=42))
 io.save(out, "edit", seed=42)
@@ -209,7 +197,7 @@ Measured on that machine (2026-09-16):
 - VLM instruction: ~11 s including the 4-bit load (Qwen3-VL 8B, the VLM before Qwen3.8 27B; not re-measured)
 - Peak VRAM: 14.4 GB
 - Process RAM: ~30 GB (pinned copies of the streamed weights)
-- A whole `main.py` run from a fresh process (VLM load → instruction → editor load → edit → save): 90–105 s. About 5 s of that is saving the optimized PNG and lossless WebP.
+- A whole edit run from a fresh process (VLM load → instruction → editor load → edit → save): 90–105 s. About 5 s of that is saving the optimized PNG and lossless WebP.
 
 ## ComfyUI node → Python mapping
 
@@ -269,18 +257,15 @@ A port of the ComfyUI **"MiniMax H3 (Hailuo 3.0) image-to-video turbo"** workflo
 
 ```python
 from difflab.core import media
-from difflab.models.minimax_h3 import prompts
 from difflab.tools import render_chunk, write_prompt
 
-frame = media.frame_from_image("samples/input.jpg")
-clip = render_chunk.render(frame, prompts.SAMPLE_PROMPT)  # written prompt, no VLM
+frame = media.frame_from_image("photo.jpg")
+clip = render_chunk.render(frame, "0-5s: she turns toward the camera and smiles.")  # written prompt, no VLM
 clip = render_chunk.render(frame, write_prompt.write_video_prompt(frame, "she turns and smiles"))
-clip = render_chunk.render(media.frame_from_video("clip.mp4"), "...")  # frame 0 of a video
-clip = render_chunk.render(frame, "...", VideoSettings.full_length())
 media.save(clip, "clip", seed)
 ```
 
-`main.py` exposes `video_manual_prompt()` and `video_full_workflow()`. Geometry, sampling knobs and model files are `VideoSettings` (`duration`, `megapixels`, `seed`, `steps`, `reference_size`, the shifts, the DiT, LoRA, text encoder and both VAEs); `VideoSettings.full_length()` is the 15 s / 0.8 MP reference geometry. `difflab/models/minimax_h3/config.py` keeps only the model's fixed facts. Output goes to `output/videos/<date>/<time>_<model>_<seed>.mp4`.
+Geometry, sampling knobs and model files are `VideoSettings` (`duration`, `megapixels`, `seed`, `steps`, `reference_size`, the shifts, the DiT, LoRA, text encoder and both VAEs). `difflab/models/minimax_h3/config.py` keeps only the model's fixed facts. Output goes to `output/videos/<date>/<time>_<model>_<seed>.mp4`.
 
 ## Models (fetched on first use, see `core/hub.py`)
 
@@ -316,18 +301,15 @@ machine with 32 GB or less will swap even though the card is fine.
 ## Upscaling
 
 Generating large is expensive and enlarging afterwards is not: sampling cost grows with the square of
-the packed sequence, so pixels are the costly thing to *generate* and a cheap thing to *add*. Two
-routes, and they are not equivalent.
+the packed sequence, so pixels are the costly thing to *generate* and a cheap thing to *add*.
 
-**Latent** (`tools.enlarge_latents.upscale_latents`) enlarges the latent before it is decoded, so the extra
-pixels are rendered by H3's own 36-block ViT decoder — the one component trained to synthesise video
-texture. Scale is a conditioning input over 1.0–4.0×, so 0.4 MP → 2 MP is a single step.
+`tools.enlarge_pixels.upscale` runs an ESRGAN over finished frames. It can only sharpen what the decoder
+already drew, which is a ceiling rather than a tuning problem.
 
-**Pixel** (`tools.enlarge_pixels.upscale`) runs an ESRGAN over finished frames. It can only sharpen what the
-decoder already drew, which is a ceiling rather than a tuning problem — but it is the only route left
-once a clip has been written to disk.
-
-Measured on H3's own output, reconstructing a native render from a half-size one:
+A latent route measured better and is not in the code: `LBH-123-AI/Minimax_h3_latent_Upscaler` enlarges
+the latent before H3's own decoder renders it, 1.0–4.0× in one step. Nothing ever queued it, so it was
+removed (`git log -- difflab/tools/enlarge_latents.py`). Measured on H3's own output, reconstructing a
+native render from a half-size one:
 
 | route | detail vs native | shimmer vs native | time |
 |---|---|---|---|
@@ -337,20 +319,11 @@ Measured on H3's own output, reconstructing a native render from a half-size one
 
 The latent route wins on every axis at once — more detail, temporal steadiness at native's own level,
 and 40% less time, because the work happens on a tensor 256× smaller than the frames it becomes. It
-needs no refinement pass, despite the reference workflow using one.
+needed no refinement pass, despite the reference workflow using one.
 
 Among the pixel upscalers, 4xLSDIR measured best of the three on disk and is the default;
 4xNMKDSuperscale hallucinates detail that was never there (sharpness 1.113) and shimmers at 1.705 —
 keep it away from video. See `models/esrgan.py` for the full table.
-
-Upscaling is a **separate tool**, never something a render does on your behalf, because the useful
-form of it sits *between* sampling and decoding:
-
-```python
-latents = render_chunk.sample(conditioning, first_latent, geometry, settings)
-latents = enlarge_latents.upscale_latents(latents, megapixels=2.0)
-clip = render_chunk.decode(latents)
-```
 
 ## Frame rate
 
@@ -497,7 +470,6 @@ sqlite3 output/factory.db "select tool, state, key from jobs where run_id = '<id
 ```
 pixi run page                  # once, and after a page change
 pixi run python -m difflab.api   # http://localhost:8765
-#   ... or just press Run in the editor: main.py serves the page and renders nothing by itself
 ```
 
 Four screens. **Productions** lists them and begins one - an idea and photographs, a text, or a

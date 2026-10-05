@@ -53,7 +53,6 @@ ENV PYTHONUNBUFFERED=1 \
 # --link: the code is a layer of its own that does not need the environment under it unpacked. Without
 # it a code-only build pulled and extracted the 4.9 GB environment layer to put 1 MB on top (5.4 of its
 # 6.5 minutes on the home runner); with it the environment stays in the registry, referred to, not moved.
-COPY --link main.py ./
 COPY --link difflab ./difflab
 COPY --link --from=page /app/difflab/api/static ./difflab/api/static
 

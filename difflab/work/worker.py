@@ -50,7 +50,9 @@ class Worker(threading.Thread):
             if not self.step():
                 if RESTART.is_set():
                     print("difflab: restarting, the queue is idle", flush=True)
-                    os.execv(sys.executable, [sys.executable, *sys.argv])
+                    # `orig_argv`, not `argv`: under `-m` argv[0] is the module's file, which run as a
+                    # script cannot import its own package.
+                    os.execv(sys.executable, sys.orig_argv)
                 time.sleep(POLL)
 
     def step(self) -> bool:
@@ -65,11 +67,6 @@ class Worker(threading.Thread):
             return False
         self._execute(job)
         return True
-
-    def drain(self) -> None:
-        """Every runnable job, then return: what a playground call wants."""
-        while self.step():
-            pass
 
     # --- one job ---------------------------------------------------------------------------------
     def _execute(self, job: store.Job) -> None:
@@ -292,21 +289,3 @@ def _resources() -> dict[str, float]:
     if memory:
         data |= {"ram_used": memory[0], "ram_total": memory[1]}
     return {k: round(v, 2) for k, v in data.items()}
-
-
-def play(job: Any) -> str:
-    """Enqueue a job and run it to the end in this process: the playground's door."""
-    from difflab.work.queue import enqueue
-
-    run_id = enqueue(job, asked_by="playground")
-    Worker().drain()
-    return run_id
-
-
-def play_production(production_id: int) -> str:
-    """A production's first chapter, rendered to the end in this process."""
-    from difflab.screenplay import planner
-
-    run_id = planner.render_production(production_id, asked_by="playground")
-    Worker().drain()
-    return run_id

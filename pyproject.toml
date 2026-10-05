@@ -85,7 +85,7 @@ prod = { features = [], solve-group = "default" }
 
 [tool.pixi.tasks]
 page = "npm --prefix frontend install && npm --prefix frontend run build"
-serve = { cmd = "python main.py", depends-on = ["page"] }
+serve = { cmd = "python -m difflab.api", depends-on = ["page"] }
 
 [dependency-groups]
 dev = [
@@ -124,7 +124,7 @@ extend-immutable-calls = ["difflab.core.settings.setting", "setting"]
 
 [tool.mypy]
 python_version = "3.13"
-files = ["difflab", "main.py"]
+files = ["difflab"]
 strict = true
 ignore_missing_imports = true
 
