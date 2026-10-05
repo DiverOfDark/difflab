@@ -215,7 +215,6 @@ const facts = computed<[string, string][]>(() => [
             </div>
             <div class="facts">
               <span>seed {{ it.seed ?? '—' }}</span>
-              <span>{{ it.version > 1 ? `v${it.version}` : '' }}</span>
             </div>
           </div>
         </div>

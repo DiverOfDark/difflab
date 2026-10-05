@@ -40,7 +40,9 @@ const headline = computed(() => props.run.stage || props.run.title)
 const percent = computed(() => {
   // A finished run is finished, whatever the last stage happened to be counting when it ended.
   if (props.run.status === 'done') return 100
-  return Math.round(100 * (byChunks.value ? props.run.fraction : (props.run.stageFraction ?? 0)))
+  const done = props.run.items.filter((it) => it.state === 'done').length
+  const share = byChunks.value ? done / Math.max(1, props.run.items.length) : (props.run.stageFraction ?? 0)
+  return Math.round(100 * share)
 })
 
 /** Clicking takes the wheel: a chunk being re-watched must not be yanked away by the next one. */
@@ -99,7 +101,6 @@ const gauges = computed(() => {
   const gb = (pair: [number, number] | null) => (pair ? `${pair[0].toFixed(1)}/${pair[1].toFixed(0)}` : '—')
   return [
     ['ELAPSED', duration(props.run.elapsed)],
-    ['ETA', props.run.eta != null ? duration(props.run.eta) : '—'],
     ['VRAM', gb(props.run.vram)],
     ['RAM', gb(props.run.ram)],
     ['RUN', props.run.id],
@@ -119,21 +120,14 @@ const pip = (i: number) => {
   return !t ? '' : i < t.index ? 'done' : i === t.index ? 'running' : ''
 }
 
-/**
- * "job 2 of 3 · the cover", and its own share beside it — never the two multiplied. A director stage
- * is ~800 s of VLM with no honest total, so there is no number a product could be a share of. Drawn
- * only for a list: "job 1 of 1" is just the render, which the rest of this strip already is.
- */
+/** Drawn only for a list: "job 1 of 1" is just the render, which the rest of this strip already is. */
 const playing = computed(() => {
   const r = props.run
   if (r.stepsTotal < 2) return null
   const at = r.step >= 0 ? r.step : r.steps.length - 1
   const step = r.steps[at]
   if (!step) return null
-  return {
-    where: `job ${at + 1} of ${r.stepsTotal} · ${step.label || step.mode}`,
-    share: step.fraction === null ? '' : `${Math.round(step.fraction * 100)}%`,
-  }
+  return { where: `job ${at + 1} of ${r.stepsTotal} · ${step.label || step.mode}` }
 })
 
 /**
@@ -170,17 +164,6 @@ function cancel() {
   if (confirm('Cancel this run? The chunk being rendered is lost; what is finished stays on disk.')) send('cancel')
 }
 
-function reroll(it: Item) {
-  const typed = prompt(`Seed for chunk ${it.index + 1} (blank: the next one after ${it.seed})`, '')
-  if (typed === null) return
-  send('reroll', /^-?\d+$/.test(typed.trim()) ? { item: it.index, seed: Number(typed) } : { item: it.index })
-}
-
-function reprompt(it: Item) {
-  const typed = prompt(`The caption chunk ${it.index + 1} is handed`, it.prompt)
-  if (typed && typed.trim()) send('edit', { item: it.index, prompt: typed })
-}
-
 // A pinned tab is where a two-hour render is actually watched from.
 watch(
   () => [props.run.title, props.run.status, percent.value] as const,
@@ -211,7 +194,6 @@ watch(
             <i v-for="s in run.steps" :key="s.index" class="dot" :class="s.state" :title="s.label" />
           </span>
           <span class="mono where">{{ playing.where }}</span>
-          <span class="label">{{ playing.share }}</span>
         </div>
         <!-- A render is six phases and the director is eight. -->
         <div v-if="run.tally" class="phases">
@@ -228,8 +210,6 @@ watch(
         </div>
       </div>
       <div class="buttons">
-        <button :disabled="!live" @click="send('stop')">Stop after this chunk</button>
-        <button :disabled="!live" @click="send('finish')">Finish now</button>
         <button class="danger" :disabled="!live" @click="cancel">Cancel run</button>
       </div>
     </section>
@@ -274,16 +254,8 @@ watch(
             <span>{{ it.seconds ? duration(it.seconds) : '' }}</span>
           </div>
         </div>
-        <div class="chunk-foot">
-          <button class="quiet" :disabled="!live" @click.stop="reroll(it)">re-roll</button>
-          <button class="quiet" :disabled="!live" @click.stop="reprompt(it)">re-prompt</button>
-          <span v-if="it.version > 1" class="grow mono">v{{ it.version }}</span>
-        </div>
       </article>
     </section>
-    <p v-if="run.planned && run.items.length" class="note">
-      Changing chunk k remakes k and everything after it. Replaced chunks stay browsable as older versions.
-    </p>
 
     <section class="card">
       <div class="head">
@@ -542,26 +514,6 @@ watch(
   color: var(--dim);
   margin-top: auto;
   gap: var(--space-1);
-}
-
-.chunk-foot {
-  padding: var(--space-1) var(--space-2);
-  border-top: 1px solid var(--line);
-  display: flex;
-  gap: var(--space-2);
-  align-items: center;
-}
-
-.chunk-foot button {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  padding: 0;
-}
-
-.grow {
-  margin-left: auto;
-  font-size: 11px;
-  color: var(--dim);
 }
 
 .log {

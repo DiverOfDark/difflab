@@ -103,10 +103,7 @@ class Worker(threading.Thread):
             started = time.perf_counter()
             state, error, outputs = store.DONE, "", {}
             try:
-                with (
-                    ui.reporting(_progress),
-                    direct.using(job.settings.get("checkpoint") if job.tool in _DIRECTED else None),
-                ):
+                with direct.using(job.settings.get("checkpoint") if job.tool in _DIRECTED else None):
                     outputs = runners.RUNNERS[job.tool](_resolve(job.inputs), job.settings)
                 if isinstance(outputs, Skipped):
                     state = store.SKIPPED
@@ -282,12 +279,6 @@ def _set_run_state(run_id: str | None, state: str) -> None:
         return
     with store.connect() as connection:
         store.set_run_state(connection, run_id, state)
-
-
-def _progress(fraction: float) -> None:
-    from difflab.core import record
-
-    record.job_progress(fraction)
 
 
 def _resources() -> dict[str, float]:

@@ -99,17 +99,6 @@ export interface PlanEvent {
   items: string[]
 }
 
-export interface PlanUpdateEvent {
-  kind: 'plan.update'
-  t: number
-  fraction: number
-  eta: number | null
-  eta_sure: boolean
-  elapsed: number
-  states: string[]
-  activity: string[]
-}
-
 export interface ItemBeginEvent {
   kind: 'item.begin'
   t: number
@@ -122,12 +111,6 @@ export interface ItemEndEvent {
   index: number
   seconds: number
   activity: string
-}
-
-export interface ItemsResetEvent {
-  kind: 'items.reset'
-  t: number
-  start: number
 }
 
 export interface ItemInfoEvent {
@@ -148,13 +131,6 @@ export interface ItemVideoEvent {
   version: number
   video: string
   seed: number
-}
-
-export interface ItemSupersededEvent {
-  kind: 'item.superseded'
-  t: number
-  index: number
-  version: number
 }
 
 export interface PreviewEvent {
@@ -196,14 +172,6 @@ export interface JobBeginEvent {
   job: number | null
 }
 
-export interface JobProgressEvent {
-  kind: 'job.progress'
-  t: number
-  index: number
-  total: number
-  fraction: number
-}
-
 export interface JobEndEvent {
   kind: 'job.end'
   t: number
@@ -214,16 +182,6 @@ export interface JobEndEvent {
   error: string
   made: string
   seconds: number
-}
-
-export interface LingerEvent {
-  kind: 'linger'
-  t: number
-}
-
-export interface LingerEndEvent {
-  kind: 'linger.end'
-  t: number
 }
 
 export type Event =
@@ -239,20 +197,14 @@ export type Event =
   | TallyEvent
   | TallyEndEvent
   | PlanEvent
-  | PlanUpdateEvent
   | ItemBeginEvent
   | ItemEndEvent
-  | ItemsResetEvent
   | ItemInfoEvent
   | ItemVideoEvent
-  | ItemSupersededEvent
   | PreviewEvent
   | ArtifactEvent
   | FinalEvent
   | JobBeginEvent
-  | JobProgressEvent
   | JobEndEvent
-  | LingerEvent
-  | LingerEndEvent
 
-export const KINDS = ['run.start', 'run.end', 'error', 'stats', 'log', 'panel', 'stage.start', 'stage.progress', 'stage.end', 'tally', 'tally.end', 'plan', 'plan.update', 'item.begin', 'item.end', 'items.reset', 'item.info', 'item.video', 'item.superseded', 'preview', 'artifact', 'final', 'job.begin', 'job.progress', 'job.end', 'linger', 'linger.end'] as const
+export const KINDS = ['run.start', 'run.end', 'error', 'stats', 'log', 'panel', 'stage.start', 'stage.progress', 'stage.end', 'tally', 'tally.end', 'plan', 'item.begin', 'item.end', 'item.info', 'item.video', 'preview', 'artifact', 'final', 'job.begin', 'job.end'] as const

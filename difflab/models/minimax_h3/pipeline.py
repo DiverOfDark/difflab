@@ -34,7 +34,7 @@ from difflab.models.minimax_h3.text_encoder import Conditioning
 PATCH_SIZE = (1, 2, 2)
 SPATIAL_COMPRESSION = 16
 AUDIO_CHANNELS = 2
-VIDEO_TAG, TEXT_TAG, AUDIO_TAG = 0, 1, 2
+VIDEO_TAG, AUDIO_TAG = 0, 2  # text is 1
 # The first frame is held here rather than at a clean 0: "just short of clean", as the model was trained.
 CONDITION_TIMESTEP = 0.999
 # A reference soundtrack is pinned at exactly clean, which is also why it is handed over un-noised.

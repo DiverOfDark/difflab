@@ -14,14 +14,12 @@ from difflab.store.models import (
     MISSING,
     PINNED,
     PROVIDED,
-    Audio,
     Chapter,
     Clip,
     Conflict,
     Idea,
     Keyframe,
     Member,
-    Plate,
     Production,
     Prompt,
     Reference,
@@ -33,9 +31,7 @@ MADE_TABLES = {
     "keyframe": "keyframes",
     "prompt": "prompts",
     "clip": "clips",
-    "audio": "audio",
     "reference": "refs",
-    "plate": "plates",
 }
 
 
@@ -161,7 +157,6 @@ def add_shot(
     connection.execute("INSERT INTO keyframes (shot_id, source, state) VALUES (?, ?, ?)", (shot_id, CHAINED, MISSING))
     connection.execute("INSERT INTO prompts (shot_id, state) VALUES (?, ?)", (shot_id, MISSING))
     connection.execute("INSERT INTO clips (shot_id, state) VALUES (?, ?)", (shot_id, MISSING))
-    connection.execute("INSERT INTO audio (shot_id, state) VALUES (?, ?)", (shot_id, MISSING))
     made = shot(connection, shot_id)
     assert made is not None
     return made
@@ -309,9 +304,7 @@ def made_by_shot(connection: sqlite3.Connection, kind: str, shot_id: int) -> Key
     raise ValueError(f"{kind!r} is not a made thing (one of {', '.join(MADE_TABLES)})")
 
 
-def made_by_id(
-    connection: sqlite3.Connection, kind: str, made_id: int
-) -> Keyframe | Prompt | Clip | Audio | Reference | Plate | None:
+def made_by_id(connection: sqlite3.Connection, kind: str, made_id: int) -> Keyframe | Prompt | Clip | Reference | None:
     table = MADE_TABLES[kind]
     row = connection.execute(f"SELECT * FROM {table} WHERE id = ?", (made_id,)).fetchone()
     if row is None:
@@ -320,11 +313,9 @@ def made_by_id(
         "keyframe": Keyframe.of,
         "prompt": Prompt.of,
         "clip": Clip.of,
-        "audio": Audio.of,
         "reference": Reference.of,
-        "plate": Plate.of,
     }
-    made: Keyframe | Prompt | Clip | Audio | Reference | Plate = readers[kind](row)
+    made: Keyframe | Prompt | Clip | Reference = readers[kind](row)
     return made
 
 
@@ -339,13 +330,6 @@ def set_compiled(
         (text, _dump(pictures), _dump(checks), key, shot_id),
     )
     return prompt_of(connection, shot_id)
-
-
-def audio_of(connection: sqlite3.Connection, shot_id: int) -> Audio:
-    row = connection.execute("SELECT * FROM audio WHERE shot_id = ?", (shot_id,)).fetchone()
-    if row is None:
-        raise LookupError(f"shot {shot_id} has no audio row")
-    return Audio.of(row)
 
 
 # --- the cast ---------------------------------------------------------------------------------

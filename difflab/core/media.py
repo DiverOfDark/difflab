@@ -15,16 +15,12 @@ from PIL import Image
 from difflab import config
 from difflab.core import events, protocol, record, ui, video_io
 from difflab.core.audio import SAMPLE_RATE, load_audio
-from difflab.core.imaging import load_image, load_video_frame, load_video_frames, save_result
+from difflab.core.imaging import load_image, load_video_frames, save_result
 from difflab.core.types import Clip, Frame
 
 
 def frame_from_image(path: str | Path) -> Frame:
     return Frame.from_pil(load_image(path), Path(path).name)
-
-
-def frame_from_video(path: str | Path, index: int = 0) -> Frame:
-    return Frame.from_pil(load_video_frame(path, index), f"{Path(path).name} (frame {index})")
 
 
 def clip_from_video(
@@ -87,16 +83,10 @@ def color_gain(frame: Frame, toward: Frame, strength: float) -> torch.Tensor:
     return torch.pow(target / source, strength)
 
 
-# Measured on production 9's second take (2026-10-04): the mottle of the frame each chunk handed on ran
-# 1.51, 1.92, 1.53, 2.94, 4.67 against the photo's 1.11 - blotches in the dark ceiling that each chunk
-# took for texture and grew. `texture_eps` on the handoff brought the fourth to 1.53 by changing its
-# pixels 1.6/255 on average, the face and the wall's relief kept.
-#
 # Measured on a take of production 9 (2026-10-04), five chunks: within each chunk a* rose by
 # 2-3 and the spread of a*, b* and L by about x1.15, and each chunk opened on the one before's colour,
 # so a* ran 2.4 (the photo) to 11.0 and chroma spread x2.3 by 38 s. A change of place is far larger than
 # one chunk's drift (a blue sky moves b* by tens), so a correction capped at drift's size leaves it alone.
-TEXTURE_EPS_MAX = 2e-3  # the turbo LoRA's blotches needed 1.2e-3; anything stronger is smoothing real detail
 HOLD_SHIFT = 4.0  # most a*/b* mean moved per chunk, in Lab units
 HOLD_RATIO = (0.8, 1.25)  # most a spread is scaled per chunk
 _XYZ = torch.tensor([[0.4124, 0.3576, 0.1805], [0.2126, 0.7152, 0.0722], [0.0193, 0.1192, 0.9505]])
@@ -145,61 +135,6 @@ def hold_colour(clip: Clip, toward: Frame, strength: float) -> Clip:
         lab = _lab(frames[index].float())
         frames[index] = _rgb((lab - mean) * ratio + mean + shift).to(frames.dtype)
     return replace(clip, frames=frames)
-
-
-def _box(x: torch.Tensor, radius: int) -> torch.Tensor:
-    return torch.nn.functional.avg_pool2d(
-        torch.nn.functional.pad(x, (radius, radius, radius, radius), mode="replicate"), 2 * radius + 1, 1
-    )
-
-
-def _guided(pixels: torch.Tensor, eps: float, radius: int = 4) -> torch.Tensor:
-    """He's guided filter, each channel its own guide: flat areas are smoothed, edges are kept."""
-    x = pixels.float().permute(2, 0, 1)[None]
-    mean = _box(x, radius)
-    variance = _box(x * x, radius) - mean * mean
-    a = variance / (variance + eps)
-    out = _box(a, radius) * x + _box(mean - a * mean, radius)
-    return out[0].permute(1, 2, 0).clamp(0, 1).to(pixels.dtype)
-
-
-def mottle(pixels: torch.Tensor) -> float:
-    """The blotchy texture a chain builds up: band-pass luma energy, fine grain to blob size, in the
-    flattest 30% of 16-pixel blocks, where a photograph has almost none."""
-    luma = (pixels.float() @ torch.tensor([0.299, 0.587, 0.114]))[None, None]
-    band = _box(luma, 1) - _box(luma, 6)
-    return float(torch.nn.functional.avg_pool2d(band**2, 16).flatten().sqrt().quantile(0.3)) * 255
-
-
-def texture_eps(frame: Frame, toward: Frame) -> float:
-    """The guided filter's strength that brings `frame`'s mottle down to `toward`'s; 0 if it is not above it."""
-    target = mottle(toward.pixels)
-    if mottle(frame.pixels) <= target:
-        return 0.0
-    low, high = 1e-6, TEXTURE_EPS_MAX
-    for _ in range(20):
-        middle = (low * high) ** 0.5
-        if mottle(_guided(frame.pixels, middle)) > target:
-            low = middle
-        else:
-            high = middle
-    return high
-
-
-@overload
-def smoothed(item: Frame, eps: float) -> Frame: ...
-
-
-@overload
-def smoothed(item: Clip, eps: float) -> Clip: ...
-
-
-def smoothed(item: Clip | Frame, eps: float) -> Clip | Frame:
-    if not eps:
-        return item
-    if isinstance(item, Frame):
-        return Frame(_guided(item.pixels, eps), item.origin)
-    return replace(item, frames=torch.stack([_guided(frame, eps) for frame in item.frames]))
 
 
 def _smooth(rows: torch.Tensor, window: int) -> torch.Tensor:
@@ -271,20 +206,8 @@ def _announce(path: Path, media: str, name: str, seed: int | None) -> None:
     record.artifact_made(path, media, seed)
 
 
-def save_frame(frame: Frame, path: Path) -> Path:
-    """One frame, written exactly where it is asked for: `save` names what a workflow produced, this
-    is for what it keeps beside its own state, like the frames a source video is cut at."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    frame.pil().save(path)
-    return path
-
-
 def sheet(columns: Sequence[Sequence[Frame]], height: int = 420, gap: int = 8) -> Frame:
-    """One column per subject, one row per version: the raw crop on top, what was made beneath.
-
-    For a plate this IS the acceptance check rather than a step towards one, which is why every column
-    starts with the original the plate must be judged against.
-    """
+    """One column per subject, one row per version: the raw crop on top, what was made beneath."""
     tiles = [[frame.pil() for frame in column] for column in columns]
     scaled = [
         [image.resize((max(1, round(image.width * height / image.height)), height)) for image in column]
@@ -307,44 +230,6 @@ def sheet(columns: Sequence[Sequence[Frame]], height: int = 420, gap: int = 8) -
     return Frame.from_pil(canvas, "contact sheet")
 
 
-def concat(clips: list[Clip], crossfade: float = 0.0, cuts: Sequence[int | None] | None = None) -> Clip:
-    """Join chunks end to end into one long clip.
-
-    `cuts` says where each chunk hands over: when chunk k+1 opened on chunk k's frame `cuts[k]`, chunk k
-    is kept up to that frame and only the frames the two share in time - chunk k's from the cut on and
-    chunk k+1's first ones - are blended, over at most `crossfade` seconds. Without a cut the chunks are
-    butted end to end and `crossfade` blends their boundary frames. The audio follows the frames.
-    """
-    if not clips:
-        raise ValueError("nothing to concatenate")
-    if len({(c.frames.shape[1], c.frames.shape[2]) for c in clips}) > 1:
-        raise ValueError("clips must share a canvas size")
-
-    fps, rate = clips[0].fps, clips[0].sample_rate
-    overlap = round(crossfade * fps)
-    handovers = list(cuts) if cuts is not None else [None] * len(clips)
-    if len(handovers) not in (len(clips) - 1, len(clips)):
-        raise ValueError(f"{len(handovers)} cuts for {len(clips)} clips")
-    clips = [
-        replace(clip, audio=_fit(clip.audio, len(clip), fps, rate)) if clip.audio is not None else clip
-        for clip in clips
-    ]
-    frames = clips[0].frames
-    audio = clips[0].audio
-    for previous, clip, cut in zip(clips[:-1], clips[1:], handovers[: len(clips) - 1], strict=True):
-        blend = overlap
-        if cut is not None:  # drop what the next clip redraws, keeping only the frames to blend
-            blend = min(overlap, len(previous) - cut)
-            drop = len(previous) - cut - blend
-            frames = frames[: len(frames) - drop]
-            if audio is not None:
-                audio = audio[:, : audio.shape[1] - _samples(drop, fps, rate)]
-        frames, audio = _join(frames, audio, clip, blend, fps, rate)
-    with ui.step("Joining clips") as detail:
-        detail(f"{len(clips)} chunks · {len(frames)} frames · {len(frames) / fps:.2f}s")
-    return Clip(frames=frames, audio=audio, fps=fps, sample_rate=rate, prompt=clips[0].prompt)
-
-
 def join_files(
     parts: Sequence[tuple[Path, Path]],
     path: Path,
@@ -353,7 +238,7 @@ def join_files(
     fps: int | None = None,
     sample_rate: int = SAMPLE_RATE,
 ) -> tuple[int, float]:
-    """Join chunk files - `(video.mp4, audio.pt)` pairs - into one video, the way `concat` joins clips.
+    """Join chunk files - `(video.mp4, audio.pt)` pairs - into one video.
     Returns `(frames, seconds)`.
 
     Frames stream through one at a time, holding back only the few that wait for a blend, so a minute
@@ -461,7 +346,7 @@ def read_frames(path: Path) -> Iterator[torch.Tensor]:
 
 
 def _join_audio(audio: torch.Tensor, incoming: torch.Tensor | None, overlap: int, fps: int, rate: int) -> torch.Tensor:
-    """The soundtrack half of `_join`: ramp the boundary over the same span as the frames."""
+    """The soundtrack half of `_join_parts`: ramp the boundary over the same span as the frames."""
     if incoming is None:
         return audio
     samples = min(_samples(overlap, fps, rate), audio.shape[1], incoming.shape[1])
@@ -470,37 +355,3 @@ def _join_audio(audio: torch.Tensor, incoming: torch.Tensor | None, overlap: int
     ramp = _ramp(samples, audio.dtype).view(1, -1)
     mixed = audio[:, -samples:] * (1 - ramp) + incoming[:, :samples] * ramp
     return torch.cat([audio[:, :-samples], mixed, incoming[:, samples:]], dim=1)
-
-
-def _join(
-    frames: torch.Tensor,
-    audio: torch.Tensor | None,
-    clip: Clip,
-    overlap: int,
-    fps: int,
-    rate: int,
-) -> tuple[torch.Tensor, torch.Tensor | None]:
-    overlap = min(overlap, len(frames), len(clip))
-    if overlap <= 0:
-        return torch.cat([frames, clip.frames]), _cat_audio(audio, clip.audio)
-
-    ramp = _ramp(overlap, frames.dtype).view(-1, 1, 1, 1)
-    blended = frames[-overlap:] * (1 - ramp) + clip.frames[:overlap] * ramp
-    joined = torch.cat([frames[:-overlap], blended, clip.frames[overlap:]])
-
-    if audio is None or clip.audio is None:
-        return joined, _cat_audio(audio, clip.audio)
-    samples = min(round(overlap / fps * rate), audio.shape[1], clip.audio.shape[1])
-    if samples <= 0:
-        return joined, _cat_audio(audio, clip.audio)
-    ramp_a = _ramp(samples, audio.dtype).view(1, -1)
-    mixed = audio[:, -samples:] * (1 - ramp_a) + clip.audio[:, :samples] * ramp_a
-    return joined, torch.cat([audio[:, :-samples], mixed, clip.audio[:, samples:]], dim=1)
-
-
-def _cat_audio(left: torch.Tensor | None, right: torch.Tensor | None) -> torch.Tensor | None:
-    if left is None:
-        return right
-    if right is None:
-        return left
-    return torch.cat([left, right], dim=1)

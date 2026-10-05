@@ -69,11 +69,6 @@ class Registry:
         self._touch(key)
         return model
 
-    def keep_only(self, *keep: str) -> None:
-        """Names, so a caller need not hold the specs."""
-        for key in [k for k in self._resident if k not in keep]:
-            self.evict(key)
-
     def evict(self, key: str) -> None:
         if key not in self._resident:
             return
@@ -87,9 +82,6 @@ class Registry:
         gc.collect()
         torch.cuda.empty_cache()
         _drop_page_cache(spec.checkpoints)
-
-    def evict_all(self) -> None:
-        self.keep_only()
 
     def resident(self) -> list[str]:
         return list(self._order)

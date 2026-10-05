@@ -34,8 +34,6 @@ from difflab.models.convrot import ConvRotLinear, stack_lora
 from difflab.models.minimax_h3 import config, weights
 from difflab.models.minimax_h3.attention import use_int8_attention
 
-MODALITY_NUM = 3  # video 0, text 1, audio 2
-
 
 def _bias(linear: nn.Linear) -> torch.Tensor | None:
     return None if linear.bias is None else linear.bias.float()

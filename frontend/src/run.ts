@@ -18,12 +18,6 @@ export interface Step {
   /** The job row this was played from; `null` for a run handed one job rather than a project's list. */
   jobId: number | null
   state: StepState
-  /**
-   * This job's own share of its own work, never multiplied by "2 of 3": a director stage is ~800 s
-   * of VLM with no honest total, and the job after it may be an edit that takes forty seconds.
-   * `null` until it reports one, and a mode that plans nothing never does.
-   */
-  fraction: number | null
   seconds: number
   error: string
   /** Relative to output/, as `job.end` names it. */
@@ -38,7 +32,6 @@ export interface Item {
   seconds: number
   seed: number | null
   prompt: string
-  version: number
   /** Paths relative to the run directory, as the events name them. */
   opening: string
   references: string[]
@@ -75,25 +68,17 @@ export interface RunState {
   /** What `job.*` says the list is, which is known from the first job rather than from the last. */
   stepsTotal: number
   items: Item[]
-  fraction: number
-  eta: number | null
-  etaSure: boolean
   elapsed: number
   error: string
-  lingering: boolean
   /** Relative to output/, not to the run. */
   finalVideo: string
   /** Newest last, and relative to output/ like finalVideo. */
   artifacts: Artifact[]
   /**
    * Set by `plan` only, never inferred from "are there items": a single clip emits a preview per
-   * sampling step and the fold gives each one an item, so it would read as a chain and draw
-   * `fraction`, which nothing but `plan.update` ever moves.
+   * sampling step and the fold gives each one an item, so it would read as a chain.
    */
   planned: boolean
-  /** Whether a `plan.update` has set `elapsed` and `eta`; until one does, `elapsed` is the clock. */
-  paced: boolean
-  /** The only clock a run that never plans has. */
   startedAt: number
   stage: string
   /**
@@ -121,16 +106,11 @@ export function emptyRun(id = ''): RunState {
     step: -1,
     stepsTotal: 0,
     items: [],
-    fraction: 0,
-    eta: null,
-    etaSure: false,
     elapsed: 0,
     error: '',
-    lingering: false,
     finalVideo: '',
     artifacts: [],
     planned: false,
-    paced: false,
     startedAt: 0,
     stage: '',
     stageFraction: null,
@@ -152,7 +132,6 @@ function item(run: RunState, index: number): Item {
       seconds: 0,
       seed: null,
       prompt: '',
-      version: 1,
       opening: '',
       references: [],
       preview: '',
@@ -174,7 +153,6 @@ function step(run: RunState, index: number): Step {
       mode: '',
       jobId: null,
       state: 'pending',
-      fraction: null,
       seconds: 0,
       error: '',
       made: '',
@@ -187,9 +165,7 @@ function step(run: RunState, index: number): Step {
 /** The kinds are `core/protocol.py`'s, written into `events.ts`; a kind the page does not draw falls through. */
 export function apply(run: RunState, event: Event): void {
   run.lastEvent = event.t ?? run.lastEvent
-  // Elapsed rides on `plan.update` where something sends it; until then it is the clock, or the header
-  // reads `ELAPSED 0s` for the whole render and afterwards.
-  if (!run.paced && run.startedAt && run.lastEvent) run.elapsed = run.lastEvent - run.startedAt
+  if (run.startedAt && run.lastEvent) run.elapsed = run.lastEvent - run.startedAt
 
   switch (event.kind) {
     case 'run.start':
@@ -208,10 +184,6 @@ export function apply(run: RunState, event: Event): void {
       run.step = index
       break
     }
-    case 'job.progress':
-      run.stepsTotal = event.total ?? run.stepsTotal
-      step(run, event.index).fraction = typeof event.fraction === 'number' ? event.fraction : null
-      break
     case 'job.end': {
       const index = event.index
       run.stepsTotal = event.total ?? run.stepsTotal
@@ -231,17 +203,6 @@ export function apply(run: RunState, event: Event): void {
       run.items = []
       ;(event.items ?? []).forEach((label: string, i: number) => (item(run, i).label = label))
       break
-    case 'plan.update':
-      run.paced = true
-      run.fraction = event.fraction ?? run.fraction
-      run.eta = typeof event.eta === 'number' ? event.eta : null
-      run.etaSure = !!event.eta_sure
-      run.elapsed = event.elapsed ?? run.elapsed
-      ;(event.states ?? []).forEach((state: string, i: number) => {
-        item(run, i).state = state as ItemState
-        item(run, i).activity = (event.activity ?? [])[i] ?? ''
-      })
-      break
     case 'item.begin':
       Object.assign(item(run, event.index), { state: 'running', activity: 'preparing' })
       break
@@ -252,34 +213,16 @@ export function apply(run: RunState, event: Event): void {
         activity: event.activity ?? '',
       })
       break
-    case 'items.reset':
-      // A re-roll rewinds the chain: what these chunks made belongs to a take that no longer exists.
-      for (const it of run.items.slice(event.start ?? 0)) {
-        Object.assign(it, {
-          state: 'pending',
-          activity: '',
-          seconds: 0,
-          preview: '',
-          poster: '',
-          video: '',
-          previewStep: null,
-        })
-      }
-      break
     case 'item.info':
       Object.assign(item(run, event.index), {
         prompt: event.prompt ?? '',
         seed: event.seed ?? null,
-        version: event.version ?? 1,
         opening: event.opening ?? '',
         references: event.references ?? [],
       })
       break
     case 'item.video':
       Object.assign(item(run, event.index), { video: event.video ?? '', seed: event.seed ?? item(run, event.index).seed })
-      break
-    case 'item.superseded':
-      item(run, event.index).video = '' // the file is still there, but it is no longer this take's chunk
       break
     case 'preview':
       // A render with no chunks previews under `item: null`; the fold hangs those on a first item.
@@ -353,19 +296,12 @@ export function apply(run: RunState, event: Event): void {
     case 'final':
       run.finalVideo = event.video ?? ''
       break
-    case 'linger':
-      run.lingering = true
-      break
-    case 'linger.end':
-      run.lingering = false
-      break
     case 'error':
       run.error = event.text ?? ''
       break
     case 'run.end':
       run.status = event.ok ? 'done' : 'failed'
       run.error = run.error || (event.error ?? '')
-      run.lingering = false
       break
   }
 }
@@ -404,8 +340,7 @@ export function timeLeft(run: RunState): string {
   // A run that is over is not "working", and a single clip never has an ETA to fall back on - it
   // has no plan to predict from - so without this every finished one read as still going.
   if (run.status !== 'live') return run.status === 'done' ? 'done' : run.status
-  if (run.eta === null) return 'working'
-  return `${duration(run.eta)} left${run.etaSure ? '' : ' at least'}`
+  return 'working'
 }
 
 export function duration(seconds: number): string {

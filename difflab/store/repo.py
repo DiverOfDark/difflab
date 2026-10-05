@@ -84,19 +84,11 @@ def set_run_state(connection: sqlite3.Connection, run_id: str, state: str) -> No
     connection.execute("UPDATE runs SET state = ? WHERE id = ?", (state, run_id))
 
 
-def describe_run(connection: sqlite3.Connection, run_id: str, title: str | None = None) -> None:
-    connection.execute("UPDATE runs SET title = coalesce(?, title) WHERE id = ?", (title, run_id))
-
-
 def end_run(connection: sqlite3.Connection, run_id: str, ok: bool, error: str = "", at: float | None = None) -> None:
     state = DONE if ok else (CANCELLED if error.startswith("cancelled") else FAILED)
     connection.execute(
         "UPDATE runs SET state = ?, error = ?, ended_at = ? WHERE id = ?", (state, error, _now(at), run_id)
     )
-
-
-def set_dir_present(connection: sqlite3.Connection, run_id: str, present: bool) -> None:
-    connection.execute("UPDATE runs SET dir_present = ? WHERE id = ?", (int(present), run_id))
 
 
 def next_run_id(connection: sqlite3.Connection, stamp: str) -> str:
@@ -167,10 +159,6 @@ def queued_jobs(connection: sqlite3.Connection) -> list[Job]:
 
 def start_job(connection: sqlite3.Connection, job_id: int, at: float | None = None) -> None:
     connection.execute("UPDATE jobs SET state = ?, started_at = ? WHERE id = ?", (RUNNING, _now(at), job_id))
-
-
-def set_job_progress(connection: sqlite3.Connection, job_id: int, fraction: float) -> None:
-    connection.execute("UPDATE jobs SET progress = ? WHERE id = ?", (fraction, job_id))
 
 
 def end_job(

@@ -8,7 +8,6 @@ import re
 from dataclasses import replace
 from typing import Any
 
-from difflab.core import ui
 from difflab.models.exl3vl import ANY_JSON
 from difflab.models.minimax_h3 import caption
 from difflab.screenplay import checks as lint
@@ -137,21 +136,3 @@ def write_one(take: compose.Take, index: int) -> compose.Take:
         h3.DIRECTOR_WRITE_TOKENS, h3.DIRECTOR_WRITE_TEMPERATURE, schema=shape(len(written)),
     )  # fmt: skip
     return _with_prose(take, index, data)
-
-
-# --- compile, check, save ------------------------------------------------------------------------------
-def check_take(take: compose.Take) -> tuple[list[compose.Compiled], list[caption.Problem]]:
-    """Compile every chunk and run the whole gate once more, across chunks too.
-
-    What it finds is shown and the take goes on: every rule here is one a stage already asked its
-    model to meet with repairs, so an answer still breaking it was kept on purpose, and refusing now
-    would throw away the whole write stage over what that stage settled.
-    """
-    compiled = [compose.compile_chunk(take, index) for index in range(len(take.chunks))]
-    problems = lint.cross_chunk_rules(take, [c.prompt for c in compiled]) + lint.plan_rules(take)
-    for index in range(len(take.chunks)):
-        problems += chunk_problems(take, index)
-    if problems:
-        rows = {f"{p.severity} · {p.code} {i}": p.message for i, p in enumerate(problems)}
-        ui.panel("director: the gate", rows, color="red" if caption.errors(problems) else "yellow")
-    return compiled, problems

@@ -10,14 +10,14 @@ from __future__ import annotations
 
 import contextvars
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from difflab.core.events import Run
-    from difflab.core.ui import Overview, Tally
+    from difflab.core.ui import Tally
 
 
 class Cancelled(Exception):  # noqa: N818 - control flow, not an error
@@ -31,8 +31,6 @@ class Context:
     quiet: bool = False
     cancel: threading.Event = field(default_factory=threading.Event)
     tally: Tally | None = None
-    overview: Overview | None = None
-    reporting: Callable[[float], None] | None = None
     # Which clip the next previews belong to. A long video sets it per chunk; a single clip leaves it.
     preview_item: int | None = None
     preview_name: str = "clip"

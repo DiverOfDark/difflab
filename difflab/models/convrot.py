@@ -13,7 +13,6 @@ weights stay 19.5 GB instead of 37.5 GB. The same three steps by hand in PyTorch
 the activation and measured 1.8-3.5x slower (59-105 TOPS against 178-210).
 """
 
-import functools
 import json
 from typing import cast
 
@@ -25,34 +24,9 @@ GROUP = 256
 _H4 = [[1.0, 1, 1, -1], [1, 1, -1, 1], [1, -1, 1, 1], [-1, 1, 1, 1]]
 
 
-@functools.cache
-def hadamard(device: torch.device, dtype: torch.dtype = torch.float32) -> torch.Tensor:
-    """The 256x256 ConvRot basis: kron^4(H4) / 16."""
-    h = torch.tensor(_H4, dtype=torch.float64)
-    for _ in range(3):
-        h = torch.kron(h, torch.tensor(_H4, dtype=torch.float64))
-    return (h / 16.0).to(device=device, dtype=dtype)
-
-
-def is_quantized(state_dict: dict[str, torch.Tensor], prefix: str) -> bool:
-    return f"{prefix}.comfy_quant" in state_dict
-
-
 def read_quant_meta(blob: torch.Tensor) -> dict[str, object]:
     meta: dict[str, object] = json.loads(bytes(blob.tolist()).decode())
     return meta
-
-
-def rotate(x: torch.Tensor, h: torch.Tensor) -> torch.Tensor:
-    """Apply H to the last dimension in 256-wide groups."""
-    *lead, k = x.shape
-    return (x.reshape(-1, k // GROUP, GROUP).to(h.dtype) @ h).reshape(*lead, k)
-
-
-def dequantize(weight: torch.Tensor, scale: torch.Tensor, dtype: torch.dtype = torch.bfloat16) -> torch.Tensor:
-    """Undo the quantization and the rotation: a dense [N, K] weight."""
-    h = hadamard(weight.device)
-    return rotate(weight.to(torch.float32) * scale.to(torch.float32), h).to(dtype)
 
 
 class ConvRotLinear(nn.Module):

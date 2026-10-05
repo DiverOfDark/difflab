@@ -150,20 +150,6 @@ class Plan(Event):
 
 
 @dataclass(frozen=True)
-class PlanUpdate(Event):
-    KIND = "plan.update"
-    fraction: float
-    eta: int | None
-    eta_sure: bool
-    elapsed: int
-    states: list[str]
-    activity: list[str]
-
-    def gauge(self) -> str:
-        return self.KIND
-
-
-@dataclass(frozen=True)
 class ItemBegin(Event):
     KIND = "item.begin"
     index: int
@@ -175,12 +161,6 @@ class ItemEnd(Event):
     index: int
     seconds: float
     activity: str
-
-
-@dataclass(frozen=True)
-class ItemsReset(Event):
-    KIND = "items.reset"
-    start: int
 
 
 @dataclass(frozen=True)
@@ -201,13 +181,6 @@ class ItemVideo(Event):
     version: int
     video: str
     seed: int
-
-
-@dataclass(frozen=True)
-class ItemSuperseded(Event):
-    KIND = "item.superseded"
-    index: int
-    version: int
 
 
 @dataclass(frozen=True)
@@ -255,14 +228,6 @@ class JobBegin(Event):
 
 
 @dataclass(frozen=True)
-class JobProgress(Event):
-    KIND = "job.progress"
-    index: int
-    total: int
-    fraction: float
-
-
-@dataclass(frozen=True)
 class JobEnd(Event):
     KIND = "job.end"
     index: int
@@ -272,16 +237,6 @@ class JobEnd(Event):
     error: str
     made: str
     seconds: float
-
-
-@dataclass(frozen=True)
-class Linger(Event):
-    KIND = "linger"
-
-
-@dataclass(frozen=True)
-class LingerEnd(Event):
-    KIND = "linger.end"
 
 
 EVENTS: tuple[type[Event], ...] = tuple(
@@ -316,24 +271,10 @@ class Command:
 
 
 @dataclass(frozen=True)
-class Stop(Command):
-    """Finish the chunk in flight, then join what exists."""
-
-    CMD = "stop"
-
-
-@dataclass(frozen=True)
 class Cancel(Command):
     """Abandon the chunk in flight now."""
 
     CMD = "cancel"
-
-
-@dataclass(frozen=True)
-class Finish(Command):
-    """End a run that is lingering."""
-
-    CMD = "finish"
 
 
 @dataclass(frozen=True)
@@ -348,21 +289,7 @@ class Resume(Command):
     CMD = "resume"
 
 
-@dataclass(frozen=True)
-class Reroll(Command):
-    CMD = "reroll"
-    item: int
-    seed: int | None = None
-
-
-@dataclass(frozen=True)
-class Edit(Command):
-    CMD = "edit"
-    item: int
-    prompt: str
-
-
-COMMANDS: dict[str, type[Command]] = {cls.CMD: cls for cls in (Stop, Cancel, Finish, Pause, Resume, Reroll, Edit)}
+COMMANDS: dict[str, type[Command]] = {cls.CMD: cls for cls in (Cancel, Pause, Resume)}
 
 
 def command(data: Any) -> Command:

@@ -1,13 +1,11 @@
 """Qwen-Image-Edit block: a frame in, an edited frame out.
 
-Cached by what went into it, which matters beyond not paying twice: a plate used as a take's
-reference must come back bit for bit, or every chunk holding it keys differently and the take is
-rendered again.
+Cached by what went into it, which matters beyond not paying twice: a drawn reference must come
+back bit for bit, or every chunk holding it keys differently and the take is rendered again.
 """
 
 from __future__ import annotations
 
-import math
 from collections.abc import Sequence
 from typing import Any
 
@@ -20,10 +18,6 @@ from difflab.core.keys import key
 from difflab.core.settings import EditSettings
 from difflab.core.types import Frame
 from difflab.models.qwen_edit import Editor
-
-VAE_REFERENCE_AREA = 1024 * 1024
-"""The pixel area QwenImageEditPlus encodes every input at for its VAE reference latents. Not a knob:
-a fact about the pipeline, which `vae_reference_size` exists only to agree with."""
 
 
 def spec(checkpoint: str) -> models.ModelSpec:
@@ -79,44 +73,3 @@ def edit(
         **({"donors": [donor.pixels for donor in donors]} if donors else {}),
     )
     return default_cache.frame(made, produce)
-
-
-def vae_reference_size(frame: Frame, area: int = VAE_REFERENCE_AREA) -> tuple[int, int]:
-    """The size diffusers encodes `frame` at as its VAE reference: `area`, on the /32 grid.
-
-    Output at exactly this size and an in-place edit lands on the reference latent 1:1, so the model
-    replaces around the subject instead of re-composing it; a mismatched size is where a plate's zoom
-    and crop drift come from. Each axis rounds to /32 on its own, so the result can sit up to ~1.5%
-    off the input's aspect, which `take.cast.Plate.recut` takes back out.
-
-    Not `minimax_h3.pipeline.reference_size`, which is H3's reference encoding and a different thing.
-    """
-    scale = math.sqrt(area / (frame.width * frame.height))
-    align = 32
-    return (
-        max(align, round(frame.width * scale / align) * align),
-        max(align, round(frame.height * scale / align) * align),
-    )
-
-
-def plate(frame: Frame, instruction: str, settings: EditSettings | None = None) -> Frame:
-    """A reference photo cleaned up for a take: `edit` at the editor's own VAE reference size.
-
-    A reference picture lends H3 everything in it - the face, and also the sofa, the blanket and the
-    hose in someone's hand, which come back as a cut to that room or as a second hose. A plate keeps
-    ONE subject on ONE flat backdrop. Never a grid of several subjects on one picture: video models
-    copy panel layouts. Judge it against the ORIGINAL crop (`core.media.sheet`), never against another
-    plate or a rendered frame - comparing drift with drift hides it.
-
-    The instruction has the same shape every time, and the realism clause is positive because the
-    editor runs at cfg 1 and the negative prompt is dropped entirely:
-
-        [remove X, and say what fills the gap]. Replace [the named background things] with
-        [the backdrop]. Keep [subject] exactly as it is: [the traits the photograph shows], same
-        pose, framing and light. Keep it an unretouched real photograph with natural skin texture
-        and visible pores.
-
-    `settings.megapixels` does not apply - the size is the reference size - so the seed is the only
-    knob a plate turns.
-    """
-    return edit(frame, instruction, settings, size=vae_reference_size(frame))

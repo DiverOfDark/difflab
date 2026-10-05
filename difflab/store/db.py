@@ -405,6 +405,15 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         )
         """,
     ),
+    # Never written or never read since they shipped.
+    (
+        "DROP TABLE plates",
+        "DROP TABLE audio",
+        "ALTER TABLE members DROP COLUMN voice",
+        "ALTER TABLE conflicts DROP COLUMN reference_shows",
+        "ALTER TABLE runs DROP COLUMN dir_present",
+    ),
+    ("ALTER TABLE jobs DROP COLUMN progress",),
 )
 
 SCHEMA_VERSION = len(MIGRATIONS)

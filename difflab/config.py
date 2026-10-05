@@ -42,9 +42,5 @@ DASHBOARD = True  # serve it whenever something runs; runs are recorded under RU
 # but the defaults are the same values, so pressing Run changes nothing.
 DASHBOARD_HOST = os.environ.get("DIFFLAB_HOST", "0.0.0.0")  # LAN-reachable; "127.0.0.1" for this machine only
 DASHBOARD_PORT = int(os.environ.get("DIFFLAB_PORT", "8765"))
-# Whether a long video keeps its process up so a weak chunk can be re-rolled from the browser. Off,
-# because the wait has no end: it holds the card until someone presses "finish". Re-rolling afterwards
-# means rendering again, which the chunk cache makes cheap - only the changed chunks are sampled.
-DASHBOARD_LINGER = False
 RUNS_DIR = OUTPUT_DIR / "runs"
 RUNS_KEEP = 10  # older run directories are deleted at startup; final images and videos are kept

@@ -15,15 +15,6 @@ def load_image(path: str | Path) -> Image.Image:
         return ImageOps.exif_transpose(img).convert("RGB")
 
 
-def load_video_frame(path: str | Path, index: int = 0) -> Image.Image:
-    with av.open(str(path)) as container:
-        for i, frame in enumerate(container.decode(video=0)):
-            if i == index:
-                image: Image.Image = frame.to_image()
-                return image.convert("RGB")
-    raise ValueError(f"{path} has no frame {index}")
-
-
 def load_video_frames(
     path: str | Path, limit: int | None = None, start: float = 0.0, size: tuple[int, int] | None = None
 ) -> tuple[list[Image.Image], float]:
@@ -70,10 +61,6 @@ def megapixel_size(width: int, height: int, megapixels: float) -> tuple[int, int
 
 def resize_to(img: Image.Image, size: tuple[int, int]) -> Image.Image:
     return img.resize(size, Image.Resampling.LANCZOS)
-
-
-def resize_to_megapixels(img: Image.Image, megapixels: float) -> Image.Image:
-    return resize_to(img, megapixel_size(img.width, img.height, megapixels))
 
 
 def save_result(

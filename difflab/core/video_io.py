@@ -134,13 +134,3 @@ class VideoWriter:
             self._container.mux(self._audio.encode(None))
         self._container.close()
         return self.path
-
-
-def probe_duration(path: str | Path, fallback_fps: int = 24) -> float:
-    """Seconds of video in a file, from its frame count and rate (the graph's dangling measuring chain)."""
-    with av.open(str(path)) as container:
-        stream = container.streams.video[0]
-        if stream.frames and stream.average_rate:
-            return float(stream.frames / stream.average_rate)
-        frames = sum(1 for _ in container.decode(video=0))
-        return float(frames / (stream.average_rate or fallback_fps))

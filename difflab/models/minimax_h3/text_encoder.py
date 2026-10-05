@@ -58,9 +58,6 @@ VISION_CONFIG = {
     "deepstack_visual_indexes": [8, 16, 24],
     "in_channels": 3,
 }
-# The conditioning is this layer's output, counting the embedding as layer 0.
-CONDITION_LAYER = 50
-
 VISION_START, VISION_END, PAD_TOKEN = 151652, 151653, 151643
 # Qwen3-VL normalizes images to [-1, 1] (mean/std 0.5), unlike Qwen2.5-VL's CLIP statistics.
 IMAGE_MEAN = IMAGE_STD = (0.5, 0.5, 0.5)
@@ -392,11 +389,6 @@ MINIMAX_TOKENS = (
     "<|caption_end|>",
 )
 FIRST_MINIMAX_TOKEN = 151669
-
-
-def uses_minimax_tokens(prompt: str) -> bool:
-    """Whether `prompt` tokenizes differently since the MiniMax tokens were registered."""
-    return any(token in prompt for token in MINIMAX_TOKENS)
 
 
 def load_tokenizer(path: str | Path | None = None) -> PreTrainedTokenizerBase:

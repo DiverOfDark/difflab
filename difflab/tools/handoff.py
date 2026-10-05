@@ -35,11 +35,9 @@ def handoff(
     tail_frames: int,
     anchor: Frame | None = None,
     strength: float = 0.0,
-    opening: Frame | None = None,
 ) -> Handoff:
     """The sharpest of the last `window` frames and the `tail_frames` before it, both pulled toward
-    `anchor`'s colour by `strength` when one is given (`Continuity.color_anchor`), and smoothed back to
-    the mottle of `opening`, the frame this chunk began on, when that is given (`Continuity.texture_hold`)."""
+    `anchor`'s colour by `strength` when one is given (`Continuity.color_anchor`)."""
     cut = media.sharpest_index(clip, window)
     frame = clip.frame(cut)
     tail = clip.tail(tail_frames, before=cut) if tail_frames else None
@@ -47,10 +45,6 @@ def handoff(
         gain = media.color_gain(frame, anchor, strength)
         frame = media.recolored(frame, gain)
         tail = media.recolored(tail, gain) if tail is not None else None
-    if opening is not None:
-        eps = media.texture_eps(frame, opening)
-        frame = media.smoothed(frame, eps)
-        tail = media.smoothed(tail, eps) if tail is not None else None
     return Handoff(frame, tail, cut)
 
 
@@ -61,13 +55,11 @@ def handoff_key(
     anchor: Frame | None,
     strength: float,
     hold: float = 0.0,
-    texture: bool = False,
 ) -> Key:
     """Keyed by the chunk it comes from and what was taken from it. The anchor and the hold count only
     when applied, so turning either off does not move every handoff."""
     pulled = anchor.pixels if anchor is not None and strength else None
     held = {"hold": hold} if hold else {}
-    held |= {"texture": 1} if texture else {}
     return key(
         "handoff", 1, chunk=str(chunk), window=window, tail_frames=tail_frames, anchor=pulled, strength=strength, **held
     )

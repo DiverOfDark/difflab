@@ -116,7 +116,7 @@ def run_render_shot(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
     they were made of, so a shot already on disk is skipped and a re-rolled one moves its own key and
     the key of every shot chained after it."""
     video = VideoSettings(**settings["video"]).with_(seed=int(inputs["seed"]), duration=float(inputs["seconds"]))
-    continuity = Continuity(**settings["continuity"])
+    continuity, _ = Continuity.resolve(settings["continuity"])
     prompt = str(inputs["prompt"])
     opening = _frame(inputs["opening"])
     closing = _frame(inputs["closing"]) if inputs.get("closing") else None
@@ -131,7 +131,7 @@ def run_render_shot(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
     # A shot that ends on the next one's keyframe is cut on its very last frame, the one pinned to it.
     window = 1 if closing is not None else continuity.handoff_window
     hold = continuity.color_hold
-    at = handoff.handoff_key(chunk, window, continuity.tail_frames, anchor, strength, hold, continuity.texture_hold)
+    at = handoff.handoff_key(chunk, window, continuity.tail_frames, anchor, strength, hold)
     finished = key("held", 1, chunk=str(chunk), hold=hold) if hold else chunk
     latents_file, mp4, soundtrack = (
         cache.path(chunk, ".pt"),
@@ -185,9 +185,7 @@ def run_render_shot(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
         with ui.step("Holding colour"):
             clip = media.hold_colour(clip, opening, hold)
     with ui.step("Handoff") as detail:
-        made = handoff.handoff(
-            clip, window, continuity.tail_frames, anchor, strength, opening if continuity.texture_hold else None
-        )
+        made = handoff.handoff(clip, window, continuity.tail_frames, anchor, strength)
         handoff.save(made, at)
         carried = f" · {len(made.tail)} frames of tail" if made.tail is not None else ""
         detail(f"frame {made.cut + 1} of {len(clip)}{carried}")

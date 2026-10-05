@@ -10,7 +10,7 @@ video keeps one frame and a short tail from every chunk: at 2 MP, views would pi
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -143,15 +143,3 @@ class Clip:
     def __repr__(self) -> str:
         audio = f", {self.audio.shape[1] / self.sample_rate:.2f}s audio" if self.audio is not None else ""
         return f"Clip({len(self)} frames, {self.duration:.2f}s @ {self.fps}fps{audio})"
-
-
-@dataclass
-class Storyboard:
-    """A long video as a list of beats, one chunk each, written before anything renders so the whole
-    arc is decided up front rather than one chunk at a time."""
-
-    beats: list[str] = field(default_factory=list)
-    title: str = "untitled"
-
-    def __len__(self) -> int:
-        return len(self.beats)

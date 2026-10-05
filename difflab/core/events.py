@@ -5,7 +5,7 @@ rows are the whole interface: a watcher needs no hook into the render beyond ope
 database, so it can live in this process or another one. Anything too big for a row - preview clips,
 finished chunks, thumbnails - is still written into the run directory and named by its path relative
 to it (`path`, `rel`), which is what `GET /runs/<id>/<path>` serves. Control flows back the same way,
-as rows `take_controls` picks up.
+as `commands` rows the worker takes.
 
 What moving the index out of the directory costs, and it is a real cost: `tail -f` and `cat` on a
 dead render are gone. `sqlite3 output/factory.db "select * from events where run_id = '<id>'"` is
@@ -64,8 +64,6 @@ def _log(kind: str, data: dict[str, Any]) -> None:
         total = data.get("total")
         count = f"{data.get('done')}/{total}" if total else str(data.get("done"))
         log.info("%s: %s %s (%ss)", data.get("label"), count, data.get("unit", "step"), data.get("elapsed"))
-    elif kind == "job.progress":
-        log.info("job %s/%s: %.1f%%", data.get("index"), data.get("total"), 100 * data.get("fraction", 0.0))
     elif kind == "error":
         log.error("%s", data.get("text", "").rstrip())
     elif kind.endswith(".end") and not data.get("ok", True):
@@ -112,16 +110,6 @@ class Run:
 
     def rel(self, path: Path) -> str:
         return path.resolve().relative_to(self.dir.resolve()).as_posix()
-
-    def take_controls(self) -> list[protocol.Command]:
-        """Commands the dashboard has left since the last call. Never raises: see `record.commands`."""
-        taken = []
-        for data in record.commands():
-            try:
-                taken.append(protocol.command(data))
-            except ValueError as problem:
-                print(f"difflab: a command was ignored ({problem})", file=sys.stderr, flush=True)
-        return taken
 
     def end(self, ok: bool, error: str = "") -> None:
         if self.ended:
@@ -254,7 +242,6 @@ def _prune(root: Path, keep: int) -> None:
             print(f"difflab: keeping run {stale.name}, which is still being written", file=sys.stderr, flush=True)
             continue
         shutil.rmtree(stale, ignore_errors=True)
-        record.run_pruned(stale.name)
 
 
 def _writing(run_id: str) -> bool:

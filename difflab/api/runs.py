@@ -50,10 +50,6 @@ def one(run_id: str) -> dict[str, Any] | None:
     }
 
 
-def live() -> dict[str, Any] | None:
-    return next((run for run in runs() if run["status"] == "live"), None)
-
-
 def gone(run_id: str) -> bool:
     """True once a run has stopped saying anything for good - it ended, or it died without saying so."""
     summary = one(run_id)
@@ -154,7 +150,6 @@ def _job(job: store.Job, tasks: list[store.Task]) -> dict[str, Any]:
         "inputs": job.inputs,
         "outputs": job.outputs,
         "settings": job.settings,
-        "progress": job.progress,
         "started": job.started_at,
         "ended": job.ended_at,
         "error": job.error,

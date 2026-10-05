@@ -35,27 +35,10 @@ def run_started(run_id: str, at: float, title: str = "", pid: int | None = None)
     _write("the run", start)
 
 
-def run_titled(title: str) -> None:
-    run_id = context.current().run_id
-    if run_id is not None:
-        _write("the run's title", lambda c: store.describe_run(c, run_id, title=title))
-
-
 def run_ended(ok: bool, error: str = "") -> None:
     run_id = context.current().run_id
     if run_id is not None:
         _write("the end of the run", lambda c: store.end_run(c, run_id, ok, error))
-
-
-def run_pruned(run_id: str) -> None:
-    """`events._prune` rmtreeing a run directory. The row stays."""
-    _write("a pruned run", lambda c: store.set_dir_present(c, run_id, False))
-
-
-def job_progress(fraction: float) -> None:
-    job_id = context.current().job_id
-    if job_id is not None:
-        _write("the job's progress", lambda c: store.set_job_progress(c, job_id, fraction))
 
 
 def artifact_made(path: Path, kind: str, seed: int | None = None, key: str | None = None) -> None:
@@ -109,23 +92,6 @@ def stage(event: protocol.Event) -> None:
         ended = _write("the end of the task", end)
         if ended is not None and ended == ctx.task_id:
             ctx.task_id = None
-
-
-def commands() -> list[dict[str, Any]]:
-    """What a page has asked this run or its running job to do, handed over exactly once."""
-    ctx = context.current()
-    run_id, job_id = ctx.run_id, ctx.job_id
-    if run_id is None:
-        return []
-
-    def take(connection: sqlite3.Connection) -> list[dict[str, Any]]:
-        with store.transaction(connection):
-            taken = store.take_commands(connection, "run", run_id)
-            if job_id is not None:
-                taken += store.take_commands(connection, "job", str(job_id))
-            return [command.value() for command in taken]
-
-    return _read("this run's commands", take, [])
 
 
 # `OSError` as well as `sqlite3.Error`: a DB_PATH whose parent is not a directory fails in `connect`'s

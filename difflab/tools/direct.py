@@ -66,10 +66,6 @@ TAKE: ContextVar[int] = ContextVar("director_take", default=0)
 KINDS = ("person", "animal", "object", "environment")
 
 
-# In the order `ui.tally` counts them on the progress line.
-STAGES = ("survey", "ground", "cards", "opening", "tidy", "arrange", "plan", "write")
-
-
 ID = re.compile(rf"^[a-z][a-z_]{{0,{h3.DIRECTOR_ID_LENGTH - 1}}}$")
 
 

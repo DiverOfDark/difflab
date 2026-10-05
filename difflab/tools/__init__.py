@@ -74,7 +74,3 @@ TOOLS: tuple[Tool, ...] = (
     Tool("write_shot", 1, ("load VLM", "write"), DirectorSettings, "one shot's prose"),
     Tool("compile_shot", 1, ("compile",), None, "the caption H3 is handed, and the pictures with it"),
 )
-
-
-def catalog() -> list[dict[str, Any]]:
-    return [tool.describe() for tool in TOOLS]

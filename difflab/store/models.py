@@ -41,7 +41,7 @@ APPROVED = "approved"
 STALE = "stale"
 PINNED = "pinned"
 MADE_STATES = (MISSING, QUEUED, RUNNING, MADE, FAILED, NEEDS_REVIEW, APPROVED, STALE, PINNED)
-MADE_KINDS = ("keyframe", "prompt", "clip", "audio", "reference", "plate")
+MADE_KINDS = ("keyframe", "prompt", "clip", "reference")
 
 PROVIDED = "provided"  # a keyframe someone gave: a file under output/
 CHAINED = "chained"  # a keyframe that is the previous shot's handoff frame
@@ -63,7 +63,6 @@ class Run:
     ended_at: float | None
     error: str
     pid: int | None
-    dir_present: bool
 
     @property
     def settled(self) -> bool:
@@ -94,7 +93,6 @@ class Run:
             ended_at=_maybe_number(row["ended_at"]),
             error=_text(row["error"]),
             pid=_whole(row["pid"]),
-            dir_present=bool(row["dir_present"]),
         )
 
 
@@ -118,7 +116,6 @@ class Job:
     started_at: float | None
     ended_at: float | None
     error: str
-    progress: float | None
 
     @property
     def settled(self) -> bool:
@@ -146,7 +143,6 @@ class Job:
             started_at=_maybe_number(row["started_at"]),
             ended_at=_maybe_number(row["ended_at"]),
             error=_text(row["error"]),
-            progress=_maybe_number(row["progress"]),
         )
 
 
@@ -397,24 +393,6 @@ class Clip(Made):
 
 
 @dataclass(frozen=True, kw_only=True)
-class Audio(Made):
-    shot_id: int
-    lines: list[dict[str, Any]]
-    voice: str
-    duration: float | None
-
-    @classmethod
-    def of(cls, row: sqlite3.Row) -> Audio:
-        return cls(
-            **_made(row),
-            shot_id=int(row["shot_id"]),
-            lines=[dict(line) for line in _list(row["lines"])],
-            voice=_text(row["voice"]),
-            duration=_maybe_number(row["duration"]),
-        )
-
-
-@dataclass(frozen=True, kw_only=True)
 class Member:
     """`identity` is the merged card: `traits` (part, phrase, short, name), `lights`, `photographed`."""
 
@@ -426,7 +404,6 @@ class Member:
     possessive: str
     find: str
     identity: dict[str, Any]
-    voice: dict[str, Any]
     position: int
     pinned: bool = False
 
@@ -441,7 +418,6 @@ class Member:
             possessive=_text(row["possessive"]),
             find=_text(row["find"]),
             identity=_json(row["identity"]),
-            voice=_json(row["voice"]),
             position=int(row["position"] or 0),
             pinned=bool(row["pinned"]) if "pinned" in row.keys() else False,  # noqa: SIM118
         )
@@ -485,29 +461,10 @@ class Reference(Made):
 
 
 @dataclass(frozen=True, kw_only=True)
-class Plate(Made):
-    ref_id: int
-    instruction: str
-    region: list[int]
-    seed: int | None
-
-    @classmethod
-    def of(cls, row: sqlite3.Row) -> Plate:
-        return cls(
-            **_made(row),
-            ref_id=int(row["ref_id"]),
-            instruction=_text(row["instruction"]),
-            region=[int(v) for v in _list(row["region"])],
-            seed=_whole(row["seed"]),
-        )
-
-
-@dataclass(frozen=True, kw_only=True)
 class Conflict:
     id: int
     member_id: int
     novel_says: str
-    reference_shows: str
     resolution: str
 
     @classmethod
@@ -516,7 +473,6 @@ class Conflict:
             id=int(row["id"]),
             member_id=int(row["member_id"]),
             novel_says=_text(row["novel_says"]),
-            reference_shows=_text(row["reference_shows"]),
             resolution=_text(row["resolution"]),
         )
 
