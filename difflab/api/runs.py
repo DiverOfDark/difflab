@@ -73,8 +73,11 @@ def control(run_id: str, command: dict[str, Any]) -> str:
     summary = one(run_id)
     if summary is None:
         return "no such run"
-    if summary["status"] not in ("live", "queued"):
+    # A paused run is waiting, not over: a judge pauses one on a failing clip, and resume is how it goes on.
+    if summary["status"] not in ("live", "queued", "paused"):
         return "that run is not running any more"
+    if summary["status"] == "paused" and not isinstance(parsed, ON_RUN):
+        return "no job of that run is in flight to take it"
     if summary["production"] is not None and not isinstance(parsed, ON_RUN):
         return "a production's shots are re-rolled and edited on the production, not on its run"
     try:
