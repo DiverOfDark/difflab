@@ -32,7 +32,7 @@ from difflab.core.settings import (
 from difflab.core.types import Clip, Frame
 from difflab.models.minimax_h3 import config as h3_config
 from difflab.models.minimax_h3 import pipeline, vae
-from difflab.models.minimax_h3.settings import EnlargeLatentsSettings, VideoPromptSettings, VideoSettings
+from difflab.models.minimax_h3.settings import VideoPromptSettings, VideoSettings
 from difflab.screenplay import compiler, drawn
 from difflab.screenplay import production as production_module
 from difflab.tools import (
@@ -41,7 +41,6 @@ from difflab.tools import (
     direct,
     draw_reference,
     edit_image,
-    enlarge_latents,
     enlarge_pixels,
     grade,
     handoff,
@@ -237,35 +236,31 @@ def run_assemble(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, 
 
 
 def run_enlarge_shot(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
-    """A rendered shot again at the finish's size: its own latents enlarged, held to the colour its chunk
-    was held to, so the 4K chapter joins and grades exactly as the native one did."""
+    """A rendered shot again at the finish's size: its own latents decoded, held to the colour its chunk
+    was held to, so the 4K chapter joins and grades exactly as the native one did, then enlarged."""
     video = VideoSettings(**settings["video"])
     continuity, _ = Continuity.resolve(settings["continuity"])
-    enlarging, _ = EnlargeLatentsSettings.resolve(settings["enlarge"])
+    enlarging, _ = EnlargePixelsSettings.resolve(settings["enlarge"])
     hold = continuity.color_hold
-    at = key("enlarged", 1, chunk=str(inputs["key"]), settings=enlarging, hold=hold)
+    megapixels = float(inputs["megapixels"])
+    at = key("enlarged", 2, chunk=str(inputs["key"]), settings=enlarging, megapixels=megapixels, hold=hold)
     mp4 = cache.path(at, ".mp4")
     outputs = {"chunk": store.relative(mp4), "key": str(at)}
     if mp4.is_file():
         ui.note(f"already enlarged as {at}")
         return Skipped(outputs)
-    stored = torch.load(_path(inputs["latents"]), map_location="cpu", weights_only=True)
-    sampled = stored["video"]
-    side = pipeline.SPATIAL_COMPRESSION
-    geometry = pipeline.Geometry(int(sampled.shape[-1]) * side, int(sampled.shape[-2]) * side, 0)
-    latents = render_chunk.Latents(sampled, stored["audio"], geometry, video, "")
-    holds: list[media.Hold] = []
+    sampled = torch.load(_path(inputs["latents"]), map_location="cpu", weights_only=True)["video"]
+    with ui.step("Decoding the shot") as detail:
+        frames = vae.decode_video(models.registry.acquire(render_chunk.video_vae_spec(video)), sampled)
+        detail(f"{len(frames)} frames · {frames.shape[2]}×{frames.shape[1]}")
     if hold:
-        with ui.step("Measuring the colour hold") as detail:
-            native = vae.decode_video(models.registry.acquire(render_chunk.video_vae_spec(video)), sampled)
-            holds = media.colour_hold(native, h3_config.FPS, _frame(inputs["opening"]), hold)
-            detail(f"{len(holds)} frames")
-            del native
+        frames = media.held(frames, media.colour_hold(frames, h3_config.FPS, _frame(inputs["opening"]), hold))
+    size = enlarge_pixels.finish_size(int(frames.shape[2]), int(frames.shape[1]), megapixels)
     partial = mp4.with_name(f"{mp4.stem}.partial.mp4")
-    width, height, frames = enlarge_latents.finish_chunk(latents, partial, holds, enlarging)
+    written = enlarge_pixels.finish(iter(frames), len(frames), partial, size, h3_config.FPS, enlarging)
     partial.replace(mp4)
     record.artifact_made(mp4, store.VIDEO, key=str(at))
-    return {**outputs, "size": [width, height], "frames": frames}
+    return {**outputs, "size": list(size), "frames": written}
 
 
 def run_finish(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:

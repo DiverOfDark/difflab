@@ -247,14 +247,19 @@ def render_chapter(chapter_id: int, asked_by: str = "person", keyframes_only: bo
             label="join the chapter",
         )
         # After the native join, so a watchable chapter exists an hour before the 4K one does.
-        enlarging, _ = settings.effective("enlarge_latents", production.id)
+        enlarging, _ = settings.effective("enlarge_pixels", production.id)
         retiming, _ = settings.effective("retime", production.id)
         enlarged = [
             store.add_job(
                 connection,
                 run_id,
                 "enlarge_shot",
-                {"latents": _output(job_id, "latents"), "key": _output(job_id, "key"), "opening": opening},
+                {
+                    "latents": _output(job_id, "latents"),
+                    "key": _output(job_id, "key"),
+                    "opening": opening,
+                    "megapixels": config.FINISH_MEGAPIXELS,
+                },
                 label=f"shot {position + 1}: enlarge",
                 settings={"video": video, "continuity": continuity_data, "enlarge": enlarging.data()},
             ).id

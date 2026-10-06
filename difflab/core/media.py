@@ -18,6 +18,10 @@ from difflab.core.audio import SAMPLE_RATE, load_audio
 from difflab.core.imaging import load_image, load_video_frames, save_result
 from difflab.core.types import Clip, Frame
 
+# x264's default 23 on the join and on RIFE's retime, after chunks written at 16, halved a 4K finish's
+# fine detail (laplacian variance 37 -> 21 on production 13, 2026-10-06): every re-encode is a generation.
+JOIN_CRF = 16
+
 
 def frame_from_image(path: str | Path) -> Frame:
     return Frame.from_pil(load_image(path), Path(path).name)
@@ -301,7 +305,7 @@ def _join_parts(
         count = 0
         for index, picture in enumerate(read_frames(video)):
             if writer is None:
-                writer = video_io.VideoWriter(path, picture.shape[1], picture.shape[0], fps, sample_rate)
+                writer = video_io.VideoWriter(path, picture.shape[1], picture.shape[0], fps, sample_rate, crf=JOIN_CRF)
             frame = picture.float().div_(255)
             count = index + 1
             if index < len(held):

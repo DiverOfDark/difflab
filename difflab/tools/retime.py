@@ -143,7 +143,7 @@ def retime_file(source: Path, path: Path, fps: int = 60, settings: RetimeSetting
             raise ValueError(f"no frames in {source}")
         height, width = int(first.shape[0]), int(first.shape[1])
         grid = rife.make_grid(width, height, config.DEVICE)
-        writer = video_io.VideoWriter(path, width, height, fps)
+        writer = video_io.VideoWriter(path, width, height, fps, crf=io.JOIN_CRF)
 
         # `before` is source frame `index` and `after` the one following it. Every source frame gets
         # its own turn, the last included - it is its own successor there, so the output frames after

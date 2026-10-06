@@ -145,21 +145,3 @@ class VideoPromptSettings(VlmSettings):
     # The node leaves top_k unset, so Qwen's generation_config default of 20 applies.
     top_k: int = setting(20, "top k", "rarely worth moving", low=0, advanced=True)
     seed: int = setting(-1, "seed", "-1 draws a new one each call; a fixed one repeats the words", advanced=True)
-
-
-@dataclass(frozen=True)
-class EnlargeLatentsSettings(Settings):
-    """The latent-space upscaler: enlarges before the decode, so H3's own VAE renders the extra detail."""
-
-    # Its weights, and the config.json beside them that holds the normalisation it was trained under.
-    checkpoint: str = setting(
-        "LBH-123-AI/Minimax_h3_latent_Upscaler@3f941d5d182014dd5c0a5e16330420ee2d4aa0c6"
-        ":minimax_h3_latent_upscaler_3d_conv_v1/config.json"
-        ",minimax_h3_latent_upscaler_3d_conv_v1/minimax_h3_latent_upscaler_3d_conv_v1_fp16.safetensors",
-        "model",
-        "repo@commit:config.json,weights.safetensors",
-        advanced=True,
-        role="latent-upscaler",
-    )
-    # 3840x2160. A canvas other than 16:9 keeps this many pixels at its own aspect.
-    megapixels: float = setting(8.2944, "size", "what a finished chapter is enlarged to", unit="MP", low=0.5, high=16)

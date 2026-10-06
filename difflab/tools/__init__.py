@@ -20,7 +20,7 @@ from difflab.core.settings import (
     Settings,
     VlmSettings,
 )
-from difflab.models.minimax_h3.settings import EnlargeLatentsSettings, VideoPromptSettings, VideoSettings
+from difflab.models.minimax_h3.settings import VideoPromptSettings, VideoSettings
 
 
 @dataclass(frozen=True)
@@ -48,7 +48,6 @@ TOOLS: tuple[Tool, ...] = (
     Tool("write_video_prompt", 1, ("load VLM", "write"), VideoPromptSettings, "an idea into an H3 caption"),
     Tool("render_chunk", 1, ("load", "condition", "encode", "sample", "decode"), VideoSettings, "MiniMax H3"),
     Tool("enlarge_pixels", 1, ("load", "upscale"), EnlargePixelsSettings, "an ESRGAN over finished frames"),
-    Tool("enlarge_latents", 1, ("load", "enlarge", "decode"), EnlargeLatentsSettings, "the VAE draws the extra pixels"),
     Tool("retime", 1, ("load", "interpolate"), RetimeSettings, "RIFE draws the frames between"),
     Tool("grade", 1, ("measure", "grade"), None, "a take pulled back to the colour it opened in"),
     Tool("handoff", 1, ("handoff",), Continuity, "the frame the next shot opens on, and the motion into it"),

@@ -18,6 +18,7 @@ DEVICE = "cuda"
 CANVAS_ALIGN = 32
 
 FINISH_FPS = 60  # what RIFE retimes a finished chapter to; H3 draws 24
+FINISH_MEGAPIXELS = 3840 * 2160 / 1e6  # what the ESRGAN enlarges it to
 
 
 # The VLM (`models/exl3vl.py`). 16 full-attention layers of 4 KV heads at 256 cost 64 KiB a token, so

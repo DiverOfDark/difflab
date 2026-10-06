@@ -17,9 +17,9 @@ What it makes:
 ```
 difflab/
   core/        types (Frame, Clip) · settings kit · keys · cache · context · events · protocol · record · ui · hub · media
-  models/      exl3vl · qwen_edit_aio · convrot · offload · video_io · esrgan · rife · tae · latent_upscaler
+  models/      exl3vl · qwen_edit_aio · convrot · offload · video_io · esrgan · rife · tae
                minimax_h3/ (the port, its settings, and caption: the Ref2VA format)
-  tools/       edit_image · ask_vlm · write_prompt · render_chunk · handoff · assemble · enlarge_latents
+  tools/       edit_image · ask_vlm · write_prompt · render_chunk · handoff · assemble
                enlarge_pixels · retime · grade · judge · compose_keyframe
                direct · survey · ground · cut_crops · cards · opening · plan_shots · write_shot   (the director)
   screenplay/  production · ingest · planner · made · settings · compiler · checks · crops · words · captions
@@ -303,13 +303,11 @@ machine with 32 GB or less will swap even though the card is fine.
 Generating large is expensive and enlarging afterwards is not: sampling cost grows with the square of
 the packed sequence, so pixels are the costly thing to *generate* and a cheap thing to *add*.
 
-**Latent** (`tools.enlarge_latents`) enlarges the latent before it is decoded, so the extra pixels are
-rendered by H3's own decoder. Scale is a conditioning input over 1.0–4.0×.
+`tools.enlarge_pixels` runs an ESRGAN (4xLSDIR) over finished frames. It can only sharpen what the decoder
+already drew, which is a ceiling rather than a tuning problem.
 
-**Pixel** (`tools.enlarge_pixels.upscale`) runs an ESRGAN over finished frames. It can only sharpen what the
-decoder already drew, which is a ceiling rather than a tuning problem.
-
-Measured on H3's own output, reconstructing a native render from a half-size one:
+The latent route, `LBH-123-AI/Minimax_h3_latent_Upscaler` enlarging the latent before H3's own decoder
+renders it, measured better on a synthetic test - reconstructing a native render from a half-size one:
 
 | route | detail vs native | shimmer vs native | time |
 |---|---|---|---|
@@ -317,16 +315,17 @@ Measured on H3's own output, reconstructing a native render from a half-size one
 | decode → 4xLSDIR | 1.053 | 1.173 | 15.4 s |
 | **upscale latent → decode** | **1.261** | **1.054** | **9.3 s** |
 
-The latent route wins on every axis at once — more detail, temporal steadiness at native's own level,
-and 40% less time, because the work happens on a tensor 256× smaller than the frames it becomes. It
-needs no refinement pass, despite the reference workflow using one.
+On a real chapter it lost. Taking production 13's 1056×608 shots to 4K (2026-10-06), at 2× and at 3.6×
+alike, it redrew the face - another eye shape, an older man, colour fringes on the hair - while the
+ESRGAN kept the render's own face and only sharpened it, at the same 2.6 s a 4K frame. It was removed;
+`git log -- difflab/tools/enlarge_latents.py` has it.
 
-Every chapter render ends with it. After the native join, each shot's cached latents are enlarged to
-`enlarge_latents.megapixels` (3840×2160; a canvas within a tenth of 16:9 is filled and cropped to it) and decoded a temporal clip at a time straight into
-the file, since a whole 4K chunk is 24 GB of float frames; past the upscaler's 4× (a 0.4 MP canvas
-needs 4.6×) a bicubic pass covers the rest. Each chunk gets the colour hold its native chunk got,
-measured on a native decode of the same latents. The 4K chunks are joined at the native cuts and
-retimed to `config.FINISH_FPS` by RIFE (`finish`).
+Every chapter render ends with a finish. After the native join, each shot's cached latents are decoded,
+given the colour hold its native chunk got, and enlarged frame by frame to `config.FINISH_MEGAPIXELS`
+(3840×2160; a canvas within a tenth of 16:9 is filled and cropped to it) straight into the file, since a
+whole 4K chunk is 24 GB of float frames. The 4K chunks are joined at the native cuts and retimed to
+`config.FINISH_FPS` by RIFE (`finish`). Every re-encode after the chunks is at crf 16
+(`media.JOIN_CRF`): x264's default 23 on the join and the retime halved the finish's fine detail.
 
 Among the pixel upscalers, 4xLSDIR measured best of the three on disk and is the default;
 4xNMKDSuperscale hallucinates detail that was never there (sharpness 1.113) and shimmers at 1.705 —
