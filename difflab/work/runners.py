@@ -26,6 +26,7 @@ from difflab.core.settings import (
     EditSettings,
     EnlargePixelsSettings,
     JudgeSettings,
+    RestoreSettings,
     RetimeSettings,
     VlmSettings,
 )
@@ -47,6 +48,7 @@ from difflab.tools import (
     judge,
     previews,
     render_chunk,
+    restore,
     retime,
     write_prompt,
 )
@@ -237,13 +239,13 @@ def run_assemble(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, 
 
 def run_enlarge_shot(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
     """A rendered shot again at the finish's size: its own latents decoded, held to the colour its chunk
-    was held to, so the 4K chapter joins and grades exactly as the native one did, then enlarged."""
+    was held to, so the 4K chapter joins and grades exactly as the native one did, then restored."""
     video = VideoSettings(**settings["video"])
     continuity, _ = Continuity.resolve(settings["continuity"])
-    enlarging, _ = EnlargePixelsSettings.resolve(settings["enlarge"])
+    restoring, _ = RestoreSettings.resolve(settings["enlarge"])
     hold = continuity.color_hold
     megapixels = float(inputs["megapixels"])
-    at = key("enlarged", 2, chunk=str(inputs["key"]), settings=enlarging, megapixels=megapixels, hold=hold)
+    at = key("enlarged", 3, chunk=str(inputs["key"]), settings=restoring, megapixels=megapixels, hold=hold)
     mp4 = cache.path(at, ".mp4")
     outputs = {"chunk": store.relative(mp4), "key": str(at)}
     if mp4.is_file():
@@ -255,9 +257,9 @@ def run_enlarge_shot(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[s
         detail(f"{len(frames)} frames · {frames.shape[2]}×{frames.shape[1]}")
     if hold:
         frames = media.held(frames, media.colour_hold(frames, h3_config.FPS, _frame(inputs["opening"]), hold))
-    size = enlarge_pixels.finish_size(int(frames.shape[2]), int(frames.shape[1]), megapixels)
+    size = restore.finish_size(int(frames.shape[2]), int(frames.shape[1]), megapixels)
     partial = mp4.with_name(f"{mp4.stem}.partial.mp4")
-    written = enlarge_pixels.finish(iter(frames), len(frames), partial, size, h3_config.FPS, enlarging)
+    written = restore.finish(frames, partial, size, h3_config.FPS, restoring)
     partial.replace(mp4)
     record.artifact_made(mp4, store.VIDEO, key=str(at))
     return {**outputs, "size": list(size), "frames": written}

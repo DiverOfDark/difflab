@@ -221,8 +221,7 @@ class EnlargePixelsSettings(Settings):
     """An ESRGAN over finished frames."""
 
     # 4xLSDIR measured best on H3's output on every axis - detail, fidelity and temporal steadiness - see
-    # `models/esrgan.py` for the table. 4xNMKDSuperscale shimmers, avoid it. Unported: SEEDVR2, a 7B
-    # diffusion video restorer.
+    # `models/esrgan.py` for the table. 4xNMKDSuperscale shimmers, avoid it.
     checkpoint: str = setting(
         "nuriyoo/openmodeldb-mirror@1d24ff21e7f7a56d578ba5af0fe24f0264e413dd:models/4x-LSDIR/4xLSDIR.pth",
         "model",
@@ -230,6 +229,38 @@ class EnlargePixelsSettings(Settings):
         advanced=True,
         role="pixel-upscaler",
     )
+
+
+@dataclass(frozen=True)
+class RestoreSettings(Settings):
+    """SeedVR2 7B to half the finish's size, then a 2x ESRGAN the rest of the way."""
+
+    checkpoint: str = setting(
+        "Comfy-Org/SeedVR2@df48879708206a403d2a61acd55578c2e80fd233:diffusion_models/seedvr2_7b_int8_convrot.safetensors",
+        "model",
+        "SeedVR2 7B as int8 ConvRot: repo@commit:path",
+        advanced=True,
+        role="restorer",
+    )
+    vae: str = setting(
+        "Comfy-Org/SeedVR2@df48879708206a403d2a61acd55578c2e80fd233:vae/seedvr2_ema_vae_fp16.safetensors",
+        "VAE",
+        "SeedVR2's causal 3D VAE: repo@commit:path",
+        advanced=True,
+        role="restorer-vae",
+    )
+    # RealESRGAN x2 rather than 4xLSDIR: from 1080p a 2x lands on 3840x2160 exactly, at 0.14 s a frame
+    # against LSDIR's 0.63 for 0.05 less sharpness (`models/esrgan.py`).
+    upscaler: str = setting(
+        "ai-forever/Real-ESRGAN@8110204ebf8d25c031b66c26c2d1098aa831157e:RealESRGAN_x2.pth",
+        "upscaler",
+        "a 2x ESRGAN-family .pth: repo@commit:path",
+        advanced=True,
+        role="pixel-upscaler",
+    )
+    frames: int = setting(33, "window", "frames restored together; neighbours share the overlap", low=5, high=81)
+    overlap: int = setting(4, "overlap", "frames two windows share, cross-faded", low=0, high=16)
+    seed: int = setting(42, "seed", "the restorer's noise; the same for every window", advanced=True)
 
 
 @dataclass(frozen=True)

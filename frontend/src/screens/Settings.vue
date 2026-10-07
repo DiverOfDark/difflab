@@ -32,6 +32,8 @@ const ROLES: Record<string, string> = {
   'audio-vae': 'Audio VAE',
   'preview-decoder': 'Preview decoder',
   'pixel-upscaler': 'Pixel upscaler',
+  restorer: 'Restorer',
+  'restorer-vae': 'Restorer VAE',
   'frame-interpolation': 'Frame interpolation',
 }
 const ROLE_NOTES: Record<string, string> = {
@@ -44,11 +46,16 @@ const ROLE_NOTES: Record<string, string> = {
   'audio-vae': 'turns sampled latents into sound',
   'preview-decoder': 'the quick picture of each step while a clip samples',
   'pixel-upscaler': 'enlarges finished frames',
+  restorer: 'restores a finished chapter at half its 4K size, before the upscaler doubles it',
+  'restorer-vae': 'takes frames into and out of the restorer',
   'frame-interpolation': 'draws the frames between frames, for 48 or 60 fps',
 }
 const GROUPS: { title: string; tools: [string, string][] }[] = [
   { title: 'Pictures', tools: [['edit_image', 'Editing a photo'], ['compose_keyframe', 'Drawing a keyframe']] },
-  { title: 'Video', tools: [['render_chunk', 'Rendering'], ['handoff', 'Joining shots']] },
+  {
+    title: 'Video',
+    tools: [['render_chunk', 'Rendering'], ['handoff', 'Joining shots'], ['restore', 'Finishing at 4K'], ['retime', 'Retiming to 60 fps']],
+  },
   { title: 'Checking', tools: [['judge', 'Judge']] },
   {
     title: 'Writing',
