@@ -113,7 +113,6 @@ class Line:
     start: float
     language: str
     line: str
-    voice: str  # "a bright, amused young female voice"
 
 
 @dataclass(frozen=True)
@@ -153,6 +152,7 @@ class Chunk:
     cut: str = ""  # "" continues the chunk before; "back" returns to the opening photo; "new" opens on `opening`
     opening: str = ""  # a "new" cut's first frame, {id} placeholders
     looks: dict[str, str] = dataclasses.field(default_factory=dict)  # the planner's: member -> its look from here on
+    look_names: dict[str, str] = dataclasses.field(default_factory=dict)  # the planner's: member -> that look's name
     ambience: str = ""  # the sound of a place other than the take's first; "" is `Take.ambience`
     scene: str = ""  # the slug line the chunk plays under, "INT lantern room · dusk"
     states: dict[str, Now] = dataclasses.field(default_factory=dict)  # the castings' looks; never stored in a plan
@@ -174,6 +174,7 @@ class Take:
     tails: tuple[bool, ...] = ()  # per chunk, whether it carries the one before's tail; empty is `tail` after the first
     lands: tuple[bool, ...] = ()  # per chunk, whether it ends on the next one's keyframe
     unframed: tuple[bool, ...] = ()  # per chunk, whether it opens on no picture, from its references alone
+    voices: dict[str, str] = dataclasses.field(default_factory=dict)  # member -> how it sounds, from the bible
 
 
 @dataclass(frozen=True)
@@ -585,7 +586,7 @@ def compile_chunk(take: Take, index: int) -> Compiled:
         while "{say}" in text and pending:
             line = pending.pop(0)
             head, rest = text.split("{say}", 1)
-            sentence = say["line"].format(voice=line.voice, language=line.language, words=line.line)
+            sentence = say["line"].format(voice=voice(take, line.who), language=line.language, words=line.line)
             # The speaker's (Sx) has to sit immediately before the <d>, and it only gets there by
             # itself when the writer put {say} right after that member's braces. It often does not -
             # "laughs, saying {say}" reads more naturally to a writer than "{right_girl} {say}" - and
@@ -615,7 +616,7 @@ def compile_chunk(take: Take, index: int) -> Compiled:
     # A line the prose has no {say} for - one added by hand to a shot already written - is said after
     # the beats by its speaker; otherwise nothing would say it at all.
     for line in pending:
-        spoken_line = say["line"].format(voice=line.voice, language=line.language, words=line.line)
+        spoken_line = say["line"].format(voice=voice(take, line.who), language=line.language, words=line.line)
         body.append(f"{subject[line.who]} ({speakers[line.who]}) {spoken_line}")
     # Through the expander like every other line the plan writes. `mouths` was the one field that
     # reached the prompt raw, so a plan that named its speakers the way the rules ask - "the laugh of
@@ -670,7 +671,16 @@ def compile_chunk(take: Take, index: int) -> Compiled:
     return Compiled(prompt, shown, refs, subject)
 
 
+def voice(take: Take, member: str) -> str:
+    """How a member sounds in its lines: the bible's voice and delivery, or its noun's when none is set."""
+    return take.voices.get(member) or f"a natural {take.cards[member].noun}'s voice"
+
+
 # --- a chapter as the rows say it --------------------------------------------------------------
+def voice_of(member: store.Member) -> str:
+    return ", ".join(part for part in (member.voice.strip(), member.delivery.strip()) if part)
+
+
 def card_of(member: store.Member) -> Card:
     identity = member.identity
     return Card(
@@ -708,8 +718,7 @@ def chunk_of(plan: dict[str, Any]) -> Chunk:
         faces_at_close=tuple(str(m) for m in plan.get("faces_at_close", [])),
         irreversible_change=str(plan.get("irreversible_change", "")),
         dialogue=tuple(
-            Line(str(d["who"]), float(d["start"]), str(d["language"]), str(d["line"]), str(d["voice"]))
-            for d in plan.get("dialogue", [])
+            Line(str(d["who"]), float(d["start"]), str(d["language"]), str(d["line"])) for d in plan.get("dialogue", [])
         ),
         summary=str(plan.get("summary", "")),
         sounds=str(plan.get("sounds", "")),
@@ -723,7 +732,7 @@ def chunk_of(plan: dict[str, Any]) -> Chunk:
 
 def plan_of(chunk: Chunk) -> dict[str, Any]:
     """The chunk as the shot row keeps it: its looks are its castings'."""
-    return {k: v for k, v in dataclasses.asdict(chunk).items() if k not in ("looks", "states")}
+    return {k: v for k, v in dataclasses.asdict(chunk).items() if k not in ("looks", "look_names", "states")}
 
 
 def ref_keys(references: list[store.Reference], slugs: dict[int, str]) -> list[str]:
@@ -794,6 +803,7 @@ def pictures_of(connection: sqlite3.Connection, production: store.Production) ->
     members = store.members_of(connection, production.id)
     references = pictured(store.refs_of_production(connection, production.id))
     slugs = {member.id: member.slug for member in members}
+    owners = {member.id: member for member in members}
     resolved = looks.resolve(connection, production)
     worn = {
         look_key(look): str(look.casting.artifact)
@@ -801,7 +811,10 @@ def pictures_of(connection: sqlite3.Connection, production: store.Production) ->
         if look.approved and look.casting is not None
     }
     return {
-        **{name: str(ref.artifact) for name, ref in zip(ref_keys(references, slugs), references, strict=True)},
+        **{
+            name: str(owners[ref.member_id].picture(ref))
+            for name, ref in zip(ref_keys(references, slugs), references, strict=True)
+        },
         **worn,
     }
 
@@ -845,4 +858,5 @@ def take_of(connection: sqlite3.Connection, production: store.Production, chapte
         tails=tails,
         lands=landed,
         unframed=tuple(keyframe.source == store.REFS for keyframe in keyframes),
+        voices={member.slug: said for member in members if (said := voice_of(member))},
     )

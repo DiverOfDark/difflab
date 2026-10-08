@@ -66,10 +66,15 @@ const stage = computed<StageId>(() => {
   return stages.value.find((s) => s.phase !== 'done')?.id ?? 'assemble'
 })
 const focus = computed(() => (route.query.shot ? Number(route.query.shot) : null))
+const focusMember = computed(() => (typeof route.query.member === 'string' ? route.query.member : null))
+/** The bible card open in the editor: a member id, or 'new' for one decided in words. */
+const editing = computed(() => (stage.value === 'bible' && typeof route.query.edit === 'string' ? route.query.edit : null))
+const editingMember = computed(() => production.value?.members.find((m) => String(m.id) === editing.value) ?? null)
 
-function go(to: StageId, shot: number | null = null) {
-  router.replace({ query: { stage: to, ...(shot === null ? {} : { shot: String(shot) }) } })
+function go(to: StageId, shot: number | null = null, member: string | null = null) {
+  router.replace({ query: { stage: to, ...(shot === null ? {} : { shot: String(shot) }), ...(member === null ? {} : { member }) } })
 }
+const edit = (id: number | 'new' | null) => router.replace({ query: { stage: 'bible', ...(id === null ? {} : { edit: String(id) }) } })
 
 const inView = computed(() => {
   const all = production.value?.chapters ?? []
@@ -162,8 +167,8 @@ const DEFS: StageDef[] = [
   {
     id: 'bible',
     name: 'Bible',
-    artifact: 'Cast, places, props',
-    desc: 'Who and what persists across the chapter: one identity per member, merged over its photographs. Where a photograph and the words disagree, the photograph wins and the conflict is said.',
+    artifact: 'Standing cast, places, props, style',
+    desc: 'The standing look of everyone and everything: what a shot starts from the first time an entity appears. Changes in the story (wet clothes, a rusted blade) live on the shot that makes them, not here.',
   },
   {
     id: 'shots',
@@ -200,7 +205,7 @@ const stages = computed<StageRow[]>(() => {
   const flagged = (pick: (s: ShotInfo) => { state: string }) => list.filter((s) => phaseOf(pick(s).state) === 'review').length
   const planning = !!planRun.value
   const rendering = !!renderRun.value
-  const conflicts = members.value.reduce((sum, m) => sum + m.conflicts.filter((c) => !c.resolution).length, 0)
+  const conflicts = members.value.reduce((sum, m) => sum + m.conflicts.filter((c) => !c.resolution).length, 0) + (p?.unmatched?.length ?? 0)
   const photos = Array.isArray(p?.manifest.photos) ? (p!.manifest.photos as unknown[]).length : 0
   const lastRun = chapterRuns.value[0]
 
@@ -218,7 +223,7 @@ const stages = computed<StageRow[]>(() => {
     row(
       DEFS[1],
       planned(!members.value.length ? 'pending' : conflicts ? 'review' : 'done'),
-      `${members.value.length} members${conflicts ? ` · ${conflicts} conflicts` : ''}`,
+      `${bibleCounts.value}${conflicts ? ` · ${conflicts} to review` : ''}`,
       conflicts,
     ),
     row(
@@ -236,9 +241,31 @@ const stages = computed<StageRow[]>(() => {
   ]
 })
 
-const cur = computed(() => stages.value.find((s) => s.id === stage.value) ?? stages.value[0])
+const bibleCounts = computed(() => {
+  const count = (kinds: string[]) => members.value.filter((m) => kinds.includes(m.kind)).length
+  const said = (n: number, one: string, many: string) => (n ? `${n} ${n === 1 ? one : many}` : '')
+  const style = count(['style'])
+  return [
+    said(count(['person', 'animal']), 'character', 'characters'),
+    said(count(['environment']), 'location', 'locations'),
+    said(count(['object']), 'prop', 'props'),
+    style ? 'style' : '',
+  ]
+    .filter(Boolean)
+    .join(' · ') || 'nobody yet'
+})
+const cur = computed(() => {
+  const found = stages.value.find((s) => s.id === stage.value) ?? stages.value[0]
+  if (found.id !== 'bible' || !editing.value) return found
+  return {
+    ...found,
+    name: editingMember.value?.slug ?? 'A new member',
+    desc: 'One card, edited once. Everything that reads it downstream is re-keyed.',
+  }
+})
 const index = computed(() => stages.value.indexOf(cur.value))
 const crumb = computed(() => {
+  if (editing.value) return `plan · bible · ${editingMember.value?.kind === 'environment' ? 'location' : editingMember.value?.kind === 'object' ? 'prop' : 'character'}`
   const where = index.value >= 3 ? 'render' : 'plan'
   return `${where} · stage ${index.value + 1} of ${stages.value.length}`
 })
@@ -426,8 +453,8 @@ function pick(id: number) {
 
       <IngestStage v-if="stage === 'ingest'" :production="production" :busy="busy" :act="act" />
       <template v-else-if="production">
-        <BibleStage v-if="stage === 'bible'" :production="production" :shots="shots" :busy="busy" :act="act" />
-        <ShotsStage v-else-if="stage === 'shots'" :production="production" :chapter="chapter" :focus="focus" :busy="busy" :act="act" @go="go" />
+        <BibleStage v-if="stage === 'bible'" :production="production" :shots="shots" :editing="editing" :busy="busy" :act="act" @edit="edit" @go="go" />
+        <ShotsStage v-else-if="stage === 'shots'" :production="production" :chapter="chapter" :focus="focus" :member="focusMember" :busy="busy" :act="act" @go="go" />
         <RenderStage v-else-if="stage === 'render'" :production="production" :shots="shots" :focus="focus" :run="renderRun" :busy="busy" :act="act" @go="go" />
         <AssembleStage v-else-if="stage === 'assemble'" :production="production" :runs="chapterRuns" />
       </template>

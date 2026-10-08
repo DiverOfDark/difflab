@@ -459,6 +459,36 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         "ALTER TABLE prompts ADD COLUMN written_at REAL",
         "ALTER TABLE prompts ADD COLUMN written_for TEXT NOT NULL DEFAULT ''",
     ),
+    # The bible's own words per member: what the story calls it, its appearance as a person wrote it ('' is
+    # its traits), what may change between shots, its voice, and whether its photographs are handed over
+    # on a flat backdrop (`refs.plate`, the plated picture). A conflict with `reference_shows` set is the
+    # story against a photograph: `lines` the story's sentences it rewrites, `novel_trait` the card it
+    # takes to keep the story. Each member's voice is the first one a dialogue line gave it.
+    (
+        "ALTER TABLE members ADD COLUMN aliases TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE members ADD COLUMN appearance TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE members ADD COLUMN allowed TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE members ADD COLUMN voice TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE members ADD COLUMN delivery TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE members ADD COLUMN reference_audio TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE members ADD COLUMN plate INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE refs ADD COLUMN plate TEXT",
+        "ALTER TABLE conflicts ADD COLUMN reference_shows TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE conflicts ADD COLUMN lines TEXT NOT NULL DEFAULT '[]'",
+        "ALTER TABLE conflicts ADD COLUMN novel_trait TEXT NOT NULL DEFAULT '{}'",
+        """
+        UPDATE members SET voice = coalesce((
+            SELECT json_extract(said.value, '$.voice')
+            FROM shots
+            JOIN chapters ON chapters.id = shots.chapter_id
+            JOIN json_each(shots.plan, '$.dialogue') AS said
+            WHERE chapters.production_id = members.production_id
+              AND json_extract(said.value, '$.who') = members.slug
+              AND coalesce(json_extract(said.value, '$.voice'), '') != ''
+            ORDER BY chapters.position, shots.position LIMIT 1
+        ), '')
+        """,
+    ),
 )
 
 SCHEMA_VERSION = len(MIGRATIONS)

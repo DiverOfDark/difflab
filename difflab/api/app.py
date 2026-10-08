@@ -162,6 +162,8 @@ async def patch_member(member_id: int, request: Request) -> dict[str, Any]:
         moved = production.update_member(member_id, **dict(body))
     except (TypeError, ValueError) as problem:
         raise HTTPException(400, str(problem)) from problem
+    except (sqlite3.Error, OSError) as problem:
+        raise HTTPException(500, f"the plates could not be queued ({problem})") from problem
     return {**_production(owner), "stale": moved}
 
 
@@ -286,6 +288,41 @@ async def resolve_conflict(conflict_id: int, request: Request) -> dict[str, Any]
     except LookupError as problem:
         raise HTTPException(404, str(problem)) from problem
     return _production(owner)
+
+
+@app.post("/api/conflicts/{conflict_id}/keep")
+async def keep_conflict(conflict_id: int, request: Request) -> dict[str, Any]:
+    """`keep`: `reference` rewrites the story's sentences to the photograph, `novel` takes the story's trait."""
+    body = await request.json()
+    try:
+        owner = production.keep(conflict_id, str(body.get("keep", "")))
+    except LookupError as problem:
+        raise HTTPException(404, str(problem)) from problem
+    except ValueError as problem:
+        raise HTTPException(400, str(problem)) from problem
+    return _production(owner)
+
+
+@app.post("/api/productions/{production_id}/unmatched")
+async def attach_unmatched(production_id: int, request: Request) -> dict[str, Any]:
+    """`photo`, one the survey placed with no member, held as member `to`'s picture, or `to` "ignore"."""
+    body = await request.json()
+    try:
+        moved = production.attach(production_id, str(body.get("photo", "")), str(body.get("to", "")))
+    except LookupError as problem:
+        raise HTTPException(404, str(problem)) from problem
+    except (ValueError, OSError) as problem:
+        raise HTTPException(400, str(problem)) from problem
+    return {**_production(production_id), "stale": moved}
+
+
+@app.post("/api/members/{member_id}/describe")
+def describe_member(member_id: int) -> dict[str, Any]:
+    """The member read again from its photographs as a run, and given back to the director."""
+    try:
+        return {"run": production.describe_again(member_id)}
+    except LookupError as problem:
+        raise HTTPException(404, str(problem)) from problem
 
 
 @app.delete("/api/productions/{production_id}")

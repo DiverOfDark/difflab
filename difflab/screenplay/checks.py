@@ -223,6 +223,11 @@ def plan_rules(take: compose.Take) -> list[Problem]:
             elif len(change.split()) > config.DIRECTOR_LOOK_WORDS:
                 fail("looks", f"{clip}: the look of {{{member}}} is {len(change.split())} words; at most "
                      f"{config.DIRECTOR_LOOK_WORDS}")  # fmt: skip
+            fewest, most = config.DIRECTOR_LOOK_NAME_WORDS
+            called = len(chunk.look_names.get(member, "").split())
+            if member in chunk.cast and not fewest <= called <= most:
+                fail("looks", f'{clip}: the look of {{{member}}} has a "name" of {fewest} to {most} words, '
+                     f'not {called}: "blue robe", "soaked shirt"')  # fmt: skip
         if len(beats) < 3:
             fail("beats", f"{clip}: write 3 to 5 beats")
             continue

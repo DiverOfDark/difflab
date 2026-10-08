@@ -72,6 +72,7 @@ DIRECTOR_SETTLE = (2.0, 1.5)  # the closing beat of every chunk: asked, least ac
 # clips whose settles ran up to 6.2 s: the lengths were the budget divided by the count, padded with stillness.
 DIRECTOR_QUIET_MAX = 3.0
 DIRECTOR_LOOK_WORDS = 15  # a lasting change to a member's look, restated in every later clip
+DIRECTOR_LOOK_NAME_WORDS = (2, 4)  # a look's name, as a state chip and a timeline run say it
 DIRECTOR_HANDOFF_MIN = 4.0  # s: reach, grip and release all visible
 DIRECTOR_BEAT_MIN = 1.0  # s
 # The plan chooses how many clips and how long each; the longest is the render settings' duration.

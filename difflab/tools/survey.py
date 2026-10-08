@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Any
 
 from difflab.core import ui
@@ -12,8 +13,17 @@ from difflab.screenplay import crops, words
 from difflab.tools import direct
 
 
+@dataclass(frozen=True)
+class Surveyed:
+    members: dict[str, direct.Member]
+    shows: list[tuple[str, ...]]
+    aliases: dict[str, str] = field(default_factory=dict)  # member -> what the idea calls it, comma-joined
+    # photo index -> (what it shows, the member it most resembles or ""), for a photo that shows no member
+    unplaced: dict[int, tuple[str, str]] = field(default_factory=dict)
+
+
 # --- vision: the direct.VLM sees the photos ---------------------------------------------------------------------
-def survey(idea: str, frames: list[Frame]) -> tuple[dict[str, direct.Member], list[tuple[str, ...]]]:
+def survey(idea: str, frames: list[Frame]) -> Surveyed:
     """One look at every photo: the members the idea needs, and which photo shows which of them."""
 
     def parse(data: Any) -> tuple[dict[str, direct.Member], list[tuple[str, ...]]]:
@@ -71,7 +81,20 @@ def survey(idea: str, frames: list[Frame]) -> tuple[dict[str, direct.Member], li
     question = words.SURVEY_USER.format(idea=idea.strip(), count=len(frames))
     data = direct.ask_json(words.SURVEY_SYSTEM, question, images, gate, "survey", h3.DIRECTOR_TOKENS["survey"])
     members, shows = parse(data)
+    aliases = {
+        str(m["id"]): ", ".join(
+            dict.fromkeys(" ".join(str(a).split()) for a in m.get("aliases") or [] if str(a).strip())
+        )
+        for m in data["members"]
+    }
+    about = {int(p["picture"]) - 1: p for p in data["pictures"]}
+    unplaced: dict[int, tuple[str, str]] = {}
+    for i, listed in enumerate(shows):
+        if not listed:
+            entry = about.get(i, {})
+            likely = str(entry.get("likely") or "")
+            unplaced[i] = (" ".join(str(entry.get("about") or "").split()), likely if likely in members else "")
     rows = {f"{m.id}": f"{m.kind} · {m.noun} · {m.find}" for m in members.values()}
-    rows |= {f"photo {i + 1}": ", ".join(listed) or "-" for i, listed in enumerate(shows)}
+    rows |= {f"photo {i + 1}": ", ".join(listed) or f"- {unplaced[i][0]}" for i, listed in enumerate(shows)}
     ui.panel("cast", rows)
-    return members, shows
+    return Surveyed(members, shows, {m: a for m, a in aliases.items() if a and m in members}, unplaced)

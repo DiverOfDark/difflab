@@ -20,13 +20,28 @@ from difflab import config
 
 ASSETS_DIR = config.OUTPUT_DIR / "assets"
 THUMB = 320  # the long edge of the picture the form shows
-KINDS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".mp4", ".mov", ".mkv", ".webm"}
+KINDS = {
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".webp",
+    ".bmp",
+    ".mp4",
+    ".mov",
+    ".mkv",
+    ".webm",
+    ".wav",
+    ".mp3",
+    ".m4a",
+    ".flac",
+    ".ogg",
+}
 
 
 def store(data: bytes, filename: str) -> dict[str, Any]:
     suffix = Path(filename).suffix.lower()
     if suffix not in KINDS:
-        raise ValueError(f"{filename}: not a picture or a clip ({', '.join(sorted(KINDS))})")
+        raise ValueError(f"{filename}: not a picture, a clip or a sound ({', '.join(sorted(KINDS))})")
     digest = hashlib.sha256(data).hexdigest()[:16]
     name = f"{digest}-{_safe(Path(filename).stem)}{suffix}"
     path = ASSETS_DIR / name

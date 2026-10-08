@@ -502,12 +502,15 @@ def set_identity(connection: sqlite3.Connection, member_id: int, identity: dict[
 
 
 def update_member(connection: sqlite3.Connection, member_id: int, **fields: Any) -> Member | None:
-    allowed = {"kind", "noun", "possessive", "find", "identity", "pinned"}
+    allowed = {
+        "kind", "noun", "possessive", "find", "identity", "pinned", "aliases", "appearance", "allowed", "voice",
+        "delivery", "reference_audio", "plate",
+    }  # fmt: skip
     unknown = set(fields) - allowed
     if unknown:
         raise ValueError(f"a member has no {', '.join(sorted(unknown))}")
     values = {
-        name: (_dump(value) if name == "identity" else int(value) if name == "pinned" else value)
+        name: (_dump(value) if name == "identity" else int(value) if name in ("pinned", "plate") else value)
         for name, value in fields.items()
     }
     assignments = ", ".join(f"{name} = ?" for name in values)
@@ -549,6 +552,10 @@ def refs_of_production(connection: sqlite3.Connection, production_id: int) -> li
 def ref(connection: sqlite3.Connection, ref_id: int) -> Reference | None:
     row = connection.execute("SELECT * FROM refs WHERE id = ?", (ref_id,)).fetchone()
     return None if row is None else Reference.of(row)
+
+
+def set_plate(connection: sqlite3.Connection, ref_id: int, path: str | None) -> None:
+    connection.execute("UPDATE refs SET plate = ? WHERE id = ?", (path, ref_id))
 
 
 def delete_ref(connection: sqlite3.Connection, ref_id: int) -> None:
@@ -625,15 +632,27 @@ def conflict(connection: sqlite3.Connection, conflict_id: int) -> Conflict | Non
     return None if row is None else Conflict.of(row)
 
 
-def set_conflicts(connection: sqlite3.Connection, member_id: int, notes: list[str]) -> None:
-    """What the tidy stage could not reconcile between photographs, one row each, replacing the last. A
-    note said again word for word keeps the resolution it was given."""
-    resolved = {c.novel_says: c.resolution for c in conflicts_of(connection, member_id) if c.resolution}
+def set_conflicts(
+    connection: sqlite3.Connection, member_id: int, notes: list[str], texts: list[dict[str, Any]] | None = None
+) -> None:
+    """What the tidy stage could not reconcile between photographs, and where the story says otherwise
+    than one (`texts`: novel_says, reference_shows, lines, novel_trait), one row each, replacing the last.
+    A conflict said again word for word keeps the resolution it was given."""
+    resolved = {
+        (c.novel_says, c.reference_shows): c.resolution for c in conflicts_of(connection, member_id) if c.resolution
+    }
     connection.execute("DELETE FROM conflicts WHERE member_id = ?", (member_id,))
     for note in notes:
         connection.execute(
             "INSERT INTO conflicts (member_id, novel_says, resolution) VALUES (?, ?, ?)",
-            (member_id, note, resolved.get(note, "")),
+            (member_id, note, resolved.get((note, ""), "")),
+        )
+    for text in texts or []:
+        says, shows = str(text["novel_says"]), str(text["reference_shows"])
+        connection.execute(
+            "INSERT INTO conflicts (member_id, novel_says, reference_shows, lines, novel_trait, resolution) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (member_id, says, shows, _dump(text["lines"]), _dump(text["novel_trait"]), resolved.get((says, shows), "")),
         )
 
 

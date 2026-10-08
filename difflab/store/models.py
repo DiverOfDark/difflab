@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -300,7 +300,7 @@ class Shot:
             created_at=_number(row["created_at"]),
             updated_at=_number(row["updated_at"]),
             plan=_json(row["plan"]) if "plan" in row.keys() else {},  # noqa: SIM118 - a Row is not a dict
-            pinned=bool(row["pinned"]) if "pinned" in row.keys() else False,  # noqa: SIM118
+            pinned=bool(row["pinned"]),
         )
 
 
@@ -404,7 +404,9 @@ class Clip(Made):
 
 @dataclass(frozen=True, kw_only=True)
 class Member:
-    """`identity` is the merged card: `traits` (part, phrase, short, name), `lights`, `photographed`."""
+    """`identity` is the merged card: `traits` (part, phrase, short, name), `lights`, `photographed`.
+    `appearance` is a person's own words for it, '' while its traits say it; `plate` hands its photographs
+    over on a flat backdrop."""
 
     id: int
     production_id: int
@@ -416,6 +418,17 @@ class Member:
     identity: dict[str, Any]
     position: int
     pinned: bool = False
+    aliases: str = ""
+    appearance: str = ""
+    allowed: str = ""
+    voice: str = ""
+    delivery: str = ""
+    reference_audio: str = ""
+    plate: bool = False
+
+    def picture(self, reference: Reference) -> str | None:
+        """The file a reference is handed over as: its plate while the member plates and one is drawn."""
+        return reference.plate if self.plate and reference.plate else reference.artifact
 
     @classmethod
     def of(cls, row: sqlite3.Row) -> Member:
@@ -429,7 +442,14 @@ class Member:
             find=_text(row["find"]),
             identity=_json(row["identity"]),
             position=int(row["position"] or 0),
-            pinned=bool(row["pinned"]) if "pinned" in row.keys() else False,  # noqa: SIM118
+            pinned=bool(row["pinned"]),
+            aliases=_text(row["aliases"]),
+            appearance=_text(row["appearance"]),
+            allowed=_text(row["allowed"]),
+            voice=_text(row["voice"]),
+            delivery=_text(row["delivery"]),
+            reference_audio=_text(row["reference_audio"]),
+            plate=bool(row["plate"]),
         )
 
 
@@ -448,6 +468,7 @@ class Reference(Made):
     quality: float
     provided: str | None
     seed: int | None = None
+    plate: str | None = None  # the picture on a flat backdrop, handed over in its place while its member plates
 
     @property
     def generated(self) -> bool:
@@ -466,7 +487,8 @@ class Reference(Made):
             shows=[str(v) for v in _list(row["shows"])],
             quality=_number(row["quality"]),
             provided=None if row["provided"] is None else _text(row["provided"]),
-            seed=_whole(row["seed"]) if "seed" in row.keys() else None,  # noqa: SIM118 - a Row is not a dict
+            seed=_whole(row["seed"]),
+            plate=None if row["plate"] is None else _text(row["plate"]),
         )
 
 
@@ -506,10 +528,20 @@ class Casting(Made):
 
 @dataclass(frozen=True, kw_only=True)
 class Conflict:
+    """Two photographs disagreeing (`reference_shows` empty), or the story against a photograph: `lines`
+    are [sentence, rewritten] pairs that keep the photograph, `novel_trait` the trait that keeps the story."""
+
     id: int
     member_id: int
     novel_says: str
     resolution: str
+    reference_shows: str = ""
+    lines: list[list[str]] = field(default_factory=list)
+    novel_trait: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def textual(self) -> bool:
+        return bool(self.reference_shows)
 
     @classmethod
     def of(cls, row: sqlite3.Row) -> Conflict:
@@ -518,6 +550,9 @@ class Conflict:
             member_id=int(row["member_id"]),
             novel_says=_text(row["novel_says"]),
             resolution=_text(row["resolution"]),
+            reference_shows=_text(row["reference_shows"]),
+            lines=[[str(v) for v in pair] for pair in _list(row["lines"])],
+            novel_trait=_json(row["novel_trait"]),
         )
 
 

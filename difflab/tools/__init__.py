@@ -58,6 +58,7 @@ TOOLS: tuple[Tool, ...] = (
     Tool("compose_keyframe", 1, ("load editor", "compose"), EditSettings, "a first frame from the plan's words"),
     Tool("draw_reference", 1, ("load editor", "draw"), None, "a member no photo shows, drawn from its words"),
     Tool("draw_look", 1, ("load editor", "draw"), None, "a member's look: its source picture with one amendment"),
+    Tool("plate_ref", 1, ("load editor", "plate"), None, "a member's photo on a flat backdrop, so H3 copies only it"),
     Tool(
         "refine_idea",
         1,
@@ -71,6 +72,7 @@ TOOLS: tuple[Tool, ...] = (
     Tool("cards", 1, ("load VLM", "read"), DirectorSettings, "what one photo shows of each member"),
     Tool("describe_opening", 1, ("load VLM", "describe"), DirectorSettings, "the opening frame in words"),
     Tool("tidy", 1, ("load VLM", "tidy"), DirectorSettings, "one identity per member, merged over its photos"),
+    Tool("describe_member", 1, ("load VLM", "read"), DirectorSettings, "one member read again from its photos"),
     Tool("arrange", 1, ("load VLM", "arrange"), DirectorSettings, "the chapter's first sentence"),
     Tool("plan_shots", 1, ("load VLM", "plan"), DirectorSettings, "the whole chapter, shot by shot"),
     Tool("write_shot", 1, ("load VLM", "write"), DirectorSettings, "one shot's prose"),

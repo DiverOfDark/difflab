@@ -9,6 +9,8 @@ const props = defineProps<{
   production: Production
   chapter: number | null
   focus: number | null
+  /** A member to focus as the stage opens: its track and its references in the open shot. */
+  member?: string | null
   busy: string
   act: (name: string, what: () => Promise<unknown>) => Promise<void>
 }>()
@@ -62,7 +64,7 @@ watch(
 )
 const startOf = (id: number) => starts.value[Math.max(0, shots.value.findIndex((s) => s.id === id))] ?? 0
 
-const memberFocus = ref<string | null>(null)
+const memberFocus = ref<string | null>(props.member ?? null)
 const tab = ref<Tab>('refs')
 const zoom = ref<Zoom>('fit')
 const said = ref('')

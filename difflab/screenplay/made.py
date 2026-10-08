@@ -25,6 +25,9 @@ def settle(connection: sqlite3.Connection, job: store.Job, outputs: dict[str, An
     if job.tool == "draw_look" and job.for_kind == "casting":
         _look_drawn(connection, job, outputs, state)
         return
+    if job.tool == "plate_ref" and job.for_kind == "plate":
+        _plated(connection, job, outputs, state)
+        return
     if job.tool == "compose_keyframe" and job.for_kind == "keyframe":
         if state in (store.DONE, store.SKIPPED):
             keyframe = store.made_by_id(connection, "keyframe", job.for_id)
@@ -67,6 +70,15 @@ def _kept(thing: store.Made | None, outputs: dict[str, Any], state: str) -> str:
     """Approved still when a person approved this very key and the job only found it again."""
     held = thing is not None and thing.reviewed_by == store.PERSON and thing.wanted_key == outputs.get("key")
     return store.APPROVED if state == store.SKIPPED and held else store.MADE
+
+
+def _plated(connection: sqlite3.Connection, job: store.Job, outputs: dict[str, Any], state: str) -> None:
+    """A reference's plate, and every prompt casting its member compiled again to hand it."""
+    reference = store.ref(connection, int(job.for_id or 0))
+    if reference is None or state not in (store.DONE, store.SKIPPED) or not outputs.get("frame"):
+        return
+    store.set_plate(connection, reference.id, str(outputs["frame"]))
+    production.recompile_casting(connection, reference.member_id)
 
 
 def _drawn(connection: sqlite3.Connection, job: store.Job, outputs: dict[str, Any], state: str) -> None:

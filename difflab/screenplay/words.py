@@ -27,10 +27,12 @@ RULES
 - "noun": what the member is, in at most two words ("man", "woman", "cat", "hookah", "shisha lounge").
 - "possessive": "his" or "her" for a person, "their" for a group, "its" for anything else.
 - "find": how to find the member in a photograph, in at most 14 words, by what is visible: position, clothing, colour, pose ("the man in the black t-shirt holding the hookah hose"). For a member no picture shows, what the IDEA asks of it instead ("the man who enters and stands behind her").
+- "aliases": every name and phrase the IDEA itself uses for the member, copied as written ("Tomas", "the keeper", "the old man"); [] when the IDEA only says what it is.
 - "pictures": one entry per picture, in order, listing the id of every member that picture clearly shows. List the first place for Picture 1. A member no picture shows is listed in none of them.
+- A picture that shows no member also says, in "about", what it shows in at most 15 words ("an older man in a wool coat on a stone jetty"), and in "likely" the id of the member it most resembles, or "" when none; every other picture has "about": "" and "likely": "".
 
 Answer only JSON, in this shape:
-{"members":[{"id":"man","kind":"person","noun":"man","possessive":"his","find":"..."},{"id":"lounge","kind":"environment","noun":"shisha lounge","possessive":"its","find":"..."}],"pictures":[{"picture":1,"shows":["man","lounge"]},{"picture":2,"shows":[]}]}"""
+{"members":[{"id":"man","kind":"person","noun":"man","possessive":"his","find":"...","aliases":[]},{"id":"lounge","kind":"environment","noun":"shisha lounge","possessive":"its","find":"...","aliases":[]}],"pictures":[{"picture":1,"shows":["man","lounge"],"about":"","likely":""},{"picture":2,"shows":[],"about":"...","likely":""}]}"""
 
 SURVEY_USER = """\
 IDEA:
@@ -213,7 +215,7 @@ HOW A CHAINED TAKE BREAKS, AND THE RULES THAT PREVENT IT
 13. Cuts. A clip continues from the clip before ("cut": ""), except where the IDEA jumps: "cut": "back" returns to the OPENING photograph exactly as it was, the way waking returns to the bed a dream started in; "cut": "new" jumps to a new framing or another place, and its "opening" is a snapshot of its own first frame, written like a closing. A cut clip begins with an airlock. Never cut inside one continuous action.
 14. Travel and chases. A chase, a flight or a run covers distance: the one chased starts far ahead, small in the frame, the gap changes over the clip, and the camera moves with them ("follow"). Nothing travelling stops to pose: a clip whose action runs on into the next ends with a "carry" beat instead of a settle, its closing a snapshot of the motion under way (who is where in the frame, which way each moves, the background passing), and the next clip begins with a "carry" beat, at most {quiet_max:g} seconds, in which that motion goes on and nothing new starts. A carry is never the main event: the leap or the swipe is the clip's primary beat, and the carry only keeps that motion going for at most {quiet_max:g} seconds after it. Faces still show at a carry's close, but need not turn to the camera.
 16. Leaving. A member that flies, runs or walks off goes away from the camera: it grows smaller in the frame while the camera stays behind ("stay"), and the closing says how small it has become and where (a small dark shape high in the upper right of the sky). It shows its back as it goes, so it is not in "faces_at_close". The camera follows it only in a later clip.
-15. Changes that last. When a member's look changes and stays changed (wings grow, a shirt gets soaked), the clip where it happens gives "looks": {{"cat": "two large grey-and-white feathered wings on its back"}}, the member's look from the end of that clip on, in at most {look_words} words. The program says it in every later clip, so a later clip does not repeat it; a "back" cut returns each member to the look it had in the opening scene.
+15. Changes that last. When a member's look changes and stays changed (wings grow, a shirt gets soaked), the clip where it happens gives "looks": {{"cat": {{"name": "feathered wings", "look": "two large grey-and-white feathered wings on its back"}}}}: "look" is the member's look from the end of that clip on, in at most {look_words} words, and "name" names that look in {name_words[0]} to {name_words[1]} plain words ("blue robe", "soaked shirt", "torn left sleeve"). The program says it in every later clip, so a later clip does not repeat it; a "back" cut returns each member to the look it had in the opening scene.
 
 FIELDS
 - "ambience": one noun phrase, starting in lowercase, of the room sound heard through the whole take ("quiet lounge room tone with a low ventilation hum and a faint clink of glassware from the bar").
@@ -232,7 +234,7 @@ FIELDS
   - "irreversible_change": at most 20 words.
   - "looks": {{}} unless a member's look changes for good in this clip (rule 15).
   - "ambience": "" in the first place; in another place, one noun phrase of the sound heard there ("wind rushing past and distant birdsong high above the trees").
-  - "dialogue": [] unless the IDEA gives exact words; then {{"who": id, "start": seconds, "language": "English", "line": "...", "voice": "a bright, amused young female voice"}} per line.
+  - "dialogue": [] unless the IDEA gives exact words; then {{"who": id, "start": seconds, "language": "English", "line": "...", "voice": "a bright, amused young female voice"}} per line; "voice" is how that member sounds, the same words in every line it speaks.
 - In "action" and "closing", write members as their id in braces: {{man}}, {{woman}}, {{cat}}. Never put a possessive after the braces: write "the hand of {{woman}}" or "her hand", never "{{woman}}'s hand".
 
 Answer only JSON, in this shape (one clip and two of its beats shown; write every clip and every beat):
@@ -242,7 +244,7 @@ PLAN_USER = """\
 IDEA:
 {idea}
 
-CAST (id | kind | what it is | visible traits):
+CAST (id | kind | what it is | visible traits{aliased}):
 {cast}
 
 OPENING (the first frame of clip 1, a real photograph):
@@ -412,6 +414,47 @@ CAMERA_MOVES = {
 MUSIC = "N/A"  # a score regenerated per chunk cannot be continuous; add music after the join
 
 
+# --- the story against the photographs: what it says of a member's look that a photograph does not show ------
+RULING_NOVEL_SYSTEM = """\
+You are the continuity clerk of a film made from a written story and reference photographs. The photographs decide how a member looks; the story was written without them. You find where the STORY describes the member's look differently from the TRAITS read off its photographs, as JSON.
+
+RULES
+- A conflict is a visible fact the STORY states about this member that one of the TRAITS contradicts: a red beard where a trait says grey, brass buttons where a trait says horn. Something the traits do not mention, an action, a mood or a passing state (wet, bloody, bareheaded for a moment) is not a conflict.
+- "says": the story's words for it, copied exactly ("his red beard, gone to rust at the chin").
+- "trait": the number of the TRAIT it contradicts, from 1.
+- "shows": that trait's own words as the photographs give them.
+- [] when the story agrees with every trait or says nothing of the look.
+
+Answer only JSON, in this shape:
+{"conflicts":[{"says":"...","trait":1,"shows":"..."}]}"""
+
+RULING_NOVEL_USER = """\
+STORY:
+{story}
+
+MEMBER: {member} ({kind}, {noun}){aliases}
+TRAITS:
+{traits}"""
+
+# One question per conflict: the sentences that state it, each rewritten to the photograph, and the
+# trait that would keep the story instead.
+RULING_NOVEL_LINES_SYSTEM = """\
+You reconcile ONE conflict between a written story and a member's reference photograph, as JSON.
+
+- "lines": every place in the STORY that states the story's version: "line" the fewest words that say it whole, copied exactly ("short red hair is cropped close"), and "rewritten" those words changed to say what the photograph shows, so they still read right in their sentence ("long black hair falls loose"). Never take in words about anything else: each conflict rewrites only its own words.
+- "trait": the STORY's version as a trait, never the photograph's: story "his red beard, gone to rust at the chin" is the trait "a rust-red beard". "phrase" a noun phrase of at most 14 words that reads after "with", "short" the same in at most 5 words keeping its colour, "name" what it is in one or two plain words without colour.
+
+Answer only JSON, in this shape:
+{"lines":[{"line":"...","rewritten":"..."}],"trait":{"phrase":"...","short":"...","name":"..."}}"""
+
+RULING_NOVEL_LINES_USER = """\
+STORY:
+{story}
+
+MEMBER: {member} ({kind}, {noun})
+THE STORY SAYS: {says}
+THE PHOTOGRAPH SHOWS: {shows}"""
+
 # --- judging: a keyframe or a clip against the shot it was made for ---------------------------------------
 JUDGE_SYSTEM = """\
 You are a continuity supervisor on a film set. You are shown a still, or a few frames of a clip in order, and told what the shot was meant to show and who is in it, with how each of them looks; after the frames may come the cast's own reference photos, one per member, named in WHO IS IN IT. You judge only what you can see. Score 1 when the picture shows the shot as described with every listed member present and looking exactly as described and as in their reference photo; score 0 when it shows something else, someone missing, or a member unrecognisable. Score in between for a picture that mostly shows it: name every mismatch you see as an issue, in a few words each.
@@ -575,6 +618,11 @@ COMPOSE_LOOK_KEEP = {
     "environment": "the same walls, ground, furniture, colours and light",
 }
 COMPOSE_LOOK_FACE = "The face is exactly the face in Picture 2: the same features, skin and hair."
+COMPOSE_LOOK_ALLOWED = "These may differ as the change needs: {allowed}."
+# The shape the old plates were written in (b1d50dc): the realism clause is positive because the editor
+# runs at cfg 1 and drops the negative prompt.
+COMPOSE_PLATE = """\
+Replace everything behind the {noun} with a flat, even mid-grey studio backdrop. Keep the {noun} exactly as it is: {traits}, the same pose, framing and light. Keep it an unretouched real photograph with natural skin texture and visible pores."""
 # Told in words, a robe's colour and embroidery overrode the picture it came with: production 13's retry
 # (2026-10-04), noted "the dark green one with gold floral embroidery", came back with gold flowers a
 # hand wide. A redo is pointed back at the picture instead.

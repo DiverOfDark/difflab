@@ -29,6 +29,7 @@ def _take_from_plan(data: Any, base: compose.Take) -> compose.Take:
     0.36 s), so the model never does frame arithmetic."""
     places = [m for m in base.members if base.cards[m].kind == "environment"]
     chunks: list[compose.Chunk] = []
+    voices: dict[str, str] = {}
     for clip in data["clips"]:
         cut = str(clip.get("cut") or "").replace("none", "")
         # A clip that goes on, or cuts back to the opening, stays in the scene it returns to.
@@ -47,9 +48,13 @@ def _take_from_plan(data: Any, base: compose.Take) -> compose.Take:
             beats = (*beats[:-1], dataclasses.replace(beats[-1], end=round(seconds, 3)))
         named = [str(m) for m in clip["cast"]]
         lines = tuple(
-            compose.Line(str(d["who"]), float(d["start"]), str(d["language"]), str(d["line"]), str(d["voice"]))
+            compose.Line(str(d["who"]), float(d["start"]), str(d["language"]), str(d["line"]))
             for d in clip.get("dialogue", [])
         )
+        for d in clip.get("dialogue", []):
+            if str(d.get("voice") or "").strip():
+                voices.setdefault(str(d["who"]), " ".join(str(d["voice"]).split()))
+        changes = {str(m): _look(v) for m, v in (clip.get("looks") or {}).items()}
         chunks.append(
             compose.Chunk(
                 purpose=str(clip["purpose"]),
@@ -65,35 +70,49 @@ def _take_from_plan(data: Any, base: compose.Take) -> compose.Take:
                 seconds=seconds,
                 cut=cut,
                 opening=str(clip.get("opening") or "").strip(),
-                looks={str(m): str(v).strip() for m, v in (clip.get("looks") or {}).items()},
+                looks={m: look for m, (look, _) in changes.items()},
+                look_names={m: name for m, (_, name) in changes.items()},
                 ambience=str(clip.get("ambience") or "").strip(),
                 scene=scene,
             )
         )
-    return dataclasses.replace(base, ambience=str(data["ambience"]).strip(), chunks=tuple(chunks))
+    return dataclasses.replace(base, ambience=str(data["ambience"]).strip(), chunks=tuple(chunks), voices=voices)
 
 
-def plan(base: compose.Take, idea: str, total: float) -> compose.Take:
+def _look(given: Any) -> tuple[str, str]:
+    """A lasting change as (its look, its name); a bare string is a look the planner left unnamed."""
+    if isinstance(given, dict):
+        return " ".join(str(given.get("look") or "").split()), " ".join(str(given.get("name") or "").split())
+    return " ".join(str(given).split()), ""
+
+
+def plan(base: compose.Take, idea: str, total: float, aliases: dict[str, str] | None = None) -> compose.Take:
     """The whole take in one call, so the model sees every join while it decides where beats end.
 
     `total` is the most the take may last; the model chooses how many clips and how long each, between
     DIRECTOR_CLIP_MIN and `base.seconds`.
 
     Members are then numbered by when they first appear, so a <Subject N> keeps its number from the
-    chunk it enters to the end, and the sentences that name it stay the same words.
+    chunk it enters to the end, and the sentences that name it stay the same words. `aliases` are what the
+    IDEA calls a member, so its mentions are found under any of its names.
     """
-    cast = "\n".join(f"{c.id} | {c.kind} | {c.noun} | {c.full()}" for c in (base.cards[m] for m in base.members))
+    aliases = {m: a for m, a in (aliases or {}).items() if a.strip()}
+    cast = "\n".join(
+        f"{c.id} | {c.kind} | {c.noun} | {c.full()}" + (f" | {aliases.get(c.id) or '-'}" if aliases else "")
+        for c in (base.cards[m] for m in base.members)
+    )
     moves = "\n".join(
         f"- {name}: {sentence.format(toward='the member')}" for name, sentence in words.CAMERA_MOVES.items()
     )
     window = h3.DIRECTOR_MAIN_BEAT_WINDOW
     shortest, longest = h3.DIRECTOR_CLIP_MIN, round(base.seconds, 1)
     question = words.PLAN_USER.format(
-        idea=idea.strip(), cast=cast, opening=base.opening, total=round(total), shortest=shortest, longest=longest,
+        idea=idea.strip(), cast=cast, aliased=" | also called in the IDEA" if aliases else "", opening=base.opening,
+        total=round(total), shortest=shortest, longest=longest,
         early=window[0] * 100, late=window[1] * 100, moves=moves, beat_min=h3.DIRECTOR_BEAT_MIN,
     )  # fmt: skip
     system = words.PLAN_SYSTEM.format(
-        longest=longest, look_words=h3.DIRECTOR_LOOK_WORDS,
+        longest=longest, look_words=h3.DIRECTOR_LOOK_WORDS, name_words=h3.DIRECTOR_LOOK_NAME_WORDS,
         airlock=h3.DIRECTOR_AIRLOCK[0], airlock_min=h3.DIRECTOR_AIRLOCK[1], settle=h3.DIRECTOR_SETTLE[0],
         settle_min=h3.DIRECTOR_SETTLE[1], quiet_max=h3.DIRECTOR_QUIET_MAX, early=window[0] * 100, late=window[1] * 100,
         handoff_min=h3.DIRECTOR_HANDOFF_MIN, max_living=h3.DIRECTOR_MAX_LIVING,

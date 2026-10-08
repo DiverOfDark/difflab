@@ -204,3 +204,59 @@ def leaving(take: compose.Take) -> list[Problem]:
             out.append(_fail("camera", f"clip {index + 1}: its closing has {{{card.id}}} going away from the camera, "
                              f"which \"{chunk.camera_move}\" keeps close: use \"stay\" (rule 16)"))  # fmt: skip
     return out
+
+
+SENTENCE = {"type": "string", "maxLength": 400}
+NOVEL_LINES = 8  # sentences one conflict rewrites at most; at RULING_TOKENS a pair of 400-character ones is ~200
+
+
+def novel(story: str, card: compose.Card, aliases: str = "") -> list[dict[str, Any]]:
+    """Where the story describes a photographed member otherwise than its traits, one question to find them
+    and one per conflict for the sentences that say it and the trait that would keep the story instead."""
+    from difflab.tools.cards import article  # cards asks its gates through this module
+
+    traits = card.ordered()
+    if not story.strip() or not traits:
+        return []
+    question = words.RULING_NOVEL_USER.format(
+        story=story.strip(), member=card.id, kind=card.kind, noun=card.noun,
+        aliases=f", called {aliases}" if aliases.strip() else "",
+        traits="\n".join(f"{n}. {trait.phrase}" for n, trait in enumerate(traits, 1)),
+    )  # fmt: skip
+    found = _object(says=QUOTE, trait=_number(len(traits)), shows=QUOTE)
+    data = ask(f"novel · {card.id}", words.RULING_NOVEL_SYSTEM, question, _object(conflicts=_array(found)))
+    plain = _plain(story)
+    out = []
+    for conflict in data["conflicts"]:
+        says, number = " ".join(str(conflict["says"]).split()), int(conflict["trait"])
+        # Quoted, not paraphrased: a "says" the story does not contain is the model's, not the story's.
+        if not says or not 1 <= number <= len(traits) or _plain(says) not in plain:
+            continue
+        trait = traits[number - 1]
+        pair = _object(line=SENTENCE, rewritten=SENTENCE)
+        shape = _object(
+            lines=_array(pair) | {"maxItems": NOVEL_LINES}, trait=_object(phrase=QUOTE, short=QUOTE, name=QUOTE)
+        )
+        asked = words.RULING_NOVEL_LINES_USER.format(
+            story=story.strip(), member=card.id, kind=card.kind, noun=card.noun, says=says, shows=trait.phrase
+        )
+        settled = ask(f"novel lines · {card.id}", words.RULING_NOVEL_LINES_SYSTEM, asked, shape)
+        lines = [
+            [line, rewritten]
+            for one in settled["lines"]
+            if (line := str(one["line"]).strip()) in story and (rewritten := str(one["rewritten"]).strip()) != line
+        ]
+        kept = settled["trait"]
+        name = str(kept["name"]).strip() or trait.name
+        out.append(
+            {
+                "novel_says": says,
+                "reference_shows": trait.short,
+                "lines": lines,
+                "novel_trait": {
+                    "part": trait.part, "phrase": article(str(kept["phrase"]), name),
+                    "short": article(str(kept["short"]), name), "name": name, "replaces": trait.phrase,
+                },
+            }
+        )  # fmt: skip
+    return out

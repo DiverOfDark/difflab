@@ -6,6 +6,7 @@ back bit for bit, or every chunk holding it keys differently and the take is ren
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from typing import Any
 
@@ -18,6 +19,10 @@ from difflab.core.keys import key
 from difflab.core.settings import EditSettings
 from difflab.core.types import Frame
 from difflab.models.qwen_edit import Editor
+
+VAE_REFERENCE_AREA = 1024 * 1024
+"""The pixel area QwenImageEditPlus encodes every input at for its VAE reference latents. Not a knob:
+a fact about the pipeline, which `vae_reference_size` exists only to agree with."""
 
 
 def spec(checkpoint: str) -> models.ModelSpec:
@@ -73,3 +78,31 @@ def edit(
         **({"donors": [donor.pixels for donor in donors]} if donors else {}),
     )
     return default_cache.frame(made, produce)
+
+
+def vae_reference_size(frame: Frame, area: int = VAE_REFERENCE_AREA) -> tuple[int, int]:
+    """The size diffusers encodes `frame` at as its VAE reference: `area`, on the /32 grid.
+
+    Output at exactly this size and an in-place edit lands on the reference latent 1:1, so the model
+    replaces around the subject instead of re-composing it; a mismatched size is where a plate's zoom
+    and crop drift come from. Each axis rounds to /32 on its own, so the result can sit up to ~1.5%
+    off the input's aspect.
+
+    Not `minimax_h3.pipeline.reference_size`, which is H3's reference encoding and a different thing.
+    """
+    scale = math.sqrt(area / (frame.width * frame.height))
+    align = 32
+    return (
+        max(align, round(frame.width * scale / align) * align),
+        max(align, round(frame.height * scale / align) * align),
+    )
+
+
+def plate(frame: Frame, instruction: str, settings: EditSettings | None = None) -> Frame:
+    """A reference photo with ONE subject on ONE flat backdrop, back at the photo's own size.
+
+    A reference picture lends H3 everything in it - the face, and also the sofa and the hose in someone's
+    hand, which come back as a cut to that room or as a second hose. `settings.megapixels` does not apply:
+    the size is the reference size, so the seed is the only knob a plate turns.
+    """
+    return edit(frame, instruction, settings, size=vae_reference_size(frame)).resized(frame.width, frame.height)

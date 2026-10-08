@@ -346,6 +346,8 @@ def run_draw_look(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str,
     said = words.COMPOSE_LOOK.format(
         noun=inputs["noun"], kept=words.COMPOSE_LOOK_KEEP[kind], amendment=amend.rstrip(".")
     )
+    if str(inputs.get("allowed") or "").strip():
+        said = f"{said} {words.COMPOSE_LOOK_ALLOWED.format(allowed=str(inputs['allowed']).strip().rstrip('.'))}"
     if face is not None:
         said = f"{said} {words.COMPOSE_LOOK_FACE}"
     # By both pictures' pixels: a source drawn again moves every look drawn from it.
@@ -362,6 +364,22 @@ def run_draw_look(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str,
     work = (max(16, width // 16 * 16), max(16, height // 16 * 16))  # the editor floors its output to /16
     edited = edit_image.edit(source, said, chosen, size=work, donors=[face] if face is not None else [])
     edited.resized(*size).pil().save(target)
+    record.artifact_made(target, store.IMAGE, chosen.seed, key=str(made))
+    return outputs
+
+
+def run_plate_ref(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
+    """A member's reference photo with everything behind it replaced by a flat grey backdrop."""
+    chosen = EditSettings(**settings).with_(seed=int(inputs["seed"]))
+    picture = _frame(inputs["picture"])
+    said = words.COMPOSE_PLATE.format(noun=inputs["noun"], traits=inputs["traits"])
+    made = key("plate_ref", 1, picture=picture.pixels, said=said, settings=chosen)
+    target = cache.path(made, ".png")
+    outputs = {"frame": store.relative(target), "key": str(made)}
+    if target.is_file():
+        ui.note(f"already plated as {made}")
+        return Skipped(outputs)
+    edit_image.plate(picture, said, chosen).pil().save(target)
     record.artifact_made(target, store.IMAGE, chosen.seed, key=str(made))
     return outputs
 
@@ -429,11 +447,13 @@ def run_judge(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any
     # picture is the place.
     framed = kind in ("clip", "keyframe")
     with store.connect() as connection:
-        cards = [
-            compiler.card_of(m)
-            for m in store.members_of(connection, production_id)
+        rows = [
+            m for m in store.members_of(connection, production_id)
             if m.slug in cast and not (framed and m.kind == "environment")
-        ]
+        ]  # fmt: skip
+    cards = [compiler.card_of(m) for m in rows]
+    allowed = {m.slug: m.allowed for m in rows if m.allowed.strip()}
+    appearance = {m.slug: m.appearance for m in rows if m.appearance.strip()}
     if kind == "clip":
         frames = judge.sampled(media.clip_from_video(_path(inputs["path"]), with_audio=False))
     else:
@@ -444,7 +464,7 @@ def run_judge(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any
     try:
         verdict = judge.judge(
             frames, kind, str(inputs.get("purpose", "")), str(inputs.get("arrangement", "")), cards, chosen, pictures,
-            looks, becomes,
+            looks, becomes, allowed, appearance,
         )  # fmt: skip
     except RuntimeError as problem:  # an unusable verdict is a thing to look at, never a reason to end a render
         ui.note(f"judge · {kind}: no usable verdict ({problem})")
@@ -499,6 +519,7 @@ RUNNERS: dict[str, Runner] = {
     "compose_keyframe": run_compose_keyframe,
     "draw_reference": run_draw_reference,
     "draw_look": run_draw_look,
+    "plate_ref": run_plate_ref,
     "judge": run_judge,
     **PLAN_RUNNERS,
 }

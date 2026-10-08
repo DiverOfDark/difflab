@@ -205,7 +205,7 @@ def draw(production_id: int, casting_ids: list[int], asked_by: str = "person") -
                 base = base_picture(connection, member)
                 if base is None:
                     raise ValueError(f"{member.slug} has no picture to draw “{look.label}” from: give or draw one")
-                source, size = base.artifact, base.size
+                source, size = member.picture(base), base.size
             elif look.source in jobs:
                 job_id, size = jobs[look.source]
                 source = {"from_job": job_id, "output": "frame"}
@@ -223,8 +223,9 @@ def draw(production_id: int, casting_ids: list[int], asked_by: str = "person") -
             job = store.add_job(
                 connection, run_id, "draw_look",
                 {"production": production_id, "casting": casting_id, "source": source,
-                 "face": face.artifact if face else None, "kind": member.kind, "noun": member.noun,
-                 "amend": " ".join(look.casting.amend.split()), "size": list(size), "seed": seed},
+                 "face": member.picture(face) if face else None, "kind": member.kind, "noun": member.noun,
+                 "amend": " ".join(look.casting.amend.split()), "size": list(size), "seed": seed,
+                 **({"allowed": member.allowed} if member.allowed.strip() else {})},
                 label=f"draw {member.slug} · {look.label}", settings=editor.data(), for_kind="casting",
                 for_id=casting_id,
             )  # fmt: skip
@@ -238,7 +239,7 @@ def draw(production_id: int, casting_ids: list[int], asked_by: str = "person") -
                  "purpose": f"a reference picture of the {member.noun} as in its own reference photo, changed only "
                             f"in this: {look.text}",
                  "arrangement": f"{{{member.slug}}} alone", "cast": [member.slug],
-                 "pictures": {member.slug: base.artifact} if base is not None else {},
+                 "pictures": {member.slug: member.picture(base)} if base is not None else {},
                  "looks": {member.slug: look.text}},
                 label=f"judge {member.slug} · {look.label}", settings=verdicts.data(), for_kind="casting",
                 for_id=casting_id,

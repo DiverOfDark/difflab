@@ -23,9 +23,21 @@ from difflab.core.types import Frame
 from difflab.models.minimax_h3.settings import VideoSettings
 from difflab.screenplay import checks, compiler, crops, words
 from difflab.screenplay import config as knobs
+from difflab.screenplay import production as production_module
 from difflab.screenplay import settings as chosen
 from difflab.screenplay.production import CUT_NOTE, OPENING_NOTE
-from difflab.tools import cards, cut_crops, direct, ground, opening, plan_shots, refine_idea, survey, write_shot
+from difflab.tools import (
+    cards,
+    cut_crops,
+    direct,
+    ground,
+    opening,
+    plan_shots,
+    refine_idea,
+    ruling,
+    survey,
+    write_shot,
+)  # fmt: skip
 from difflab.work import Skipped
 
 
@@ -174,8 +186,13 @@ def run_survey(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, An
     )
     if (previous := _start("survey", made)) is not None:
         return previous
-    members, shows = _overlay(*survey.survey(idea, frames), pinned, dropped)
+    surveyed = survey.survey(idea, frames)
+    members, shows = _overlay(surveyed.members, surveyed.shows, pinned, dropped)
     kept = {m.slug for m in pinned}
+    photos = [str(p) for p in inputs["photos"]]
+    unmatched = [
+        {"photo": photos[i], "about": about, "likely": likely} for i, (about, likely) in surveyed.unplaced.items() if i
+    ]
     with store.connect() as connection, store.transaction(connection):
         for position, member in enumerate(members.values()):
             if member.id not in kept:
@@ -184,7 +201,16 @@ def run_survey(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, An
                     position,
                 )  # fmt: skip
         store.drop_members_except(connection, production_id, list(members))
-    return {"members": [dataclasses.asdict(m) for m in members.values()], "shows": [list(s) for s in shows]}
+        for row in store.members_of(connection, production_id):
+            if surveyed.aliases.get(row.slug) and not row.aliases:
+                store.update_member(connection, row.id, aliases=surveyed.aliases[row.slug])
+    _manifest(production_id, unmatched=unmatched)
+    return {
+        "members": [dataclasses.asdict(m) for m in members.values()],
+        "shows": [list(s) for s in shows],
+        "aliases": surveyed.aliases,
+        "unmatched": unmatched,
+    }
 
 
 def run_ground(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
@@ -328,9 +354,13 @@ def run_tidy(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]
     seen = [dict(card) for card in inputs["cards"]]
     found = [_found(listed) for listed in inputs["found"]]
     pinned = {m.slug: m.identity for m in _by_hand(production_id)[0] if m.slug in members}
+    with store.connect() as connection:
+        production = store.production(connection, production_id)
+        aliases = {m.slug: m.aliases for m in store.members_of(connection, production_id) if m.aliases}
     made = key(
         "tidy", 1, production=production_id, idea=idea, members=inputs["members"], shows=inputs["shows"], cards=seen,
-        found=inputs["found"], **({"by_hand": pinned} if pinned else {}), **_fingerprint(),
+        found=inputs["found"], **({"by_hand": pinned} if pinned else {}), **({"aliases": aliases} if aliases else {}),
+        **_fingerprint(),
     )  # fmt: skip
     if (previous := _start("tidy", made)) is not None:
         return previous
@@ -340,12 +370,48 @@ def run_tidy(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]
     identities |= {
         slug: {"traits": [], "lights": [], "photographed": True, **identity} for slug, identity in pinned.items()
     }
+    told = production is not None and production.story_kind in ("idea", "text")
+    # A video's story is its captions' change, not a description: nothing in it argues with a photograph.
+    texts = {
+        slug: ruling.novel(idea, card, aliases.get(slug, ""))
+        for slug, card in merged.items()
+        if told and card.photographed
+    }
     with store.connect() as connection, store.transaction(connection):
         for member in store.members_of(connection, production_id):
             if member.slug in identities and member.slug not in pinned:
                 store.set_identity(connection, member.id, identities[member.slug])
-                store.set_conflicts(connection, member.id, conflicts.get(member.slug, []))
+                store.set_conflicts(connection, member.id, conflicts.get(member.slug, []), texts.get(member.slug, []))
     return {"cards": identities}
+
+
+def run_describe_member(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
+    """One member read again from each photograph it was cut from, tidied, and checked against the story."""
+    production_id = int(inputs["production"])
+    with store.connect() as connection:
+        production = store.production(connection, production_id)
+        member = store.member(connection, int(inputs["member"]))
+        if production is None or member is None:
+            raise LookupError(f"member {inputs['member']} was deleted before it was described")
+        own = [r for r in store.refs_of(connection, member.id) if r.photo and not r.generated]
+        story = next(
+            (c.story for c in store.chapters_of(connection, production_id) if c.story.strip()), production.story
+        )
+    photos = [p for p in production.manifest.get("photos", []) if p in {r.photo for r in own}]
+    frames = [_frame(p) for p in photos]
+    asked = direct.Member(member.slug, member.kind, member.noun, member.possessive, member.find)
+    largest = {photo: max((r for r in own if r.photo == photo), key=lambda r: r.quality) for photo in photos}
+    found = [[crops.Found(member.slug, crops.Box(*map(float, largest[photo].box)))] for photo in photos]
+    seen = cards.identify(frames, [[asked]] * len(frames))
+    merged, conflicts = cards.merge(story, {member.slug: asked}, seen, found, [(member.slug,)] * len(frames))
+    card = merged[member.slug]
+    told = production.story_kind in ("idea", "text") and card.photographed
+    texts = ruling.novel(story, card, member.aliases) if told else []
+    with store.connect() as connection, store.transaction(connection):
+        store.update_member(connection, member.id, identity=_identity(card), appearance="", pinned=False)
+        store.set_conflicts(connection, member.id, conflicts.get(member.slug, []), texts)
+        moved = production_module.stale_casting(connection, member.id)
+    return {"card": _identity(card), "conflicts": len(conflicts.get(member.slug, [])) + len(texts), "stale": moved}
 
 
 def run_arrange(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
@@ -378,6 +444,7 @@ def run_arrange(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, A
 def run_plan_shots(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
     outputs = _plan_shots(inputs, settings)
     _castings(inputs, outputs)
+    _voices(int(inputs["production"]), dict(outputs.get("voices") or {}))
     _write_and_compile(inputs, len(outputs["chunks"]))
     return outputs
 
@@ -400,7 +467,8 @@ def _castings(inputs: dict[str, Any], outputs: dict[str, Any]) -> None:
             existing = {c.member_id: c for c in store.castings_of(connection, shot.id)}
             cast = [str(m) for m in plan.get("cast", []) if str(m) in members]
             for position, slug in enumerate(cast):
-                amend = " ".join(str(changed.get(slug) or "").split())
+                amend = " ".join(str((changed.get(slug) or {}).get("amend") or "").split())
+                label = " ".join(str((changed.get(slug) or {}).get("label") or "").split())
                 # Said again word for word in a later clip, a change is that clip carrying it, not a new look.
                 amend = "" if amend and amend == said.get(slug) else amend
                 said[slug] = amend or said.get(slug, "")
@@ -411,10 +479,20 @@ def _castings(inputs: dict[str, Any], outputs: dict[str, Any]) -> None:
                     found = store.add_casting(connection, shot.id, members[slug], amend=amend, origin=origin)
                 elif found.amend != amend or found.parent is not None:
                     store.set_made(connection, "casting", found.id, store.STALE if found.artifact else store.MISSING)
-                    store.update_casting(connection, found.id, parent=None, amend=amend, label="")
-                store.update_casting(connection, found.id, position=position, origin=origin)
+                    store.update_casting(connection, found.id, parent=None, amend=amend)
+                store.update_casting(
+                    connection, found.id, position=position, origin=origin, label=label if amend else ""
+                )
             for gone in existing.values():
                 store.delete_casting(connection, gone.id)
+
+
+def _voices(production_id: int, voices: dict[str, str]) -> None:
+    """The planner's voice for each speaker the bible has none for: a voice once set is the member's."""
+    with store.connect() as connection, store.transaction(connection):
+        for member in store.members_of(connection, production_id):
+            if not member.voice and voices.get(member.slug):
+                store.update_member(connection, member.id, voice=str(voices[member.slug]))
 
 
 def _paragraph(idea: str, story: list[tuple[str, int]], clip: int) -> int | None:
@@ -477,11 +555,13 @@ def _plan_shots(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, A
         rows = store.members_of(connection, production_id)
     photos = [str(p) for p in production.manifest.get("photos", [])]
     refs = compiler.refs_of(references, rows, photos)
+    aliases = {m.slug: m.aliases for m in rows if m.aliases.strip() and m.slug in members}
     made = key(
         "plan_shots", 2, production=production_id, chapter=chapter_id, idea=idea, take_seconds=total,
         members=inputs["members"],
         cards=identities, refs={k: dataclasses.asdict(r) for k, r in refs.items()}, arrangement=arrangement,
-        seconds=seconds, tail=tail, budget=budget, **_taken(inputs), **_fingerprint(),
+        seconds=seconds, tail=tail, budget=budget, **({"aliases": aliases} if aliases else {}), **_taken(inputs),
+        **_fingerprint(),
     )  # fmt: skip
     if (previous := _start("plan_shots", made)) is not None:
         return previous
@@ -497,9 +577,12 @@ def _plan_shots(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, A
         budget=budget,
     )
     with _take(inputs):
-        planned = plan_shots.plan(base, idea, total)
+        planned = plan_shots.plan(base, idea, total, aliases)
     chunks = [compiler.plan_of(chunk) for chunk in planned.chunks]
-    changed = [dict(chunk.looks) for chunk in planned.chunks]
+    changed = [
+        {m: {"amend": look, "label": chunk.look_names.get(m, "")} for m, look in chunk.looks.items()}
+        for chunk in planned.chunks
+    ]
     with store.connect() as connection, store.transaction(connection):
         now = store.production(connection, production_id)
         assert now is not None
@@ -550,6 +633,7 @@ def _plan_shots(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, A
         "story": [list(e) for e in planned.story],
         "order": list(planned.members),
         "looks": changed,
+        "voices": dict(planned.voices),
     }
 
 
@@ -640,6 +724,7 @@ PLAN_RUNNERS = {
     "cards": run_cards,
     "describe_opening": run_describe_opening,
     "tidy": run_tidy,
+    "describe_member": run_describe_member,
     "arrange": run_arrange,
     "plan_shots": run_plan_shots,
     "write_shot": run_write_shot,

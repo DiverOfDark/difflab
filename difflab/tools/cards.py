@@ -85,7 +85,7 @@ UNCOUNTABLE = {
 DETERMINERS = ("a ", "an ", "the ", "his ", "her ", "its ", "their ", "one ", "two ", "three ", "some ")
 
 
-def _article(phrase: str, name: str) -> str:
+def article(phrase: str, name: str) -> str:
     """ "black hookah hose" -> "a black hookah hose": every trait is said after "with". `name` is the
     thing itself, so a plural or uncountable one takes none."""
     phrase = phrase.strip()
@@ -99,8 +99,8 @@ def _traits(entries: Any) -> tuple[compose.Trait, ...]:
     return tuple(
         compose.Trait(
             str(t["part"]),
-            _article(str(t["phrase"]), str(t["name"])),
-            _article(str(t["short"]), str(t["name"])),
+            article(str(t["phrase"]), str(t["name"])),
+            article(str(t["short"]), str(t["name"])),
             str(t["name"]),
         )
         for t in entries

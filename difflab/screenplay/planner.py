@@ -420,7 +420,7 @@ def pictures(
         own = [r for r in store.refs_of(connection, member.id) if r.artifact]
         own.sort(key=lambda r: (r.role not in ("body", "view"), r.generated, r.role == "face", -r.quality))
         if own:
-            out[slug] = str(own[0].artifact)
+            out[slug] = str(member.picture(own[0]))
     return out
 
 

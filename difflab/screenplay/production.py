@@ -257,7 +257,6 @@ def _edit_plan(connection: Any, chapter: store.Chapter, shot: store.Shot, **plan
                     "start": float(line.get("start") or main.get("start", 0.0)),
                     "language": str(line.get("language") or "English"),
                     "line": said,
-                    "voice": str(line.get("voice") or f"a natural {members[who].noun}'s voice"),
                 }
             )
         plan["dialogue"] = lines
@@ -347,6 +346,12 @@ def redo_keyframe(shot_id: int, note: str = "") -> int:
         store.compose_keyframe(connection, shot_id, seed=random.randrange(2**32), note=" ".join(note.split()))
         _stale(connection, [shot])
         return shot.chapter_id
+
+
+def stale_casting(connection: Any, member_id: int) -> dict[str, int]:
+    """What every shot casting the member has made, marked stale."""
+    member = store.member(connection, member_id)
+    return {} if member is None else _stale(connection, _shots_of(connection, member.production_id, member.slug))
 
 
 def recompile_casting(connection: Any, member_id: int) -> None:
@@ -496,44 +501,136 @@ def _resplit(connection: Any, production_id: int, text: str) -> None:
 
 
 # --- the cast, by hand -----------------------------------------------------------------------------
+IDENTITY = ("noun", "kind", "possessive", "find", "traits", "lights", "photographed", "appearance", "allowed")
+VOICE = ("voice", "delivery", "reference_audio")
+
+
 def update_member(member_id: int, **changes: Any) -> dict[str, int]:
-    """`noun`, `kind`, `possessive`, `find`, `traits` ({part, phrase, short, name} each), `lights`, and
-    `photographed`: false says it is decided in words, and lets go of every picture of it. The member is
-    pinned - a re-plan leaves it as written - and every shot that casts it goes stale."""
-    unknown = set(changes) - {"noun", "kind", "possessive", "find", "traits", "lights", "photographed", "pinned"}
+    """`noun`, `kind`, `possessive`, `find`, `traits` ({part, phrase, short, name} each), `lights`,
+    `photographed` (false: decided in words, every picture of it let go of), `appearance` ('' gives it back
+    to its traits) and `allowed`: the member is pinned - a re-plan leaves it as written - and every shot
+    that casts it goes stale. `voice`, `delivery`, `reference_audio`: the prompts it speaks in are compiled
+    again and only their clips go stale. `aliases` reach the next plan. `plate` hands its photographs over
+    on a flat backdrop, drawing the plates it lacks as a run (`plating`)."""
+    unknown = set(changes) - {*IDENTITY, *VOICE, "aliases", "plate", "pinned"}
     if unknown:
         raise ValueError(f"a member has no {', '.join(sorted(unknown))} to edit")
+    moved = {"prompts": 0, "keyframes": 0, "clips": 0}
     with store.connect() as connection, store.transaction(connection):
         member = store.member(connection, member_id)
-        if member is None:
+        production = None if member is None else store.production(connection, member.production_id)
+        if member is None or production is None:
             raise LookupError(f"no member {member_id}")
         if changes.get("pinned") is False and len(changes) == 1:
             store.update_member(connection, member_id, pinned=False)
-            return {"prompts": 0, "keyframes": 0, "clips": 0}
-        others = [m for m in store.members_of(connection, member.production_id) if m.id != member_id]
-        kind = str(changes.get("kind", member.kind))
-        identity = dict(member.identity)
-        if "traits" in changes:
-            identity["traits"] = _traits(changes["traits"])
-        if "lights" in changes:
-            identity["lights"] = [" ".join(str(x).split()) for x in changes["lights"] or [] if str(x).strip()]
-        if "photographed" in changes:
-            identity["photographed"] = bool(changes["photographed"])
-        fields = {
-            "kind": kind,
-            "noun": " ".join(str(changes.get("noun", member.noun)).split()),
-            "possessive": str(changes.get("possessive", member.possessive)),
-            "find": " ".join(str(changes.get("find", member.find)).split()),
-        }
-        _check_member(member.slug, fields, identity, others)
-        if not identity.get("photographed", True):
-            for reference in store.refs_of(connection, member_id):
-                if not reference.generated:
-                    store.delete_ref(connection, reference.id)
-        store.update_member(connection, member_id, **fields, identity=identity, pinned=True)
-        moved = _stale(connection, _shots_of(connection, member.production_id, member.slug))
+            return moved
+        if "aliases" in changes:
+            said = ", ".join(
+                dict.fromkeys(a for a in (" ".join(x.split()) for x in str(changes["aliases"]).split(",")) if a)
+            )
+            store.update_member(connection, member_id, aliases=said)
+        if any(field in changes for field in IDENTITY):
+            moved = _reidentify(connection, member, changes)
+        if any(field in changes for field in VOICE):
+            fields = {field: " ".join(str(changes.get(field, getattr(member, field))).split()) for field in VOICE}
+            if fields["reference_audio"]:
+                fields["reference_audio"] = store.relative(_under_output(fields["reference_audio"]))
+            if fields != {field: getattr(member, field) for field in VOICE}:
+                store.update_member(connection, member_id, **fields)
+                moved["clips"] += _revoice(connection, production, member.slug)
+        if "plate" in changes and bool(changes["plate"]) != member.plate:
+            if member.kind == "environment":
+                raise ValueError("a place is the backdrop: there is nothing behind it to replace")
+            store.update_member(connection, member_id, plate=bool(changes["plate"]))
+            recompile_casting(connection, member_id)
         store.touch_production(connection, member.production_id)
+    if changes.get("plate"):
+        moved["plating"] = 1 if plate(member_id) else 0
     return moved
+
+
+def _reidentify(connection: Any, member: store.Member, changes: dict[str, Any]) -> dict[str, int]:
+    others = [m for m in store.members_of(connection, member.production_id) if m.id != member.id]
+    kind = str(changes.get("kind", member.kind))
+    identity = dict(member.identity)
+    if "traits" in changes:
+        identity["traits"] = _traits(changes["traits"])
+    if "lights" in changes:
+        identity["lights"] = [" ".join(str(x).split()) for x in changes["lights"] or [] if str(x).strip()]
+    if "photographed" in changes:
+        identity["photographed"] = bool(changes["photographed"])
+    fields = {
+        "kind": kind,
+        "noun": " ".join(str(changes.get("noun", member.noun)).split()),
+        "possessive": str(changes.get("possessive", member.possessive)),
+        "find": " ".join(str(changes.get("find", member.find)).split()),
+    }
+    _check_member(member.slug, fields, identity, others)
+    if not identity.get("photographed", True):
+        for reference in store.refs_of(connection, member.id):
+            if not reference.generated:
+                store.delete_ref(connection, reference.id)
+    words_ = {
+        field: " ".join(str(changes.get(field, getattr(member, field))).split()) for field in ("appearance", "allowed")
+    }
+    store.update_member(connection, member.id, **fields, **words_, identity=identity, pinned=True)
+    return _stale(connection, _shots_of(connection, member.production_id, member.slug))
+
+
+def _revoice(connection: Any, production: store.Production, slug: str) -> int:
+    """The prompts of every shot the member speaks in compiled again with its voice; how many clips that staled."""
+    staled = 0
+    for chapter in store.chapters_of(connection, production.id):
+        for shot in store.shots_of(connection, chapter.id):
+            if not any(str(line.get("who")) == slug for line in shot.plan.get("dialogue", [])):
+                continue
+            prompt = store.prompt_of(connection, shot.id)
+            if prompt.pinned or not shot.plan.get("beats"):
+                continue  # a prompt written by hand says the voice in its own words
+            take = compiler.take_of(connection, production, chapter)
+            compiled = compiler.compile_chunk(take, shot.position)
+            if compiled.prompt == prompt.text:
+                continue
+            made = key(
+                "compile_shot", 1, production=production.id, shot=shot.id, prompt=compiled.prompt,
+                pictures=compiled.references,
+            )  # fmt: skip
+            store.set_compiled(connection, shot.id, compiled.prompt, prompt.pictures, prompt.checks, str(made), "voice")
+            clip = store.clip_of(connection, shot.id)
+            if clip.artifact and clip.state != store.STALE:
+                store.set_made(connection, "clip", clip.id, store.STALE)
+                staled += 1
+    return staled
+
+
+def plate(member_id: int, asked_by: str = "person") -> str | None:
+    """A run plating each of the member's photographed references that has no plate yet; None when none lacks one."""
+    with store.connect() as connection, store.transaction(connection):
+        member = store.member(connection, member_id)
+        production = None if member is None else store.production(connection, member.production_id)
+        if member is None or production is None:
+            raise LookupError(f"no member {member_id}")
+        wanting = [r for r in store.refs_of(connection, member_id) if r.artifact and not r.generated and not r.plate]
+        if not wanting:
+            return None
+        editor, _ = settings.effective("edit_image", production.id)
+        assert isinstance(editor, EditSettings)
+        run_id = store.next_run_id(connection, datetime.now().strftime("%Y-%m-%d-%H%M%S"))
+        store.add_run(
+            connection, run_id, title=f"{production.title} · {member.slug} · plates", asked_by=asked_by,
+            scope=f"plates:{production.id}", production_id=production.id,
+            spec={"production": production.id, "items": [f"{member.slug} {r.role}" for r in wanting]},
+        )  # fmt: skip
+        traits = compiler.card_of(member).short()
+        for reference in wanting:
+            store.add_job(
+                connection, run_id, "plate_ref",
+                {"production": production.id, "picture": reference.artifact, "noun": member.noun, "traits": traits,
+                 "seed": editor.seed},
+                label=f"plate {member.slug} · {reference.role}", settings=editor.data(), for_kind="plate",
+                for_id=reference.id,
+            )  # fmt: skip
+        return run_id
 
 
 def add_member(production_id: int, slug: str, **given: Any) -> store.Member:
@@ -669,6 +766,102 @@ def resolve_conflict(conflict_id: int, resolution: str) -> int:
             raise LookupError(f"no conflict {conflict_id}")
         store.resolve_conflict(connection, conflict_id, " ".join(resolution.split()))
         return member.production_id
+
+
+def keep(conflict_id: int, kept: str) -> int:
+    """A conflict between the story and a photograph settled: `reference` rewrites the story's sentences
+    that say otherwise, `novel` takes the story's trait into the card. Either stales what it touches.
+    Returns the production."""
+    if kept not in ("reference", "novel"):
+        raise ValueError("keep the reference or the novel")
+    with store.connect() as connection, store.transaction(connection):
+        found = store.conflict(connection, conflict_id)
+        member = None if found is None else store.member(connection, found.member_id)
+        production = None if member is None else store.production(connection, member.production_id)
+        if found is None or member is None or production is None:
+            raise LookupError(f"no conflict {conflict_id}")
+        if not found.textual:
+            raise ValueError("two photographs disagree here, not the story: keep one photograph's wording")
+        if kept == "reference":
+            story = production.story
+            # Lines another conflict's rewrite already took are gone from the story: only what is still there counts.
+            lines = [(line, rewritten) for line, rewritten in found.lines if line in story]
+            for line, rewritten in lines:
+                story = story.replace(line, rewritten)
+                for chapter in store.chapters_of(connection, production.id):
+                    if line in chapter.story:
+                        connection.execute(
+                            "UPDATE chapters SET story = ? WHERE id = ?",
+                            (chapter.story.replace(line, rewritten), chapter.id),
+                        )
+            if story != production.story:
+                store.update_production(connection, production.id, story=story)
+                _stale(connection, _shots_of(connection, production.id))
+            resolution = f"kept the reference · {len(lines)} of {len(found.lines)} lines rewritten"
+        else:
+            trait = found.novel_trait
+            traits = [
+                {k: str(trait.get(k, "")) for k in ("part", "phrase", "short", "name")}
+                if t["phrase"] == trait.get("replaces")
+                else t
+                for t in member.identity.get("traits", [])
+            ]
+            store.update_member(connection, member.id, identity={**member.identity, "traits": traits}, pinned=True)
+            _stale(connection, _shots_of(connection, production.id, member.slug))
+            resolution = f"kept the novel · {trait.get('short', '')}"
+        store.resolve_conflict(connection, conflict_id, resolution)
+        return production.id
+
+
+def describe_again(member_id: int, asked_by: str = "person") -> str:
+    """A run reading the member again from the photographs that show it, its card and conflicts written
+    anew and given back to the director."""
+    with store.connect() as connection, store.transaction(connection):
+        member = store.member(connection, member_id)
+        production = None if member is None else store.production(connection, member.production_id)
+        if member is None or production is None:
+            raise LookupError(f"no member {member_id}")
+        run_id = store.next_run_id(connection, datetime.now().strftime("%Y-%m-%d-%H%M%S"))
+        store.add_run(
+            connection, run_id, title=f"{production.title} · describe {member.slug}", asked_by=asked_by,
+            scope=f"describe:{production.id}", production_id=production.id,
+            spec={"production": production.id, "items": [member.slug]},
+        )  # fmt: skip
+        store.add_job(
+            connection, run_id, "describe_member", {"production": production.id, "member": member.id},
+            label=f"describe {member.slug} from its photographs",
+            settings=settings.for_job("describe_member", production.id),
+        )  # fmt: skip
+        return run_id
+
+
+GIVEN_ROLE = {"person": "body", "animal": "view", "object": "object", "environment": "environment"}
+
+
+def unmatched(production: store.Production) -> list[dict[str, str]]:
+    """The photographs the last survey placed with no member, that no one has attached or ignored since."""
+    placed = production.manifest.get("placed", {})
+    return [dict(u) for u in production.manifest.get("unmatched", []) if u["photo"] not in placed]
+
+
+def attach(production_id: int, photo: str, to: str) -> dict[str, int]:
+    """An unmatched photograph held as `to`'s picture, or `ignore`d; either way it leaves the list."""
+    with store.connect() as connection:
+        production = store.production(connection, production_id)
+        if production is None:
+            raise LookupError(f"no production {production_id}")
+        if photo not in {u["photo"] for u in unmatched(production)}:
+            raise ValueError("that photograph is not waiting for a member")
+        member = None if to == "ignore" else store.member_by_slug(connection, production_id, to)
+    if to != "ignore" and member is None:
+        raise ValueError(f"no member called {to}")
+    moved = give_ref(member.id, photo, GIVEN_ROLE[member.kind]) if member is not None else {}
+    with store.connect() as connection, store.transaction(connection):
+        now = store.production(connection, production_id)
+        assert now is not None
+        placed = {**now.manifest.get("placed", {}), photo: to}
+        store.update_production(connection, production_id, manifest={**now.manifest, "placed": placed})
+    return moved
 
 
 def production_of_member(member_id: int) -> int | None:
@@ -1168,6 +1361,7 @@ def describe(production_id: int) -> dict[str, Any] | None:
             **_production(production),
             "members": members,
             "missing_references": [m.slug for m in drawn.missing(connection, production)],
+            "unmatched": unmatched(production),
             "ideas": rounds(connection, production.id),
             "chapters": chapters,
             "runs": runs,
@@ -1294,7 +1488,10 @@ def _hashes(
     }
 
 
-_BIBLE = ("slug", "kind", "noun", "possessive", "find", "identity")
+_BIBLE = (
+    "slug", "kind", "noun", "possessive", "find", "identity", "aliases", "appearance", "allowed", "voice", "delivery",
+    "plate",
+)  # fmt: skip
 _SHOTS = ("scene", "seconds", "plan")
 
 
@@ -1333,7 +1530,10 @@ def _member(
         made = _made(ref)
         if ref.generated:
             made |= {"state": drawn.state(ref, member, production.manifest, editor), "seed": ref.seed}
-        return {**made, "role": ref.role, "photo": ref.photo, "box": ref.box, "size": ref.size, "shows": ref.shows}
+        return {
+            **made, "role": ref.role, "photo": ref.photo, "box": ref.box, "size": ref.size, "shows": ref.shows,
+            "plate": ref.plate,
+        }  # fmt: skip
 
     return {
         "id": member.id,
@@ -1345,11 +1545,25 @@ def _member(
         "identity": member.identity,
         "position": member.position,
         "pinned": member.pinned,
+        "aliases": member.aliases,
+        "appearance": member.appearance,
+        "allowed": member.allowed,
+        "voice": member.voice,
+        "delivery": member.delivery,
+        "reference_audio": member.reference_audio,
+        "plate": member.plate,
         "references": [reference(ref) for ref in store.refs_of(connection, member.id)],
         "variants": drawn.drawn_variants(connection, member.id),
         "gaps": gaps(production, member, store.refs_of(connection, member.id)),
         "conflicts": [
-            {"id": conflict.id, "says": conflict.novel_says, "resolution": conflict.resolution}
+            {
+                "id": conflict.id,
+                "says": conflict.novel_says,
+                "resolution": conflict.resolution,
+                "shows": conflict.reference_shows,
+                "lines": len(conflict.lines),
+                "novel": conflict.novel_trait.get("short", ""),
+            }
             for conflict in store.conflicts_of(connection, member.id)
         ],
         "looks": [

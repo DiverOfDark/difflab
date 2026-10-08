@@ -267,11 +267,17 @@ export interface Trait {
   name: string
 }
 
+/** Two photographs disagreeing (`shows` empty), or the story against a photograph: `says` is the story's
+ *  words, `shows` the photograph's trait, `lines` how many sentences keeping the reference rewrites, `novel`
+ *  the trait keeping the story takes. */
 export interface Conflict {
   id: number
   says: string
   /** Which wording was kept; empty while it is open. */
   resolution: string
+  shows: string
+  lines: number
+  novel: string
 }
 
 /** How many made things an edit moved to stale. */
@@ -281,6 +287,8 @@ export interface Stale {
   clips: number
   /** Drawn places that will be drawn again at a new aspect. */
   references?: number
+  /** 1 when turning plates on queued a run to draw the missing ones. */
+  plating?: number
 }
 
 export interface MemberInfo {
@@ -294,8 +302,28 @@ export interface MemberInfo {
   position: number
   /** Edited by hand: a re-plan's survey and tidy leave it as written. */
   pinned: boolean
+  /** What the story calls it, comma-joined; the planner finds its mentions under these. */
+  aliases: string
+  /** Its look as a person wrote it; empty while its traits say it. */
+  appearance: string
+  /** What may differ from its pictures between shots: told to the judge and to the editor drawing a look. */
+  allowed: string
+  voice: string
+  delivery: string
+  /** Under output/, or empty. */
+  reference_audio: string
+  /** Its photographs are handed over on a flat backdrop, each reference's `plate` once drawn. */
+  plate: boolean
   /** Role `generated`: drawn by the editor from the member's words, with the seed it was drawn with. */
-  references: (MadeThing & { role: string; photo: string; box: number[]; size: number[]; shows: string[]; seed?: number | null })[]
+  references: (MadeThing & {
+    role: string
+    photo: string
+    box: number[]
+    size: number[]
+    shows: string[]
+    seed?: number | null
+    plate: string | null
+  })[]
   /** Drawings from its newest "draw 3" run, waiting to be picked as its reference. */
   variants?: { seed: number; frame: string | null; state: string }[]
   /** Pictures its prompts want that the last cut could not make from the photographs, and why. */
@@ -336,6 +364,8 @@ export interface Production {
   trait_parts: string[]
   /** Members with no usable picture: none cut or given, and a drawn one absent, stale or failed. */
   missing_references: string[]
+  /** Photographs the survey placed with no member: what the VLM saw, and the member it most resembles. */
+  unmatched: { photo: string; about: string; likely: string }[]
   ideas: IdeaRound[]
   /** A short digest per stage of what it holds; it moves when the stage's content does. */
   hashes: Record<'ingest' | 'bible' | 'shots' | 'render' | 'assemble', string>
@@ -439,6 +469,14 @@ export const giveReference = (memberId: number, path: string, role: string) =>
   json<Production & { stale: Stale }>(`/api/members/${memberId}/given`, post({ path, role }))
 export const resolveConflict = (conflictId: number, resolution: string) =>
   json<Production>(`/api/conflicts/${conflictId}/resolve`, post({ resolution }))
+/** The story against a photograph settled: `reference` rewrites the story's sentences, `novel` takes its trait. */
+export const keepConflict = (conflictId: number, keep: 'reference' | 'novel') =>
+  json<Production>(`/api/conflicts/${conflictId}/keep`, post({ keep }))
+/** An unmatched photograph held as member `to`'s picture, or `to` 'ignore'. */
+export const attachUnmatched = (id: number, photo: string, to: string) =>
+  json<Production & { stale: Stale }>(`/api/productions/${id}/unmatched`, post({ photo, to }))
+/** The member read again from its photographs, as a run; it goes back to the director. */
+export const describeMember = (memberId: number) => json<{ run: string }>(`/api/members/${memberId}/describe`, post({}))
 export const ingest = (form: Ingest) => {
   const common = { slug: form.slug, title: form.title, photos: form.photos, video: form.video, continuity: form.continuity, aspect: form.aspect }
   if (form.kind === 'idea') return json<Production>('/api/ingest/idea', post({ ...common, idea: form.idea, take_seconds: form.take_seconds }))
