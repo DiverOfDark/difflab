@@ -40,6 +40,40 @@ IDEA:
 
 There are {count} pictures. Picture 1 is the opening."""
 
+# A long story is read a chapter at a time: what the chapters before this one found comes with it.
+SURVEY_KNOWN = """\
+MEMBERS ALREADY FOUND in earlier chapters (id | kind | noun | find). When the IDEA means one of them, use that id and kind; list it in "members" only when the IDEA needs it, and in "pictures" wherever a picture shows it:
+{known}"""
+
+# What the person who uploaded the pictures said about them: it overrides what the pictures seem to show.
+SURVEY_LABELS = """\
+LABELS, given by the person who chose the pictures, and always right:
+{labels}"""
+SURVEY_LABEL_ENTITY = '- Picture {picture} shows the {kind} "{entity}": a member with id "{entity}" of kind {kinds}, listed in that picture\'s "shows".'
+SURVEY_LABEL_KIND = (
+    '- Picture {picture} shows a {kind}: list it as a member of kind {kinds} in that picture\'s "shows".'
+)
+SURVEY_LABEL_SAME = "- Pictures {pictures} show the same person: one member, listed in each of them."
+
+# --- one upload at a time: what it is, before anything else is known of it ------------------------------
+GUESS_SYSTEM = """\
+You sort the reference pictures a film will be made from. You see ONE picture and say what it is, as JSON.
+
+- "kind": "character" when it shows a person or an animal, "location" when it shows a place with no one in it who matters, "prop" when it shows one object, "style" when it is chosen for its look (a colour grade, a film still, a mood board) rather than for who or what is in it.
+- "about": what it shows, in at most 12 words ("older man, grey beard, navy wool coat, stone jetty").
+- "look": its colour, light and lens in at most 16 words ("cool desaturated, amber highlights, 35 mm, shallow focus").
+
+Answer only JSON, in this shape:
+{"kind":"character","about":"...","look":"..."}"""
+GUESS_USER = "What is this picture?"
+
+RULING_SAME_SYSTEM = """\
+You are the casting assistant of a film. You see two photographs, Picture 1 and Picture 2, and decide whether the main person or animal in them is the same one: the same face, build and age, whatever the clothes, light or angle. Two different people who look alike are not the same.
+
+Answer only JSON, in this shape:
+{"same":true,"why":"..."}  with "why" in at most 15 words."""
+RULING_SAME_USER = "Is the main person or animal in Picture 1 the same one as in Picture 2?"
+
 # Boxes are asked for on a 0-1000 scale relative to the photo, whatever its size: Qwen's own grounding
 # convention, stated so the answer does not depend on the model defaulting to it (`crops.Box.relative`).
 GROUND_USER = """\
@@ -319,6 +353,7 @@ STYLE = (
     "light, deep focus, soft highlight roll-off and fine sensor grain. Skin is realistic and matte with natural pores "
     "and subtle skin texture, and colors and skin tones match the photographic look of {room} throughout."
 )
+STYLE_LOOK = "The grade, light and lens follow the chosen look throughout: {look}."
 SENTENCES = {
     "person": "{subject} is the {noun} whose face comes from {faces} and whose {parts} come from {bodies}, taking only {possessive} appearance from those photos: {traits}.",
     "person_face": "{subject} is the {noun} whose face comes from {faces}, taking only {possessive} appearance from {that}: {traits}.",
@@ -607,6 +642,8 @@ Keep this room exactly as it is: its walls, furniture, lighting and colour. Chan
 COMPOSE_LIKENESS = "Everyone taken from a picture looks exactly as in that picture: the same face, hair and build, and the same clothes in every colour, pattern and fold, except what is said to be different now."
 COMPOSE_ALONE = "Nobody else is in the frame: no other people and no other animals."
 COMPOSE_NOTE = "Also: {note}."
+COMPOSE_STYLE = "Picture {picture} is only a reference for the look: match its colour grade, light and lens, and take nothing else from it."
+COMPOSE_LOOK_WORDS = "The look of the whole picture: {look}."
 # A look of a member drawn from the picture it starts from, changed only by the amendment; a person's base
 # face rides along as Picture 2, so a chain of edits does not drift from the face it began with.
 COMPOSE_LOOK = """\

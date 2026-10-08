@@ -238,6 +238,7 @@ const problems = computed(() => {
   const out: string[] = []
   if (!props.member && !/^[a-z][a-z_]*$/.test(d.slug)) out.push('a name: one lower-case word, or words joined by _')
   if (!props.member && props.production.members.some((m) => m.slug === d.slug)) out.push(`${d.slug} exists`)
+  if (d.kind === 'style') return out
   if (!d.noun.trim()) out.push('a noun')
   if (!d.traits.length) out.push('at least one trait that must not drift')
   if (d.kind === 'environment' && !d.lights.trim()) out.push('a light for the place')

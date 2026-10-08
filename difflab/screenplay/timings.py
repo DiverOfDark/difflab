@@ -18,6 +18,9 @@ FALLBACK = {
     "compose_keyframe": 66.0,
     "draw_reference": 55.0,
     "draw_look": 55.0,  # not yet run on 2026-10-08: draw_reference's, the same editor at the same size
+    # Not yet run on 2026-10-09: one picture and a short answer, as cards' 6.9 s mean is for a longer one.
+    "guess_reference": 4.0,
+    "same_person": 4.0,
     "plan_shots": 114.0,
     "write_shot": 5.8,
     "compile_shot": 0.0,

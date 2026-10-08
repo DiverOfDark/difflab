@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
-import { deleteProduction, ingest, outputUrl, patchProduction, patchShot, planProduction, type Ingest, type Production } from '../../api'
-import { ASPECTS, canvasFor, seconds, words } from '../../production'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { deleteProduction, listTools, outputUrl, patchProduction, patchShot, putSettings, readIngesting, type Production } from '../../api'
+import { ASPECTS, canvasFor, runLive } from '../../production'
 import { useDraft } from '../../draft'
-import { state } from '../../store'
 import IdeaPanel from '../IdeaPanel.vue'
-import PhotoPicker from '../PhotoPicker.vue'
+import IngestForm from './IngestForm.vue'
+import IngestingStage from './IngestingStage.vue'
 
 const props = defineProps<{
   production: Production | null
@@ -14,85 +14,68 @@ const props = defineProps<{
   act: (name: string, what: () => Promise<unknown>) => Promise<void>
 }>()
 const router = useRouter()
+const route = useRoute()
 
-const form = ref<Ingest>({
-  kind: 'idea',
-  slug: '',
-  title: '',
-  idea: '',
-  text: '',
-  source: '',
-  instruction: '',
-  photos: [],
-  take_seconds: 60,
-  aspect: null,
-  clip_scale: 0.5,
-  video: { duration: 12, megapixels: 0.4, steps: 8 },
-  continuity: { tail_seconds: 0.25, handoff_window: 6, crossfade: 0.25 },
-})
-const autoPlan = ref(true)
-// `screenplay.config.DIRECTOR_CLIP_MIN`: the shortest shot the director may choose.
-const CLIP_MIN = 6
+const PLACEHOLDER: Record<string, string> = {
+  idea: 'What happens, in your own words. The director plans one chapter from it.',
+  text: '# A heading per chapter\n\nor plain text, split every 600 words',
+}
 
-const KINDS = [
-  { id: 'idea', label: 'IDEA', placeholder: 'What happens, in your own words. The director plans one chapter from it.' },
-  { id: 'text', label: 'TEXT', placeholder: '# A heading per chapter\n\nor plain text, split every 600 words' },
-  { id: 'video', label: 'VIDEO', placeholder: '' },
-] as const
-const kind = computed(() => KINDS.find((k) => k.id === form.value.kind)!)
+// --- while the plan builds the bible ------------------------------------------------------------
+/** Asked for by the form that began it, or found: a plan whose bible is still being built. */
+const building = ref(route.query.ingesting === '1')
+async function look() {
+  const p = props.production
+  if (!p || building.value || !p.runs.some((r) => r.scope.startsWith('plan:') && runLive(r.state))) return
+  const now = await readIngesting(p.id).catch(() => null)
+  building.value = !!now && now.live.length > 0 && !now.bible_done
+}
+watch(() => props.production?.runs.map((r) => r.state).join(), look, { immediate: true })
+function built(cancelled: boolean) {
+  building.value = false
+  router.replace({ query: cancelled ? { stage: 'ingest' } : { stage: 'bible' } })
+}
 
-// Mirrors `screenplay.ingest.chapters_of`: a chapter per markdown heading, else 600-word stretches.
-const HEADING = /^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$/gm
-const WORDS_PER_CHAPTER = 600
-const chapters = computed<{ title: string; words: number }[]>(() => {
-  const text = form.value.text
-  const found = [...text.matchAll(HEADING)]
-  if (found.length)
-    return found
-      .map((m, i) => ({ title: m[1], words: words(text.slice(m.index! + m[0].length, found[i + 1]?.index ?? text.length)) }))
-      .filter((c) => c.words)
-  const n = words(text)
-  const count = Math.max(1, Math.ceil(n / WORDS_PER_CHAPTER))
-  const each = Math.ceil(n / count)
-  return n ? Array.from({ length: count }, (_, i) => ({ title: `chapter ${i + 1}`, words: Math.min(each, n - i * each) })) : []
-})
-
-const problems = computed(() => {
-  const f = form.value
-  const out: string[] = []
-  if (!/^[a-z0-9][a-z0-9_-]*$/.test(f.slug)) out.push('a slug: lower-case letters, digits, _ and -')
-  if (state.productions.some((one) => one.slug === f.slug)) out.push(`${f.slug} exists`)
-  if (f.kind === 'idea' && !f.idea.trim()) out.push('an idea, in your own words')
-  if (f.kind === 'text' && !f.text.trim()) out.push('a text to make chapters of')
-  if (f.kind === 'video' && !f.source.trim()) out.push('the video to redo: a path under output/')
-  if (f.kind === 'video' && !f.instruction.trim()) out.push('what should be different about it')
-  if (f.kind !== 'video' && !f.photos.length) out.push('at least one photograph: the first is where it opens')
-  if (f.kind !== 'video' && f.take_seconds < CLIP_MIN) out.push(`at least ${CLIP_MIN} seconds: one shot`)
-  return out
-})
-
-const estimate = computed(() => {
-  const f = form.value
-  const ch = f.kind === 'text' ? chapters.value.length : 1
-  const fewest = ch
-  const most = ch * Math.max(1, Math.floor(f.take_seconds / CLIP_MIN))
-  return [
-    { k: 'CHAPTERS', v: String(ch) },
-    { k: 'SHOTS', v: f.kind === 'video' ? 'by the source' : fewest === most ? String(most) : `${fewest}–${most}, by the director` },
-    { k: 'FILM', v: f.kind === 'video' ? 'as the source' : `up to ${seconds(ch * f.take_seconds)}` },
-    { k: 'PHOTOS', v: String(f.photos.length) },
-    { k: 'CANVAS', v: f.kind === 'video' || f.aspect === null ? 'as the first photo' : canvasFor(f.aspect, f.video.megapixels).join('×') },
-  ]
-})
-
-const begin = () =>
-  props.act('begin', async () => {
-    const made = await ingest(form.value)
-    const planning = autoPlan.value && form.value.kind !== 'video'
-    if (planning) await planProduction(made.id, null)
-    // Begun without a plan, an idea opens where the director can improve it first.
-    router.push(planning || form.value.kind !== 'idea' ? `/productions/${made.id}` : `/productions/${made.id}?stage=ingest`)
+// --- the knobs ----------------------------------------------------------------------------------
+interface Knob {
+  name: string
+  label: string
+  hint: string
+  value: number
+  low: number | null
+  high: number | null
+}
+const knobs = ref<Knob[]>([])
+const knobNote = ref('')
+async function loadKnobs() {
+  if (!props.production) return
+  const tool = (await listTools(props.production.id).catch(() => [])).find((t) => t.name === 'ingest')
+  knobs.value = (tool?.settings ?? []).map((f) => ({
+    name: f.name,
+    label: f.label,
+    hint: f.hint,
+    value: Number(tool!.effective?.[f.name] ?? f.default),
+    low: f.low ?? null,
+    high: f.high ?? null,
+  }))
+}
+onMounted(loadKnobs)
+watch(() => props.production?.id, loadKnobs)
+const saveKnobs = () =>
+  props.act('knobs', async () => {
+    await putSettings('ingest', 'production', String(props.production!.id), Object.fromEntries(knobs.value.map((k) => [k.name, k.value])))
+    knobNote.value = 'Saved. The chapter split applies when the story is next saved; frames, when references are next added.'
   })
+
+/** The references as they were given: kind, entity, and for a video its frames. */
+interface GivenRef {
+  path: string
+  kind: string
+  entity: string
+  guess: string
+  frames?: { path: string; at: number; sharpness: number; kept: boolean }[]
+}
+const references = computed(() => (Array.isArray(props.production?.manifest.references) ? (props.production!.manifest.references as GivenRef[]) : []))
 
 const photos = computed(() => {
   const p = props.production
@@ -202,84 +185,8 @@ const discard = () => {
 </script>
 
 <template>
-  <div v-if="!production" class="ingest">
-    <section class="card">
-      <div class="head">
-        <h5>Story</h5>
-        <div class="seg">
-          <button v-for="k in KINDS" :key="k.id" :class="{ on: form.kind === k.id }" @click="form.kind = k.id">{{ k.label }}</button>
-        </div>
-      </div>
-      <div class="body">
-        <div class="stacked">
-          <label><span class="eyebrow">title</span><input v-model="form.title" placeholder="Working title" /></label>
-          <label><span class="eyebrow">slug</span><input v-model="form.slug" placeholder="shisha_lounge" /></label>
-        </div>
-        <textarea v-if="form.kind === 'idea'" v-model="form.idea" rows="6" :placeholder="kind.placeholder" class="prose" />
-        <textarea v-else-if="form.kind === 'text'" v-model="form.text" rows="12" :placeholder="kind.placeholder" class="prose" />
-        <template v-else>
-          <label class="field"><span class="eyebrow">video · under output/</span><input v-model="form.source" placeholder="videos/2026-09-26/….mp4" /></label>
-          <label class="field"><span class="eyebrow">what changes</span><input v-model="form.instruction" placeholder="make it look like a watercolour painting" /></label>
-        </template>
-        <div class="stacked ruled">
-          <label v-if="form.kind !== 'video'">
-            <span class="eyebrow">length · s{{ form.kind === 'text' ? ' per chapter' : '' }}</span>
-            <input v-model.number="form.take_seconds" type="number" :min="CLIP_MIN" max="600" />
-          </label>
-          <label><span class="eyebrow">longest shot · s</span><input v-model.number="form.video.duration" type="number" min="1" max="15" /></label>
-          <label v-if="form.kind !== 'video'">
-            <span class="eyebrow">aspect</span>
-            <select v-model="form.aspect">
-              <option v-for="a in ASPECTS" :key="a.label" :value="a.value">{{ a.label }}</option>
-            </select>
-          </label>
-          <label><span class="eyebrow">megapixels</span><input v-model.number="form.video.megapixels" type="number" min="0.1" max="2" step="0.1" /></label>
-          <label v-if="form.kind === 'video'">
-            <span class="eyebrow">clip scale</span><input v-model.number="form.clip_scale" type="number" min="0.1" max="1" step="0.1" />
-          </label>
-        </div>
-        <div v-if="form.kind === 'text'" class="split ruled">
-          <span class="row mono"><span class="eyebrow">split preview</span><span class="muted">{{ chapters.length }} chapters · {{ words(form.text) }} words</span></span>
-          <div class="bars">
-            <span v-for="(c, i) in chapters" :key="i" :title="`${c.title} · ${c.words} words`" :style="{ flex: c.words }">{{ String(i + 1).padStart(2, '0') }}</span>
-          </div>
-          <span class="note">A chapter per heading; with none, every 600 words. Each is planned from its own text.</span>
-        </div>
-      </div>
-    </section>
-
-    <section class="card">
-      <div class="head">
-        <h5>References</h5>
-        <span class="note">{{ form.kind === 'video' ? 'optional · they override the source' : 'the first photograph is where it opens' }}</span>
-      </div>
-      <div class="body">
-        <PhotoPicker v-model:photos="form.photos" />
-        <p class="note">
-          Qwen-VL surveys every photograph once: who the story needs, and which photograph shows whom. What it sees goes into the
-          bible, so shots match what the picture shows, not what the text says. The same file uploaded twice is one reference.
-        </p>
-      </div>
-    </section>
-
-    <section class="card go">
-      <div class="estimate mono">
-        <span v-for="e in estimate" :key="e.k"><span class="eyebrow">{{ e.k }}</span>{{ e.v }}</span>
-      </div>
-      <div class="buttons">
-        <label v-if="form.kind !== 'video'" class="check">
-          <input v-model="autoPlan" type="checkbox" />
-          run the plan, stop before render
-        </label>
-        <span v-if="!autoPlan && form.kind === 'idea'" class="note">begin only: improve the idea with the director, then plan</span>
-        <button class="primary" :disabled="!!problems.length || !!busy" :title="problems.join('\n')" @click="begin">
-          {{ busy === 'begin' ? 'beginning…' : autoPlan && form.kind !== 'video' ? 'Begin and plan' : 'Begin' }}
-        </button>
-      </div>
-      <p v-if="problems.length" class="note needs">needs {{ problems.join(' · ') }}</p>
-    </section>
-  </div>
-
+  <IngestForm v-if="!production" :busy="busy" :act="act" />
+  <IngestingStage v-else-if="building" :production="production" :busy="busy" :act="act" @done="built" />
   <div v-else class="ingest">
     <section class="card">
       <div class="head">
@@ -293,7 +200,7 @@ const discard = () => {
           v-model="story"
           :rows="production.story_kind === 'text' ? 12 : 10"
           class="prose"
-          :placeholder="KINDS.find((k) => k.id === production!.story_kind)?.placeholder"
+          :placeholder="PLACEHOLDER[production.story_kind]"
         />
         <p v-else class="story">{{ production.story || 'No story: the shots were added by hand.' }}</p>
         <div class="saving">
@@ -317,7 +224,24 @@ const discard = () => {
       </div>
       <div class="body">
         <video v-if="source" class="frame" :src="outputUrl(source)" controls muted preload="metadata" />
-        <div class="photos">
+        <div v-if="references.length" class="given">
+          <div v-for="r in references" :key="r.path" class="ref">
+            <a :href="outputUrl(r.path)" target="_blank" class="thumb" :style="{ backgroundImage: `url(${outputUrl(r.frames?.find((f) => f.kept)?.path ?? r.path)})` }">
+              <span v-if="r.frames" class="badge mono">MP4</span>
+            </a>
+            <span class="what">
+              <span class="mono">{{ name(r.path) }}{{ photos[0] === r.path || r.frames?.some((f) => f.path === photos[0]) ? ' · opens' : '' }}</span>
+              <span class="note">{{
+                r.frames
+                  ? `${r.frames.length} frames · ${r.frames.filter((f) => f.kept).length} kept sharp · also a motion reference${r.guess ? ` · ${r.guess}` : ''}`
+                  : r.guess || '—'
+              }}</span>
+            </span>
+            <span class="mono dim">{{ r.kind === 'video' ? 'motion ref' : r.kind }}</span>
+            <span class="mono">{{ r.entity || (r.kind === 'style' ? 'style' : '—') }}</span>
+          </div>
+        </div>
+        <div v-else class="photos">
           <a v-for="(p, i) in photos" :key="p" :href="outputUrl(p)" target="_blank">
             <img class="frame" :src="outputUrl(p)" alt="" />
             <span class="mono">{{ i === 0 ? 'opens · ' : '' }}{{ name(p) }}</span>
@@ -342,6 +266,28 @@ const discard = () => {
             </template>
             <template v-else-if="!firstShot">After the plan, compose shot 1's keyframe to have it drawn at the canvas size.</template>
           </p>
+        </div>
+      </div>
+    </section>
+
+    <section v-if="knobs.length" class="card">
+      <div class="head">
+        <h5>Knobs</h5>
+        <span class="note">this production's, over the machine's</span>
+      </div>
+      <div class="body">
+        <div>
+          <div v-for="k in knobs" :key="k.name" class="knob">
+            <div><span class="name">{{ k.label }}</span><span class="hint">{{ k.hint }}</span></div>
+            <select v-if="k.name === 'heading_level'" v-model.number="k.value">
+              <option v-for="n in 6" :key="n" :value="n">h{{ n }}</option>
+            </select>
+            <input v-else v-model.number="k.value" type="number" :min="k.low ?? undefined" :max="k.high ?? undefined" />
+          </div>
+        </div>
+        <div class="saving">
+          <span class="note">{{ knobNote }}</span>
+          <button :disabled="!!busy" @click="saveKnobs">{{ busy === 'knobs' ? 'saving…' : 'Save knobs' }}</button>
         </div>
       </div>
     </section>
@@ -509,6 +455,53 @@ const discard = () => {
   font-size: var(--text-xs);
   padding-top: var(--space-2);
   border-top: 1px solid var(--border);
+}
+
+.given {
+  display: flex;
+  flex-direction: column;
+}
+
+.given .ref {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) 80px minmax(80px, 0.6fr);
+  gap: var(--space-2);
+  align-items: center;
+  padding: var(--space-1) 0;
+  border-bottom: 1px solid var(--border);
+  font-size: var(--text-xs);
+}
+
+.given .thumb {
+  width: 40px;
+  height: 40px;
+  background: var(--bg-raised) center / cover no-repeat;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  text-decoration: none;
+}
+
+.given .badge {
+  font-size: 9px;
+  color: var(--text-primary);
+  background: oklch(0% 0 0 / 0.6);
+  padding: 0 3px;
+  border-radius: 2px;
+}
+
+.given .what {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.given .what > span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .photos {

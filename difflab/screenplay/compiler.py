@@ -175,6 +175,7 @@ class Take:
     lands: tuple[bool, ...] = ()  # per chunk, whether it ends on the next one's keyframe
     unframed: tuple[bool, ...] = ()  # per chunk, whether it opens on no picture, from its references alone
     voices: dict[str, str] = dataclasses.field(default_factory=dict)  # member -> how it sounds, from the bible
+    look: str = ""  # the style members' words: the grade and lens every shot keeps
 
 
 @dataclass(frozen=True)
@@ -641,6 +642,8 @@ def compile_chunk(take: Take, index: int) -> Compiled:
         if m != env and subject[m] not in named
     ]
     style = words.STYLE.format(room=subject[env])
+    if take.look:
+        style = f"{style} {words.STYLE_LOOK.format(look=take.look.rstrip('.'))}"
 
     # sound
     heard = ambience(take, index)
@@ -859,4 +862,11 @@ def take_of(connection: sqlite3.Connection, production: store.Production, chapte
         lands=landed,
         unframed=tuple(keyframe.source == store.REFS for keyframe in keyframes),
         voices={member.slug: said for member in members if (said := voice_of(member))},
+        look=look_of(connection, production.id),
     )
+
+
+def look_of(connection: sqlite3.Connection, production_id: int) -> str:
+    """What the style members say of the film's look, one after another."""
+    styles = [m for m in store.members_of(connection, production_id, style=True) if m.kind == "style"]
+    return "; ".join(said.rstrip(".") for m in styles if (said := " ".join(m.appearance.split())))

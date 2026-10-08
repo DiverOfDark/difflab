@@ -445,9 +445,11 @@ def delete_casting(connection: sqlite3.Connection, casting_id: int) -> None:
 
 
 # --- the cast ---------------------------------------------------------------------------------
-def members_of(connection: sqlite3.Connection, production_id: int) -> list[Member]:
+def members_of(connection: sqlite3.Connection, production_id: int, style: bool = False) -> list[Member]:
+    """The cast; `style` adds the style members, which only the bible and the keyframe editor read."""
     rows = connection.execute(
-        "SELECT * FROM members WHERE production_id = ? ORDER BY position, id", (production_id,)
+        "SELECT * FROM members WHERE production_id = ? AND (? OR kind != 'style') ORDER BY position, id",
+        (production_id, style),
     ).fetchall()
     return [Member.of(row) for row in rows]
 
@@ -532,7 +534,10 @@ def set_cast_order(connection: sqlite3.Connection, production_id: int, slugs: li
 def drop_members_except(connection: sqlite3.Connection, production_id: int, slugs: list[str]) -> None:
     """Members a re-survey no longer names, with their references."""
     kept = ",".join("?" * len(slugs)) or "''"
-    connection.execute(f"DELETE FROM members WHERE production_id = ? AND slug NOT IN ({kept})", (production_id, *slugs))
+    connection.execute(
+        f"DELETE FROM members WHERE production_id = ? AND kind != 'style' AND slug NOT IN ({kept})",
+        (production_id, *slugs),
+    )
 
 
 def refs_of(connection: sqlite3.Connection, member_id: int) -> list[Reference]:
@@ -541,9 +546,10 @@ def refs_of(connection: sqlite3.Connection, member_id: int) -> list[Reference]:
 
 
 def refs_of_production(connection: sqlite3.Connection, production_id: int) -> list[Reference]:
+    """The cast's references; a style member's pictures are read through `refs_of`."""
     rows = connection.execute(
         "SELECT refs.* FROM refs JOIN members ON refs.member_id = members.id "
-        "WHERE members.production_id = ? ORDER BY refs.id",
+        "WHERE members.production_id = ? AND members.kind != 'style' ORDER BY refs.id",
         (production_id,),
     ).fetchall()
     return [Reference.of(row) for row in rows]

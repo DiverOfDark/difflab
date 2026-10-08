@@ -86,11 +86,17 @@ def _look(given: Any) -> tuple[str, str]:
     return " ".join(str(given).split()), ""
 
 
-def plan(base: compose.Take, idea: str, total: float, aliases: dict[str, str] | None = None) -> compose.Take:
+def plan(
+    base: compose.Take,
+    idea: str,
+    total: float,
+    aliases: dict[str, str] | None = None,
+    shortest: float = h3.DIRECTOR_CLIP_MIN,
+) -> compose.Take:
     """The whole take in one call, so the model sees every join while it decides where beats end.
 
     `total` is the most the take may last; the model chooses how many clips and how long each, between
-    DIRECTOR_CLIP_MIN and `base.seconds`.
+    `shortest` (never under DIRECTOR_CLIP_MIN) and `base.seconds`.
 
     Members are then numbered by when they first appear, so a <Subject N> keeps its number from the
     chunk it enters to the end, and the sentences that name it stay the same words. `aliases` are what the
@@ -105,7 +111,7 @@ def plan(base: compose.Take, idea: str, total: float, aliases: dict[str, str] | 
         f"- {name}: {sentence.format(toward='the member')}" for name, sentence in words.CAMERA_MOVES.items()
     )
     window = h3.DIRECTOR_MAIN_BEAT_WINDOW
-    shortest, longest = h3.DIRECTOR_CLIP_MIN, round(base.seconds, 1)
+    shortest, longest = max(h3.DIRECTOR_CLIP_MIN, min(shortest, base.seconds)), round(base.seconds, 1)
     question = words.PLAN_USER.format(
         idea=idea.strip(), cast=cast, aliased=" | also called in the IDEA" if aliases else "", opening=base.opening,
         total=round(total), shortest=shortest, longest=longest,

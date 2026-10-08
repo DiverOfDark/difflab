@@ -316,6 +316,8 @@ def run_compose_keyframe(inputs: dict[str, Any], settings: dict[str, Any]) -> di
     pictures = {str(slug): _frame(path) for slug, path in (inputs.get("pictures") or {}).items()}
     note = str(inputs.get("note") or "")
     looks = {str(m): str(v) for m, v in (inputs.get("looks") or {}).items() if v}
+    style = _frame(inputs["style"]) if inputs.get("style") else None
+    look = str(inputs.get("look") or "")
     made = key(
         "compose_keyframe", 2, base=base.pixels, arrangement=arrangement,
         cards={slug: dataclasses.asdict(card) for slug, card in cards.items()}, settings=chosen,
@@ -323,14 +325,16 @@ def run_compose_keyframe(inputs: dict[str, Any], settings: dict[str, Any]) -> di
         **({"pictures": {slug: frame.pixels for slug, frame in pictures.items()}} if pictures else {}),
         **({"note": note} if note else {}),
         **({"looks": looks} if looks else {}),
+        **({"style": style.pixels} if style is not None else {}), **({"look": look} if look else {}),
     )  # fmt: skip
     target = cache.path(made, ".png")
     if target.is_file():
         ui.note(f"keyframe already composed as {made}")
         return Skipped({"frame": store.relative(target), "key": str(made)})
     frame = compose_keyframe.compose(
-        base, arrangement, cards, chosen, keep=keep, size=size, pictures=pictures, note=note, looks=looks
-    )
+        base, arrangement, cards, chosen, keep=keep, size=size, pictures=pictures, note=note, looks=looks,
+        style=style, look=look,
+    )  # fmt: skip
     frame.pil().save(target)
     record.artifact_made(target, store.IMAGE, chosen.seed, key=str(made))
     return {"frame": store.relative(target), "key": str(made)}

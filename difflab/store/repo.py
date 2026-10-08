@@ -91,6 +91,14 @@ def end_run(connection: sqlite3.Connection, run_id: str, ok: bool, error: str = 
     )
 
 
+def skip_tools(connection: sqlite3.Connection, run_id: str, tools: list[str]) -> None:
+    """The run's queued jobs of these tools are handed on as skipped when the worker reaches them."""
+    found = run(connection, run_id)
+    spec = (found.data() if found is not None else None) or {}
+    skipped = list(dict.fromkeys([*spec.get("skip", []), *tools]))
+    connection.execute("UPDATE runs SET spec = ? WHERE id = ?", (_dump({**spec, "skip": skipped}), run_id))
+
+
 def next_run_id(connection: sqlite3.Connection, stamp: str) -> str:
     """`stamp` with a suffix if a run of that second already exists."""
     # Zero-padded: the worker takes runs in id order, and every chapter of a production is queued in one second.

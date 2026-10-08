@@ -52,8 +52,12 @@ export const appearance = (m: MemberInfo) => m.appearance || traitsOf(m).map((t)
 /** The meta line under a card's words, per kind. */
 export function meta(p: Production, m: MemberInfo): { k: string; v: string } {
   if (m.kind === 'person' || m.kind === 'animal') return { k: 'VOICE', v: [m.voice, m.delivery].filter(Boolean).join(', ') || 'not set: its noun’s natural voice' }
+  const given = (Array.isArray(p.manifest.references) ? p.manifest.references : []) as { kind: string; entity: string; frames?: { kept: boolean }[] }[]
+  const video = given.find((r) => r.kind === 'video' && r.entity === m.slug && r.frames)
+  if (video?.frames)
+    return { k: 'FRAMES', v: `${video.frames.length} extracted · ${video.frames.filter((f) => f.kept).length} kept sharp · the clip kept as its motion reference` }
   if (m.kind === 'environment') return { k: 'LIGHTS', v: (m.identity.lights ?? []).join(', ') || '—' }
-  if (m.kind === 'style') return { k: 'INJECTED INTO', v: 'every Qwen-Image prompt' }
+  if (m.kind === 'style') return { k: 'INJECTED INTO', v: 'every composed keyframe, as a picture · every H3 prompt, in words' }
   const chapters = [...new Set(shotsOf(p, m.slug).map((s) => pad(s.chapter + 1, 2)))]
   return { k: 'IN', v: chapters.length ? `ch ${chapters.join(', ')}` : 'no shot yet' }
 }

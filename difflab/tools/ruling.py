@@ -7,6 +7,7 @@ from typing import Any
 
 from difflab.core.cache import cache
 from difflab.core.keys import key
+from difflab.core.types import Frame
 from difflab.models.exl3vl import ANY_JSON
 from difflab.models.minimax_h3.caption import Problem
 from difflab.screenplay import checks as lint
@@ -260,3 +261,13 @@ def novel(story: str, card: compose.Card, aliases: str = "") -> list[dict[str, A
             }
         )  # fmt: skip
     return out
+
+
+def same_person(first: Frame, second: Frame) -> tuple[bool, str]:
+    """Whether two photographs show the same person or animal: duplicates merge by face, not by file."""
+    images = [direct.shrink(frame, h3.DIRECTOR_SURVEY_PIXELS) for frame in (first, second)]
+    data = direct.ask_json(
+        words.RULING_SAME_SYSTEM, words.RULING_SAME_USER, images, lambda _: [], "ruling · same person",
+        h3.RULING_TOKENS, schema=_object(same=FLAG, why=QUOTE),
+    )  # fmt: skip
+    return bool(data["same"]), " ".join(str(data["why"]).split())

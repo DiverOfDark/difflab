@@ -15,7 +15,7 @@ from typing import Any
 from difflab import config, store
 from difflab.core import media
 from difflab.core.keys import key
-from difflab.core.settings import Continuity, EditSettings, Settings
+from difflab.core.settings import Continuity, EditSettings, IngestSettings, Settings
 from difflab.models.minimax_h3 import pipeline
 from difflab.models.minimax_h3.settings import VideoSettings
 from difflab.screenplay import compiler, crops, drawn, looks, settings, timings, words
@@ -29,9 +29,13 @@ CUT_NOTE = "the plan's cut"  # on a keyframe the planner composes for a "new" cu
 ASPECTS = (0.25, 4.0)  # width over height a canvas may be given
 
 
-def take_seconds(manifest: dict[str, Any], longest: float) -> float:
-    """How long the director makes a chapter: as given, or a production from before it chose the count
-    as its shot count times the render length."""
+def take_seconds(manifest: dict[str, Any], longest: float, stories: list[str] | None = None, index: int = 0) -> float:
+    """How long the director makes chapter `index`: the production's target spread over `stories` by their
+    words; else as given per chapter, or for a production from before it chose the count, its shot count
+    times the render length."""
+    if (target := float(manifest.get("target_seconds") or 0)) and stories:
+        counts = [max(1, len(story.split())) for story in stories]
+        return max(knobs.DIRECTOR_CLIP_MIN, round(target * counts[index] / sum(counts), 1))
     if given := float(manifest.get("take_seconds") or 0):
         return given
     return int(manifest.get("shots", 0) or 0) * longest
@@ -487,17 +491,19 @@ def lines(text: str) -> str:
 def _resplit(connection: Any, production_id: int, text: str) -> None:
     from difflab.screenplay.ingest import chapters_of  # ingest begins productions through this module
 
-    parts = chapters_of(text)
+    chosen, _ = settings.effective("ingest", production_id)
+    assert isinstance(chosen, IngestSettings)
+    parts = chapters_of(text, chosen.heading_level)
     chapters = store.chapters_of(connection, production_id)
     if len(parts) < len(chapters):
         raise ValueError(f"the text makes {len(parts)} chapter(s) and the production has {len(chapters)}")
-    for position, (heading, story) in enumerate(parts):
+    for position, part in enumerate(parts):
         if position < len(chapters):
             connection.execute(
-                "UPDATE chapters SET title = ?, story = ? WHERE id = ?", (heading, story, chapters[position].id)
+                "UPDATE chapters SET title = ?, story = ? WHERE id = ?", (part.title, part.story, chapters[position].id)
             )
         else:
-            store.add_chapter(connection, production_id, heading, story)
+            store.add_chapter(connection, production_id, part.title, part.story)
 
 
 # --- the cast, by hand -----------------------------------------------------------------------------
@@ -523,6 +529,13 @@ def update_member(member_id: int, **changes: Any) -> dict[str, int]:
             raise LookupError(f"no member {member_id}")
         if changes.get("pinned") is False and len(changes) == 1:
             store.update_member(connection, member_id, pinned=False)
+            return moved
+        if member.kind == "style":
+            # A style is its pictures and its words, which every composed keyframe and every prompt read.
+            said = " ".join(str(changes.get("appearance", member.appearance)).split())
+            if said != member.appearance:
+                store.update_member(connection, member_id, appearance=said, pinned=True)
+                moved = _stale(connection, _shots_of(connection, production.id))
             return moved
         if "aliases" in changes:
             said = ", ".join(
@@ -821,6 +834,8 @@ def describe_again(member_id: int, asked_by: str = "person") -> str:
         production = None if member is None else store.production(connection, member.production_id)
         if member is None or production is None:
             raise LookupError(f"no member {member_id}")
+        if member.kind == "style":
+            raise ValueError("a style is its pictures and its words: edit the words")
         run_id = store.next_run_id(connection, datetime.now().strftime("%Y-%m-%d-%H%M%S"))
         store.add_run(
             connection, run_id, title=f"{production.title} · describe {member.slug}", asked_by=asked_by,
@@ -1341,7 +1356,7 @@ def describe(production_id: int) -> dict[str, Any] | None:
         if production is None:
             return None
         resolved = looks.resolve(connection, production)
-        cast = {m.id: m for m in store.members_of(connection, production.id)}
+        cast = {m.id: m for m in store.members_of(connection, production.id, style=True)}
         bases = {m.slug: looks.base_picture(connection, m) for m in cast.values()}
         chapters = []
         for chapter in store.chapters_of(connection, production.id):
@@ -1408,6 +1423,11 @@ def timeline(production_id: int, chapter_position: int | None = None) -> dict[st
         ids = [s["id"] for s in shots]
         tracks = [track for member in members if (track := _track(resolved, member, ids))]
         return {"shots": shots, "tracks": tracks}
+
+
+def timings_now() -> dict[str, Any]:
+    with store.connect() as connection:
+        return timings.measured(connection)
 
 
 TIMELINE_ACTION = 160  # characters of a shot's action a timeline block's tooltip carries

@@ -42,7 +42,7 @@ def improve(
         video, _ = settings.effective("render_chunk", production_id)
         assert isinstance(video, VideoSettings)
         seconds = float(made.manifest.get("seconds") or video.duration)
-        total = production.take_seconds(made.manifest, seconds)
+        total = production.take_seconds(made.manifest, seconds, [made.story])
         if total <= 0:
             raise ValueError("the production does not say how long the film is")
         run_id = store.next_run_id(connection, datetime.now().strftime("%Y-%m-%d-%H%M%S"))

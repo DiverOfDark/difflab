@@ -161,8 +161,8 @@ const DEFS: StageDef[] = [
   {
     id: 'ingest',
     name: 'Ingest',
-    artifact: 'Story and photographs',
-    desc: 'An idea, a text or a video to redo, and the photographs that show the cast. Everything downstream is planned from these; nothing touches the GPU until Render.',
+    artifact: 'Chapters and references',
+    desc: 'The story split into chapters. Uploaded photos, videos and style images are matched to entities; anything unmatched waits in Bible. Nothing touches the GPU until Render.',
   },
   {
     id: 'bible',
@@ -207,6 +207,7 @@ const stages = computed<StageRow[]>(() => {
   const rendering = !!renderRun.value
   const conflicts = members.value.reduce((sum, m) => sum + m.conflicts.filter((c) => !c.resolution).length, 0) + (p?.unmatched?.length ?? 0)
   const photos = Array.isArray(p?.manifest.photos) ? (p!.manifest.photos as unknown[]).length : 0
+  const references = Array.isArray(p?.manifest.references) ? (p!.manifest.references as unknown[]).length : 0
   const lastRun = chapterRuns.value[0]
 
   const row = (def: StageDef, phase: Phase, progress: string, review = 0): StageRow => ({
@@ -219,7 +220,7 @@ const stages = computed<StageRow[]>(() => {
   const rendered = (phase: Phase) => (rendering && phase !== 'done' ? 'running' : phase)
 
   return [
-    row(DEFS[0], 'done', `${p?.story_kind || 'by hand'} · ${photos} photos · ${p?.chapters.length ?? 0} chapters`),
+    row(DEFS[0], planning && !members.value.length ? 'running' : 'done', `${p?.chapters.length ?? 0} chapters · ${references || photos} references`),
     row(
       DEFS[1],
       planned(!members.value.length ? 'pending' : conflicts ? 'review' : 'done'),
@@ -256,6 +257,8 @@ const bibleCounts = computed(() => {
 })
 const cur = computed(() => {
   const found = stages.value.find((s) => s.id === stage.value) ?? stages.value[0]
+  if (found.id === 'ingest' && fresh.value)
+    return { ...found, desc: 'A story and, optionally, references. Everything downstream is planned from these; nothing touches the GPU until Render.' }
   if (found.id !== 'bible' || !editing.value) return found
   return {
     ...found,
@@ -263,7 +266,7 @@ const cur = computed(() => {
     desc: 'One card, edited once. Everything that reads it downstream is re-keyed.',
   }
 })
-const index = computed(() => stages.value.indexOf(cur.value))
+const index = computed(() => stages.value.findIndex((s) => s.id === cur.value.id))
 const crumb = computed(() => {
   if (editing.value) return `plan · bible · ${editingMember.value?.kind === 'environment' ? 'location' : editingMember.value?.kind === 'object' ? 'prop' : 'character'}`
   const where = index.value >= 3 ? 'render' : 'plan'

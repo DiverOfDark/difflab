@@ -206,7 +206,8 @@ def _queue_chapter(connection: Any, chapter_id: int, asked_by: str, keyframes_on
                     "shot": shot.id,
                     "arrangement": arrangement,
                     **(under := base(connection, production, arrangement, where) or {}),
-                    "pictures": pictures(connection, production, arrangement, under.get("keep"), worn),
+                    "pictures": (handed := pictures(connection, production, arrangement, under.get("keep"), worn)),
+                    **styled(connection, production, len(handed)),
                     "note": keyframe.note,
                     "looks": before,
                     "size": _canvas(production),
@@ -424,6 +425,14 @@ def pictures(
     return out
 
 
+def styled(connection: Any, production: store.Production, handed: int) -> dict[str, str]:
+    """The style's words for a composed keyframe, and its first picture while the editor has room for one."""
+    out = {"look": look} if (look := compiler.look_of(connection, production.id)) else {}
+    styles = [m for m in store.members_of(connection, production.id, style=True) if m.kind == "style"]
+    found = next((r.artifact for m in styles for r in store.refs_of(connection, m.id) if r.artifact), None)
+    return {**out, "style": found} if found and handed < PICTURES else out
+
+
 def _looks(resolved: looks.Resolved, shot: store.Shot) -> tuple[dict[str, str], dict[str, str]]:
     """What earlier shots changed about each member of this one, and what this one changes."""
     before: dict[str, str] = {}
@@ -478,9 +487,14 @@ def _items(shots: list[store.Shot]) -> list[str]:
 
 
 def plan_production(
-    production_id: int, asked_by: str = "person", chapter_position: int | None = None, fresh: bool = False
+    production_id: int,
+    asked_by: str = "person",
+    chapter_position: int | None = None,
+    fresh: bool = False,
+    shots: bool = True,
 ) -> list[str]:
-    """A plan run per chapter, one or every one in order; `fresh` asks the shots again, not the cast."""
+    """A plan run per chapter, one or every one in order; `fresh` asks the shots again, not the cast.
+    Without `shots`, one run that builds the bible and plans no chapter."""
     with store.connect() as connection, store.transaction(connection):
         production = store.production(connection, production_id)
         if production is None:
@@ -489,35 +503,73 @@ def plan_production(
         photos = [str(p) for p in production.manifest.get("photos", [])]
         video, _ = settings.effective("render_chunk", production_id)
         assert isinstance(video, VideoSettings)
-        total = productions.take_seconds(production.manifest, video.duration)
+        stories = [chapter.story or production.story for chapter in chapters]
+        totals = [
+            productions.take_seconds(production.manifest, video.duration, stories, i) for i in range(len(stories))
+        ]
         problems = []
         if not production.story.strip():
             problems.append("a plan needs a story: the idea the production is made from")
         if not photos:
             problems.append("a plan needs photographs: the first is where the chapter opens")
-        if total < knobs.DIRECTOR_CLIP_MIN:
+        if min(totals) < knobs.DIRECTOR_CLIP_MIN:
             problems.append(f"a plan needs a length of at least {knobs.DIRECTOR_CLIP_MIN:g} seconds to fill")
         if problems:
             raise ValueError(problems[0])
         return [
-            _plan_chapter(connection, production, chapter, len(chapters), asked_by, video, total, fresh)
-            for chapter in _chosen(connection, production_id, chapter_position)
+            _plan_chapter(
+                connection, production, chapters, chapter, asked_by, video, totals[chapter.position], fresh, shots
+            )
+            for chapter in (_chosen(connection, production_id, chapter_position) if shots else chapters[:1])
         ]
+
+
+# The tools of each step the ingesting page shows, in the order it shows them; the rest plan shots.
+STEPS = {
+    "describe": ("guess_reference", "same_person", "ground", "cut_crops", "cards"),
+    "read": ("survey",),
+    "reconcile": ("tidy",),
+}
+
+
+def _pairs(photos: list[str], manifest: dict[str, Any]) -> list[tuple[int, int]]:
+    """The photos a face ruling compares: each one of a character no one named, against every other
+    such photo and the first photo of each named character; a video by its first sharp frame."""
+    labels = {str(k): dict(v) for k, v in (manifest.get("labels") or {}).items()}
+    videos = {f["path"]: r["path"] for r in manifest.get("references", []) for f in r.get("frames", [])}
+    people: list[int] = []
+    for i, photo in enumerate(photos):
+        video = videos.get(photo)
+        if labels.get(photo, {}).get("kind") not in ("character", "") or (
+            video and any(videos.get(photos[j]) == video for j in people)
+        ):
+            continue
+        people.append(i)
+    unnamed = [i for i in people if not labels.get(photos[i], {}).get("entity")]
+    named = {labels[photos[i]]["entity"]: i for i in reversed(people) if labels.get(photos[i], {}).get("entity")}
+    pairs = [(a, b) for n, a in enumerate(unnamed) for b in unnamed[n + 1 :]]
+    pairs += [(min(a, b), max(a, b)) for a in unnamed for b in named.values()]
+    return sorted(set(pairs))
 
 
 def _plan_chapter(
     connection: Any,
     production: store.Production,
+    chapters: list[store.Chapter],
     chapter: store.Chapter,
-    count: int,
     asked_by: str,
     video: VideoSettings,
     total: float,
     fresh: bool,
+    shots: bool = True,
 ) -> str:
+    """Every chapter's run reads every chapter for the cast, so a re-plan of one stands alone; the chapters
+    already read are reused by key, and only the first run of a new production asks."""
     production_id = production.id
-    photos = [str(p) for p in production.manifest.get("photos", [])]
-    aspect = production.manifest.get("aspect")
+    manifest = production.manifest
+    photos = [str(p) for p in manifest.get("photos", [])]
+    labels = {str(k): dict(v) for k, v in (manifest.get("labels") or {}).items()}
+    aspect = manifest.get("aspect")
     continuity, _ = settings.effective("handoff", production_id)
     assert isinstance(continuity, Continuity)
     idea = chapter.story or production.story
@@ -525,7 +577,9 @@ def _plan_chapter(
     run_id = store.next_run_id(connection, datetime.now().strftime("%Y-%m-%d-%H%M%S"))
     spec = {"production": production_id, "chapter": chapter.id, "scope": "plan", "fresh": fresh}
     taken = {"take": time.time_ns() // 1_000_000 % 1_000_000_000} if fresh else {}
+    count = len(chapters)
     title = f"{production.title} · plan" if count == 1 else f"{production.title} · plan chapter {chapter.position + 1}"
+    title = title if shots else f"{production.title} · bible"
     store.add_run(
         connection, run_id, title=title, spec=spec, asked_by=asked_by, scope=f"plan:{chapter.id}",
         production_id=production_id,
@@ -536,10 +590,39 @@ def _plan_chapter(
             chosen = settings.for_job(tool, production_id)
         return store.add_job(connection, run_id, tool, {**common, **inputs}, label=label, settings=chosen or {}).id
 
-    surveyed = add("survey", {"idea": idea, "photos": photos}, "survey the photographs")
+    name = _named(manifest)
+    described = [str(r["path"]) for r in manifest.get("references", []) if r.get("kind") != "video"]
+    described += [
+        next((f["path"] for f in r.get("frames", []) if f["kept"]), r["frames"][0]["path"])
+        for r in manifest.get("references", [])
+        if r.get("kind") == "video" and r.get("frames")
+    ]
+    for path in described:
+        add("guess_reference", {"path": path}, f"describe {name(path)}")
+    pairs = _pairs(photos, manifest)
+    same = [
+        _output(add("same_person", {"a": photos[a], "b": photos[b], "pair": [a, b]},
+                    f"same person? {name(photos[a])} · {name(photos[b])}"), "ruled")
+        for a, b in pairs
+    ]  # fmt: skip
+    said = [labels.get(photo, {"kind": "", "entity": ""}) for photo in photos]
+    surveyed: int | None = None
+    for other in chapters:
+        surveyed = add(
+            "survey",
+            {
+                "idea": other.story or production.story, "photos": photos, "chapter_position": other.position,
+                "last": other.position == count - 1,
+                **({"labels": said} if any(one.get("kind") or one.get("entity") for one in said) else {}),
+                **({"same": same} if same else {}),
+                **({"known": _output(surveyed, "cast")} if surveyed is not None else {}),
+            },
+            f"read chapter {other.position + 1}" if count > 1 else "survey the photographs",
+        )  # fmt: skip
+    assert surveyed is not None
     cast = {"members": _output(surveyed, "members"), "shows": _output(surveyed, "shows")}
     grounds = [
-        add("ground", {"photo": photo, "index": i, **cast}, f"find the cast in photo {i + 1}")
+        add("ground", {"photo": photo, "index": i, **cast}, f"find the cast in {name(photo)}")
         for i, photo in enumerate(photos)
     ]
     found = [_output(job, "found") for job in grounds]
@@ -548,10 +631,18 @@ def _plan_chapter(
         {"video": video.data()},
     )  # fmt: skip
     carded = [
-        add("cards", {"photo": photo, "index": i, **cast}, f"read the cast in photo {i + 1}")
+        add("cards", {"photo": photo, "index": i, **cast}, f"read the cast in {name(photo)}")
         for i, photo in enumerate(photos)
     ]
-    described = add(
+    # The whole story, not the chapter's: every run tidies the same cards against the same text.
+    tidied = add(
+        "tidy",
+        {"idea": production.story, "cards": [_output(job, "card") for job in carded], "found": found, **cast},
+        "reconcile the cards with the story",
+    )
+    if not shots:
+        return run_id
+    described_opening = add(
         "describe_opening",
         {
             "opening": _output(cut, "opening"),
@@ -562,21 +653,17 @@ def _plan_chapter(
         },
         "describe the opening frame",
     )
-    tidied = add(
-        "tidy",
-        {"idea": idea, "cards": [_output(job, "card") for job in carded], "found": found, **cast},
-        "tidy the cards",
-    )
     arranged = add(
         "arrange",
         {
-            "seen": _output(described, "seen"),
-            "in_opening": _output(described, "in_opening"),
+            "seen": _output(described_opening, "seen"),
+            "in_opening": _output(described_opening, "in_opening"),
             "cards": _output(tidied, "cards"),
             **cast,
         },
         "write the opening sentence",
     )
+    shortest = float(manifest.get("shortest") or knobs.DIRECTOR_CLIP_MIN)
     add(
         "plan_shots",
         {
@@ -589,10 +676,28 @@ def _plan_chapter(
             "opening": _output(cut, "opening"),
             "tail": continuity.tail_frames > 0,
             "budget": knobs.DIRECTOR_REFERENCE_ROWS,
+            **({"shortest": shortest} if shortest != knobs.DIRECTOR_CLIP_MIN else {}),
             **taken,
             **cast,
         },
-        f"plan {total:g} seconds of shots",
+        f"plan {total:g} seconds of chapter {chapter.position + 1}"
+        if count > 1
+        else f"plan {total:g} seconds of shots",
         {"video": video.data()},
     )
     return run_id
+
+
+def _named(manifest: dict[str, Any]) -> Any:
+    """A photo as the person knows it: its upload's name, or its video's with the frame's second."""
+    frames = {
+        f["path"]: f"{_shown(str(r['path']))} @{float(f['at']):.1f}s"
+        for r in manifest.get("references", [])
+        for f in r.get("frames", [])
+    }
+    return lambda path: frames.get(path) or _shown(path)
+
+
+def _shown(path: str) -> str:
+    name = path.rsplit("/", 1)[-1]
+    return re.sub(r"^[0-9a-f]{16}-", "", name)

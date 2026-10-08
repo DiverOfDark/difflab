@@ -11,12 +11,12 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import re
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
 from difflab import config, store
-from difflab.core import context, media, ui
+from difflab.core import context, media, protocol, ui
 from difflab.core.cache import cache
 from difflab.core.keys import Key, key
 from difflab.core.types import Frame
@@ -31,6 +31,7 @@ from difflab.tools import (
     cut_crops,
     direct,
     ground,
+    guess,
     opening,
     plan_shots,
     refine_idea,
@@ -169,11 +170,83 @@ def _overlay(
 
 
 # --- the stages ----------------------------------------------------------------------------------
+def run_guess_reference(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
+    frame = _frame(inputs["path"])
+    made = key("guess_reference", 1, photo=frame.pixels, **_fingerprint())
+    outputs = _start("guess_reference", made) or {"path": str(inputs["path"]), **guess.guess(frame)}
+    if inputs.get("production"):
+        _style_words(int(inputs["production"]), str(inputs["path"]), str(outputs.get("look") or ""))
+    return outputs
+
+
+def _style_words(production_id: int, path: str, look: str) -> None:
+    """A style member given no words at ingest takes its picture's look as the VLM saw it."""
+    with store.connect() as connection, store.transaction(connection):
+        for member in store.members_of(connection, production_id, style=True):
+            pictured = any(r.photo == path for r in store.refs_of(connection, member.id))
+            if member.kind == "style" and pictured and not member.appearance and look:
+                store.update_member(connection, member.id, appearance=look)
+
+
+def run_same_person(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
+    first, second = _frame(inputs["a"]), _frame(inputs["b"])
+    made = key("same_person", 1, a=first.pixels, b=second.pixels, **_fingerprint())
+    if (previous := _start("same_person", made)) is not None:
+        return previous
+    same, why = ruling.same_person(first, second)
+    return {"ruled": {"pair": [int(i) for i in inputs["pair"]], "same": same, "why": why}}
+
+
+def _labelled(inputs: dict[str, Any]) -> tuple[list[survey.Label], list[list[int]], list[dict[str, Any]]]:
+    """Each photo's label with the face rulings applied: a photo ruled the same person as a labelled one
+    takes its entity, and the others ruled alike are one group. Also each merge, for the page to say."""
+    labels = [
+        survey.Label(str(given.get("kind") or ""), str(given.get("entity") or ""))
+        for given in inputs.get("labels") or []
+    ]
+    parent = list(range(len(labels)))
+
+    def root(i: int) -> int:
+        while parent[i] != i:
+            i = parent[i]
+        return i
+
+    for ruled in inputs.get("same") or []:
+        if ruled and ruled.get("same"):
+            a, b = (int(i) for i in ruled["pair"])
+            parent[root(b)] = root(a)
+    groups: dict[int, list[int]] = {}
+    for i in range(len(labels)):
+        groups.setdefault(root(i), []).append(i)
+    merged = []
+    for group in groups.values():
+        entity = next((labels[i].entity for i in group if labels[i].entity), "")
+        for i in group:
+            if entity and not labels[i].entity:
+                labels[i] = survey.Label("character", entity)
+                merged.append({"photo": i, "entity": entity})
+    return labels, [g for g in groups.values() if len(g) > 1], merged
+
+
+def _known(given: Any) -> survey.Surveyed | None:
+    if not given:
+        return None
+    return survey.Surveyed(
+        {str(m["id"]): direct.Member(**{k: str(v) for k, v in m.items()}) for m in given["members"]},
+        [tuple(str(m) for m in shown) for shown in given["shows"]],
+        {str(k): str(v) for k, v in (given.get("aliases") or {}).items()},
+    )
+
+
 def run_survey(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
+    """One chapter read for its cast, told what the chapters before it found; the last one drops the rest."""
     production_id, idea = int(inputs["production"]), str(inputs["idea"])
     frames = [_frame(p) for p in inputs["photos"]]
     pinned, manifest = _by_hand(production_id)
     dropped = [str(m) for m in manifest.get("dropped", [])]
+    labels, same, merged = _labelled(inputs)
+    known = _known(inputs.get("known"))
+    chapter = int(inputs.get("chapter_position") or 0)
     # Only a production edited by hand keys by the edits, so one never edited keeps the key it had.
     hand = [
         {**dataclasses.asdict(direct.Member(m.slug, m.kind, m.noun, m.possessive, m.find)),
@@ -181,12 +254,23 @@ def run_survey(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, An
         for m in pinned
     ]  # fmt: skip
     edits = {"by_hand": hand, "dropped": dropped} if hand or dropped else {}
+    told = {
+        **(
+            {"labels": [dataclasses.asdict(label) for label in labels]}
+            if any(label.kind or label.entity for label in labels)
+            else {}
+        ),
+        **({"same": same} if same else {}),
+        **({"known": inputs["known"]} if known else {}),
+    }
     made = key(
-        "survey", 1, production=production_id, idea=idea, photos=[f.pixels for f in frames], **edits, **_fingerprint()
-    )
+        "survey", 1, production=production_id, idea=idea, photos=[f.pixels for f in frames], **edits, **told,
+        **_fingerprint(),
+    )  # fmt: skip
     if (previous := _start("survey", made)) is not None:
+        _announce(chapter, previous)
         return previous
-    surveyed = survey.survey(idea, frames)
+    surveyed = survey.survey(idea, frames, known, labels, same)
     members, shows = _overlay(surveyed.members, surveyed.shows, pinned, dropped)
     kept = {m.slug for m in pinned}
     photos = [str(p) for p in inputs["photos"]]
@@ -200,17 +284,44 @@ def run_survey(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, An
                     connection, production_id, member.id, member.kind, member.noun, member.possessive, member.find,
                     position,
                 )  # fmt: skip
-        store.drop_members_except(connection, production_id, list(members))
+        if inputs.get("last", True):
+            store.drop_members_except(connection, production_id, list(members))
         for row in store.members_of(connection, production_id):
             if surveyed.aliases.get(row.slug) and not row.aliases:
                 store.update_member(connection, row.id, aliases=surveyed.aliases[row.slug])
     _manifest(production_id, unmatched=unmatched)
-    return {
-        "members": [dataclasses.asdict(m) for m in members.values()],
-        "shows": [list(s) for s in shows],
-        "aliases": surveyed.aliases,
-        "unmatched": unmatched,
-    }
+    listed = [dataclasses.asdict(m) for m in members.values()]
+    cast = {"members": listed, "shows": [list(s) for s in shows], "aliases": surveyed.aliases}
+    outputs = {
+        **cast, "cast": cast, "unmatched": unmatched, "merged": merged,
+        "new": [{**dataclasses.asdict(members[m]), "photos": sum(m in s for s in shows)} for m in surveyed.new
+                if m in members],
+    }  # fmt: skip
+    _announce(chapter, outputs)
+    return outputs
+
+
+def _announce(chapter: int, outputs: dict[str, Any]) -> None:
+    run = context.current().run
+    if run is not None and outputs.get("new"):
+        found = [
+            {k: str(v) for k, v in m.items() if k in ("id", "kind", "noun", "find", "photos")} for m in outputs["new"]
+        ]
+        run.emit(protocol.Found(chapter=chapter, members=found))
+
+
+def skip_survey(inputs: dict[str, Any]) -> dict[str, Any] | None:
+    """A chapter not read: the cast as the chapters before it left it. The first one has nothing to pass on."""
+    known = inputs.get("known")
+    return None if not known else {**known, "cast": known, "unmatched": [], "merged": [], "new": []}
+
+
+# Per tool, the outputs a job skipped by a person hands on, from its inputs; a tool absent here is not skipped.
+SKIPS: dict[str, Callable[[dict[str, Any]], dict[str, Any] | None]] = {
+    "survey": skip_survey,
+    "guess_reference": lambda inputs: {"path": str(inputs["path"]), "kind": "", "about": "", "look": ""},
+    "same_person": lambda inputs: {"ruled": {"pair": list(inputs["pair"]), "same": None, "why": "skipped"}},
+}
 
 
 def run_ground(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
@@ -547,6 +658,7 @@ def _plan_shots(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, A
     identities = {str(k): dict(v) for k, v in inputs["cards"].items()}
     arrangement = str(inputs["arrangement"])
     seconds, tail, budget = float(inputs["seconds"]), bool(inputs["tail"]), int(inputs["budget"])
+    shortest = float(inputs.get("shortest") or knobs.DIRECTOR_CLIP_MIN)
     video = VideoSettings(**settings["video"])
     with store.connect() as connection:
         production = store.production(connection, production_id)
@@ -561,6 +673,7 @@ def _plan_shots(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, A
         members=inputs["members"],
         cards=identities, refs={k: dataclasses.asdict(r) for k, r in refs.items()}, arrangement=arrangement,
         seconds=seconds, tail=tail, budget=budget, **({"aliases": aliases} if aliases else {}), **_taken(inputs),
+        **({"shortest": shortest} if shortest != knobs.DIRECTOR_CLIP_MIN else {}),
         **_fingerprint(),
     )  # fmt: skip
     if (previous := _start("plan_shots", made)) is not None:
@@ -577,7 +690,7 @@ def _plan_shots(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, A
         budget=budget,
     )
     with _take(inputs):
-        planned = plan_shots.plan(base, idea, total, aliases)
+        planned = plan_shots.plan(base, idea, total, aliases, shortest)
     chunks = [compiler.plan_of(chunk) for chunk in planned.chunks]
     changed = [
         {m: {"amend": look, "label": chunk.look_names.get(m, "")} for m, look in chunk.looks.items()}
@@ -718,6 +831,8 @@ def run_refine_idea(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
 
 
 PLAN_RUNNERS = {
+    "guess_reference": run_guess_reference,
+    "same_person": run_same_person,
     "survey": run_survey,
     "ground": run_ground,
     "cut_crops": run_cut_crops,

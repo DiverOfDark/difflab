@@ -184,6 +184,13 @@ export interface JobEndEvent {
   seconds: number
 }
 
+export interface FoundEvent {
+  kind: 'found'
+  t: number
+  chapter: number
+  members: Record<string, string>[]
+}
+
 export type Event =
   | RunStartEvent
   | RunEndEvent
@@ -206,5 +213,6 @@ export type Event =
   | FinalEvent
   | JobBeginEvent
   | JobEndEvent
+  | FoundEvent
 
-export const KINDS = ['run.start', 'run.end', 'error', 'stats', 'log', 'panel', 'stage.start', 'stage.progress', 'stage.end', 'tally', 'tally.end', 'plan', 'item.begin', 'item.end', 'item.info', 'item.video', 'preview', 'artifact', 'final', 'job.begin', 'job.end'] as const
+export const KINDS = ['run.start', 'run.end', 'error', 'stats', 'log', 'panel', 'stage.start', 'stage.progress', 'stage.end', 'tally', 'tally.end', 'plan', 'item.begin', 'item.end', 'item.info', 'item.video', 'preview', 'artifact', 'final', 'job.begin', 'job.end', 'found'] as const

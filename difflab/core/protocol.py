@@ -239,6 +239,16 @@ class JobEnd(Event):
     seconds: float
 
 
+# --- what a plan found ------------------------------------------------------------------------
+@dataclass(frozen=True)
+class Found(Event):
+    """The members a chapter's survey found that the chapters before it had not."""
+
+    KIND = "found"
+    chapter: int  # its position, from 0
+    members: list[dict[str, str]]  # slug, kind, noun, find, photos (how many show it)
+
+
 EVENTS: tuple[type[Event], ...] = tuple(
     cls for cls in vars(sys.modules[__name__]).values() if isinstance(cls, type) and issubclass(cls, Event) and cls.KIND
 )

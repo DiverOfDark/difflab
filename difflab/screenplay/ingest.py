@@ -1,108 +1,264 @@
-"""How a production begins: an idea and photographs, a text, or a video to redo.
+"""How a production begins: a story and its references, or a video to redo.
 
-An idea makes one chapter of one scene. A text is split on its headings, or every 600 words, into
-chapters the director plans one at a time. A video is cut by the render length into shots that each
-open on the source's own frame at that moment and are handed that stretch of it to re-create.
+A story is an idea (one chapter of one scene) or a text, split on its headings, or every 600 words where
+it has none, into chapters the director plans one at a time; the production's target length is spread
+over them by their words. A reference is a photograph, a video, whose sharp frames become photographs
+and which is kept as a motion reference, or a style picture, which is a member of kind `style`. A video
+to redo is cut by the render length into shots that each open on the source's own frame at that moment
+and are handed that stretch of it to re-create.
 """
 
 from __future__ import annotations
 
 import json
 import math
+import os
 import re
+import threading
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+import numpy as np
+from PIL import Image
 
 from difflab import config, store
 from difflab.core import media
 from difflab.core.cache import cache
-from difflab.core.imaging import video_length
+from difflab.core.imaging import load_image, load_video_frames, video_length
 from difflab.core.keys import key
-from difflab.core.settings import Continuity
+from difflab.core.settings import Continuity, IngestSettings
 from difflab.models.minimax_h3.settings import VideoSettings
 from difflab.screenplay import captions, production, settings
 from difflab.screenplay import config as knobs
+from difflab.tools.survey import KINDS_OF
 
 WORDS_PER_CHAPTER = 600  # a text with no headings: about one chapter of five 12 s shots' worth of story
-HEADING = re.compile(r"^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$", re.M)
+HEADING = re.compile(r"^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$", re.M)
+REFERENCE_KINDS = (*KINDS_OF, "style", "video")
+VIDEOS = {".mp4", ".mov", ".mkv", ".webm"}
+SHARPNESS_WIDTH = 512  # px: frames are measured at one width, so a 4K clip and a 720p one share a threshold
 
 
-def from_idea(
+@dataclass(frozen=True)
+class Chapter:
+    title: str
+    story: str
+    headed: bool  # False: a stretch of WORDS_PER_CHAPTER words of a text with no heading there
+
+
+def chapters_of(text: str, level: int = 1) -> list[Chapter]:
+    """A chapter per heading of `level` or above; text with no such heading over it, every 600 words."""
+    found = [m for m in HEADING.finditer(text) if len(m.group(1)) <= level]
+    parts: list[tuple[str, str]] = [("", text[: found[0].start()] if found else text)]
+    for index, match in enumerate(found):
+        end = found[index + 1].start() if index + 1 < len(found) else len(text)
+        parts.append((match.group(2).strip(), text[match.end() : end]))
+    out: list[Chapter] = []
+    for title, body in parts:
+        story = " ".join(HEADING.sub(lambda m: m.group(2) + ".", body).split())
+        if title and story:
+            out.append(Chapter(title, story, True))
+        elif story:
+            words = story.split()
+            count = max(1, math.ceil(len(words) / WORDS_PER_CHAPTER))
+            each = math.ceil(len(words) / count)
+            for n in range(count):
+                if words[n * each : (n + 1) * each]:
+                    out.append(Chapter(f"chapter {len(out) + 1}", " ".join(words[n * each : (n + 1) * each]), False))
+    return out
+
+
+# --- references -------------------------------------------------------------------------------------
+def sharpness(image: Image.Image) -> float:
+    """Variance of the 4-neighbour Laplacian of the luma (0-255) at SHARPNESS_WIDTH px wide."""
+    grey = image.convert("L")
+    grey = grey.resize((SHARPNESS_WIDTH, max(1, round(grey.height * SHARPNESS_WIDTH / grey.width))))
+    pixels = np.asarray(grey, dtype=np.float32)
+    edges = pixels[:-2, 1:-1] + pixels[2:, 1:-1] + pixels[1:-1, :-2] + pixels[1:-1, 2:] - 4 * pixels[1:-1, 1:-1]
+    return round(float(edges.var()), 1)
+
+
+def frames_of(video: str | Path, count: int, least: float) -> dict[str, Any]:
+    """`count` frames spread evenly over the video, each with its sharpness, kept when at least `least`;
+    the sharpest is kept whatever it measures, so every video gives a picture."""
+    path = _under_output(video)
+    if not path.is_file() or path.suffix.lower() not in VIDEOS:
+        raise ValueError(f"no such video: {video}")
+    seconds, _ = video_length(path)
+    stat = path.stat()
+    out: list[dict[str, Any]] = []
+    for index in range(count):
+        at = round(seconds * (index + 0.5) / count, 3)
+        made = key("reference_frame", 1, video=str(path), size=stat.st_size, mtime=stat.st_mtime, at=at)
+        target = cache.path(made, ".png")
+        if not target.is_file():
+            # Through a temporary name: the page asks again when a knob moves, and a reader must never
+            # open a half-written frame.
+            partial = target.with_suffix(f".{os.getpid()}.{threading.get_ident()}.png")
+            load_video_frames(path, limit=1, start=at)[0][0].save(partial)
+            partial.replace(target)
+        measured = sharpness(load_image(target))
+        out.append({"path": store.relative(target), "at": at, "sharpness": measured, "kept": measured >= least})
+    sharpest = max(out, key=lambda f: float(f["sharpness"]))
+    sharpest["kept"] = True
+    return {"seconds": round(seconds, 2), "frames": out}
+
+
+def entity_id(name: str) -> str:
+    """A person's name for an entity as a member id: `Tomas Veld` is `tomas_veld`."""
+    said = re.sub(r"[^a-z]+", "_", name.lower()).strip("_")
+    return said[: knobs.DIRECTOR_ID_LENGTH].rstrip("_")
+
+
+@dataclass(frozen=True)
+class Reference:
+    path: str
+    kind: str
+    entity: str
+    guess: str
+
+
+def references_of(given: list[dict[str, Any]]) -> list[Reference]:
+    out: dict[str, Reference] = {}
+    for row in given:
+        path = store.relative(_under_output(str(row.get("path", ""))))
+        kind = str(row.get("kind") or "")
+        if kind not in REFERENCE_KINDS:
+            raise ValueError(f"{path}: a reference is one of {', '.join(REFERENCE_KINDS)}, not {kind!r}")
+        if not _under_output(path).is_file():
+            raise ValueError(f"no such file: {path}")
+        if (kind == "video") != (Path(path).suffix.lower() in VIDEOS):
+            raise ValueError(f"{path}: a video is a motion reference, and a motion reference is a video")
+        entity = entity_id(str(row.get("entity") or ""))
+        if str(row.get("entity") or "").strip() and not entity:
+            raise ValueError(f"{path}: an entity's name needs letters")
+        # The same file twice is one reference: an upload's name begins with its content hash.
+        out.setdefault(path, Reference(path, kind, entity, " ".join(str(row.get("guess") or "").split())))
+    return list(out.values())
+
+
+def guess(paths: list[str], asked_by: str = "person") -> str:
+    """What each upload shows, as a run of its own: the references table's guesses before any story is read."""
+    found = [store.relative(_under_output(p)) for p in paths]
+    if not found or not all(_under_output(p).is_file() for p in found):
+        raise ValueError("pictures under output/ to describe")
+    with store.connect() as connection, store.transaction(connection):
+        run_id = store.next_run_id(connection, datetime.now().strftime("%Y-%m-%d-%H%M%S"))
+        store.add_run(connection, run_id, title=f"describe {len(found)} upload(s)", asked_by=asked_by, scope="guess")
+        for path in found:
+            store.add_job(
+                connection, run_id, "guess_reference", {"path": path}, label=f"describe {Path(path).name}",
+                settings=settings.for_job("guess_reference"),
+            )  # fmt: skip
+    return run_id
+
+
+def slug_for(title: str) -> str:
+    """A free slug from the title: `The Lighthouse at Vell` is `the-lighthouse-at-vell`, then `-2`."""
+    base = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:48] or "production"
+    with store.connect() as connection:
+        taken = {p.slug for p in store.productions(connection)}
+    candidate, n = base, 1
+    while candidate in taken:
+        n += 1
+        candidate = f"{base}-{n}"
+    return candidate
+
+
+# --- a production from a story ----------------------------------------------------------------------
+def from_story(
     slug: str,
-    idea: str,
-    photos: list[str | Path],
-    take_seconds: float,
+    kind: str,
+    story: str,
+    references: list[Reference],
+    target_seconds: float,
+    shortest: float,
     title: str = "",
     aspect: float | None = None,
     video: VideoSettings | None = None,
     continuity: Continuity | None = None,
+    ingesting: IngestSettings | None = None,
 ) -> store.Production:
-    """`photos[0]` is where the chapter opens; the rest show the cast. The director fills `take_seconds`
-    with as many shots as the idea needs, none longer than the production's render length."""
-    if not idea.strip():
-        raise ValueError("an idea, in your own words: what happens")
-    kept = _photos(photos)
-    _long_enough(take_seconds)
-    made = production.create(slug, title, video, continuity)
-    return _begun(
-        made.id, "idea", production.lines(idea), {"photos": kept, "take_seconds": take_seconds, "aspect": aspect}
-    )
-
-
-def _long_enough(take_seconds: float) -> None:
-    if take_seconds < knobs.DIRECTOR_CLIP_MIN:
-        raise ValueError(f"at least {knobs.DIRECTOR_CLIP_MIN:g} seconds: one shot")
-
-
-def from_text(
-    slug: str,
-    text: str,
-    photos: list[str | Path],
-    take_seconds: float,
-    title: str = "",
-    aspect: float | None = None,
-    video: VideoSettings | None = None,
-    continuity: Continuity | None = None,
-) -> store.Production:
-    """One chapter per heading, or per 600 words without any; each is planned from its own text into
-    `take_seconds` of shots. The photographs are the whole production's."""
-    parts = chapters_of(text)
+    """`kind` idea is one chapter; text is split by `ingesting.heading_level`. The first location
+    photograph, or the first photograph, is where chapter 1 opens."""
+    chosen = ingesting or IngestSettings()
+    if kind == "idea":
+        parts = [Chapter("", production.lines(story), True)] if story.strip() else []
+    elif kind == "text":
+        parts = chapters_of(story, chosen.heading_level)
+    else:
+        raise ValueError(f"a story is an idea or a text, not {kind!r}")
     if not parts:
-        raise ValueError("a text to make chapters of")
-    kept = _photos(photos)
-    _long_enough(take_seconds)
+        raise ValueError("a story, in your own words or as a file: what happens")
+    if target_seconds < knobs.DIRECTOR_CLIP_MIN:
+        raise ValueError(f"at least {knobs.DIRECTOR_CLIP_MIN:g} seconds: one shot")
+    longest = (video or VideoSettings()).duration
+    if not knobs.DIRECTOR_CLIP_MIN <= shortest <= longest:
+        raise ValueError(f"shots between {knobs.DIRECTOR_CLIP_MIN:g} s and the longest, {longest:g} s")
+    rows = []
+    for reference in references:
+        frames = frames_of(reference.path, chosen.frames, chosen.min_sharpness) if reference.kind == "video" else None
+        rows.append({**reference.__dict__, **({"frames": frames["frames"]} if frames else {})})
+    photos, labels = _photos(references, rows)
+    if not photos:
+        raise ValueError("at least one photograph, or a video with a sharp frame: chapter 1 opens on one")
     made = production.create(slug, title, video, continuity)
+    if ingesting is not None:
+        overrides = {k: v for k, v in ingesting.data().items() if v != IngestSettings().data()[k]}
+        with store.connect() as connection, store.transaction(connection):
+            store.put_overrides(connection, settings.PRODUCTION, str(made.id), "ingest", overrides)
     with store.connect() as connection, store.transaction(connection):
         first = store.chapters_of(connection, made.id)[0]
-        for position, (heading, story) in enumerate(parts):
+        for position, part in enumerate(parts):
             if position == 0:
-                connection.execute("UPDATE chapters SET title = ?, story = ? WHERE id = ?", (heading, story, first.id))
+                connection.execute(
+                    "UPDATE chapters SET title = ?, story = ? WHERE id = ?", (part.title, part.story, first.id)
+                )
             else:
-                store.add_chapter(connection, made.id, heading, story)
-    return _begun(made.id, "text", text.strip(), {"photos": kept, "take_seconds": take_seconds, "aspect": aspect})
+                store.add_chapter(connection, made.id, part.title, part.story)
+        _styles(connection, made.id, [r for r in references if r.kind == "style"])
+    manifest = {
+        "photos": photos, "labels": labels, "references": rows, "target_seconds": target_seconds,
+        "shortest": shortest, "aspect": aspect,
+    }  # fmt: skip
+    return _begun(made.id, kind, production.lines(story) if kind == "idea" else story.strip(), manifest)
 
 
-def chapters_of(text: str) -> list[tuple[str, str]]:
-    """`(heading, story)` pairs: the text under each heading, or `WORDS_PER_CHAPTER`-word stretches."""
-    found = list(HEADING.finditer(text))
-    if found:
-        out = []
-        for index, match in enumerate(found):
-            end = found[index + 1].start() if index + 1 < len(found) else len(text)
-            story = " ".join(text[match.end() : end].split())
-            if story:
-                out.append((match.group(1).strip(), story))
-        return out
-    words = text.split()
-    count = max(1, math.ceil(len(words) / WORDS_PER_CHAPTER))
-    each = math.ceil(len(words) / count) if words else 0
-    return [
-        (f"chapter {n + 1}", " ".join(words[n * each : (n + 1) * each]))
-        for n in range(count)
-        if words[n * each : (n + 1) * each]
-    ]
+def _photos(references: list[Reference], rows: list[dict[str, Any]]) -> tuple[list[str], dict[str, dict[str, str]]]:
+    """The pictures the survey sees, the first location first, and what the person said each one shows."""
+    photos: list[str] = []
+    labels: dict[str, dict[str, str]] = {}
+    for reference, row in zip(references, rows, strict=True):
+        if reference.kind == "style":
+            continue
+        kept = [f["path"] for f in row.get("frames", []) if f["kept"]] if reference.kind == "video" else [row["path"]]
+        for path in kept:
+            photos.append(path)
+            labels[path] = {"kind": "" if reference.kind == "video" else reference.kind, "entity": reference.entity}
+    places = [p for p in photos if labels[p]["kind"] == "location"]
+    if places:
+        photos.remove(places[0])
+        photos.insert(0, places[0])
+    return photos, labels
 
 
+def _styles(connection: Any, production_id: int, styles: list[Reference]) -> None:
+    for reference in styles:
+        slug = reference.entity or "style"
+        member = store.put_member(connection, production_id, slug, "style", slug.replace("_", " "), "its", "")
+        if reference.guess and not member.appearance:
+            store.update_member(connection, member.id, appearance=reference.guess)
+        with Image.open(_under_output(reference.path)) as picture:
+            size = list(picture.size)
+        store.add_ref(
+            connection, member.id, "style", reference.path, [0, 0, *size], size, 0, [slug], 1.0,
+            artifact=reference.path, provided=reference.path,
+        )  # fmt: skip
+
+
+# --- a production that redoes a video ---------------------------------------------------------------
 def from_video(
     slug: str,
     source: str | Path,
@@ -123,7 +279,7 @@ def from_video(
         raise ValueError("what should be different about it, in one line")
     if not 0.1 <= clip_scale <= 1.0:
         raise ValueError(f"clip_scale={clip_scale:g}: the source is shown between 0.1 and 1.0 of the canvas")
-    kept = _photos(photos) if photos else []
+    kept = [store.relative(_under_output(p)) for p in photos or []]
     made = production.create(slug, title, video, continuity)
     chosen, _ = settings.effective("render_chunk", made.id)
     carried, _ = settings.effective("handoff", made.id)
@@ -164,18 +320,6 @@ def _anchor(video: Path, start: float) -> str:
         clip = media.clip_from_video(video, limit=1, with_audio=False, start=start)
         clip.frame(0).pil().save(target)
     return store.relative(target)
-
-
-def _photos(photos: list[str | Path]) -> list[str]:
-    if not photos:
-        raise ValueError("at least one photograph: the first is where the chapter opens")
-    kept = []
-    for photo in photos:
-        path = _under_output(photo)
-        if not path.is_file():
-            raise ValueError(f"no such photo: {photo}")
-        kept.append(store.relative(path))
-    return kept
 
 
 def _begun(production_id: int, kind: str, story: str, manifest: dict[str, Any]) -> store.Production:

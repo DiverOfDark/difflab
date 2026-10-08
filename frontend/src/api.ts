@@ -391,23 +391,76 @@ export interface IdeaRound {
   created: number
 }
 
-export interface Ingest {
-  kind: 'idea' | 'text' | 'video'
-  slug: string
+/** A row of the references table: an upload, what it is, and the entity it shows. */
+export type RefKind = 'character' | 'location' | 'prop' | 'style' | 'video'
+export interface IngestRef {
+  path: string
+  kind: RefKind
+  entity: string
+  guess: string
+}
+
+export interface IngestStory {
+  kind: 'idea' | 'text'
   title: string
-  idea: string
-  text: string
+  story: string
+  references: IngestRef[]
+  /** The whole film, spread over the chapters by their words. */
+  target_seconds: number
+  /** The shortest shot the director plans; the longest is `video.duration`. */
+  shortest: number
+  /** Width over height of the canvas; null takes the first photo's own. */
+  aspect: number | null
+  video: { duration: number; megapixels: number; steps: number }
+  ingest: { heading_level: number; frames: number; min_sharpness: number }
+  /** Queue every chapter's plan run, stopping before render. */
+  plan: boolean
+}
+
+export interface RedoVideo {
+  title: string
   source: string
   instruction: string
   photos: string[]
-  /** Seconds the director fills with as many shots as the story needs; per chapter for a text. */
-  take_seconds: number
-  /** Width over height of the canvas; null takes the first photo's own. */
-  aspect: number | null
   clip_scale: number
   video: { duration: number; megapixels: number; steps: number }
-  continuity: { tail_seconds: number; handoff_window: number; crossfade: number }
 }
+
+export interface ReferenceFrame {
+  path: string
+  at: number
+  sharpness: number
+  kept: boolean
+}
+
+export interface IngestingStep {
+  id: 'split' | 'describe' | 'read' | 'reconcile'
+  name: string
+  state: 'done' | 'running' | 'waiting' | 'pending' | 'failed'
+  bar: number
+  rows: { k: string; v: string }[]
+  jobs: number
+  skippable: boolean
+}
+
+/** A production's newest plan as the ingesting page shows it. */
+export interface Ingesting {
+  runs: { id: string; state: string; title: string }[]
+  live: string[]
+  steps: IngestingStep[]
+  current: string
+  progress: number
+  bible_done: boolean
+  plan: { jobs: number; settled: number }
+  elapsed: number
+  eta: number
+  model: string
+  vram: number | null
+  found: { slug: string; kind: string; desc: string; src: string; chapter: number }[]
+  log: { t: number; tag: string; msg: string; dur: string }[]
+}
+
+export type Timings = Production['timings']
 
 export type Dot = 'done' | 'review' | 'stale' | 'pending'
 type Image = LookRef['image']
@@ -477,15 +530,20 @@ export const attachUnmatched = (id: number, photo: string, to: string) =>
   json<Production & { stale: Stale }>(`/api/productions/${id}/unmatched`, post({ photo, to }))
 /** The member read again from its photographs, as a run; it goes back to the director. */
 export const describeMember = (memberId: number) => json<{ run: string }>(`/api/members/${memberId}/describe`, post({}))
-export const ingest = (form: Ingest) => {
-  const common = { slug: form.slug, title: form.title, photos: form.photos, video: form.video, continuity: form.continuity, aspect: form.aspect }
-  if (form.kind === 'idea') return json<Production>('/api/ingest/idea', post({ ...common, idea: form.idea, take_seconds: form.take_seconds }))
-  if (form.kind === 'text') return json<Production>('/api/ingest/text', post({ ...common, text: form.text, take_seconds: form.take_seconds }))
-  return json<Production>(
-    '/api/ingest/video',
-    post({ ...common, source: form.source, instruction: form.instruction, clip_scale: form.clip_scale }),
-  )
+export const ingestStory = (form: IngestStory) => json<Production & { runs: string[] }>('/api/ingest', post(form))
+export const redoVideo = (form: RedoVideo) => json<Production>('/api/ingest/video', post(form))
+export async function readStory(file: File): Promise<{ name: string; text: string; words: number; bytes: number }> {
+  const form = new FormData()
+  form.append('file', file)
+  return json('/api/ingest/read', { method: 'POST', body: form })
 }
+export const referenceFrames = (path: string, frames: number, min_sharpness: number) =>
+  json<{ seconds: number; frames: ReferenceFrame[] }>('/api/ingest/frames', post({ path, frames, min_sharpness }))
+export const guessReferences = (paths: string[]) => json<{ run: string }>('/api/ingest/guess', post({ paths }))
+export const readIngesting = (id: number) => json<Ingesting>(`/api/productions/${id}/ingesting`)
+export const skipStep = (id: number, step: string) => json<{ skipped: number }>(`/api/productions/${id}/ingesting`, post({ skip: step }))
+export const cancelIngest = (id: number) => json<{ cancelled: number }>(`/api/productions/${id}/ingesting`, post({ cancel: true }))
+export const readTimings = () => json<Timings>('/api/timings')
 /** `chapter` null is every chapter, a run each in chapter order; `run` is the first of `runs`. */
 const chapterQuery = (chapter: number | null, more = '') => {
   const q = [chapter === null ? '' : `chapter=${chapter}`, more].filter(Boolean).join('&')

@@ -153,7 +153,7 @@ const attach = (u: Production['unmatched'][number]) =>
         <div class="bottom mono">
           <span class="dim">in {{ shotsOf(production, m.slug).length }} shots</span>
           <span class="acts">
-            <button class="link" :disabled="!!busy || (!source(m).provided && !!drawing)" @click="run(m)">
+            <button v-if="m.kind !== 'style'" class="link" :disabled="!!busy || (!source(m).provided && !!drawing)" @click="run(m)">
               {{ inDrawing(m) ? 'drawing…' : action(m) }}
             </button>
             <button class="link" @click="emit('edit', m.id)">edit</button>

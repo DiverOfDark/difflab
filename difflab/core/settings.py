@@ -217,6 +217,21 @@ class EditSettings(Settings):
 
 
 @dataclass(frozen=True)
+class IngestSettings(Settings):
+    """How a story becomes chapters, and a reference video becomes pictures."""
+
+    heading_level: int = setting(
+        1, "chapter split", "a heading of this level or above starts a chapter (1 is #, 2 is ##)", low=1, high=6
+    )
+    frames: int = setting(12, "frames per video", "frames pulled from each reference video, evenly", low=1, high=48)
+    # Variance of the Laplacian at 512 px wide (`ingest.sharpness`), measured 2026-10-09: an H3 frame 2140,
+    # Gaussian-blurred sigma 1/2/3 750/130/36; a sharp studio portrait 809, blurred 96/12/5; a soft phone
+    # portrait 91. 50 drops a portrait blurred at sigma 2 and a detailed frame at sigma 3. The texture of
+    # the picture moves it as much as the blur does, so a video's sharpest frame is kept whatever it measures.
+    min_sharpness: float = setting(50.0, "min sharpness", "frames blurrier than this are dropped", low=0, high=5000)
+
+
+@dataclass(frozen=True)
 class EnlargePixelsSettings(Settings):
     """An ESRGAN over finished frames."""
 

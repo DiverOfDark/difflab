@@ -23,6 +23,8 @@ def instruction(
     pictured: Sequence[str] = (),
     note: str = "",
     looks: dict[str, str] | None = None,
+    look: str = "",
+    styled: bool = False,
 ) -> str:
     """The plan's opening sentence with each {id} said as the member it names, in the editor's words: a
     member in `pictured` by its picture (Picture 2 onward, in that order), the others by their traits,
@@ -48,6 +50,10 @@ def instruction(
     else:
         out = words.COMPOSE_INSTRUCTION.format(scene=scene)
     parts = [out, *([words.COMPOSE_LIKENESS] if pictured else []), words.COMPOSE_ALONE]
+    if styled:
+        parts.append(words.COMPOSE_STYLE.format(picture=len(pictured) + 2))
+    if look.strip():
+        parts.append(words.COMPOSE_LOOK_WORDS.format(look=look.strip().rstrip(".")))
     told = " ".join(note.replace("Fix:", " ").split()).rstrip(".")  # `made.JUDGED` marks the judge's half
     if told:
         parts.append(words.COMPOSE_NOTE.format(note=told))
@@ -74,8 +80,12 @@ def compose(
     pictures: dict[str, Frame] | None = None,
     note: str = "",
     looks: dict[str, str] | None = None,
+    style: Frame | None = None,
+    look: str = "",
 ) -> Frame:
-    """`pictures` is each member handed over as its own picture, by id, in the order they are named."""
+    """`pictures` is each member handed over as its own picture, by id, in the order they are named;
+    `style` a picture whose look alone is taken, after them."""
     given = pictures or {}
-    said = instruction(arrangement, cards, keep, list(given), note, looks)
-    return edit_image.edit(base, said, settings, size=size, donors=list(given.values()))
+    said = instruction(arrangement, cards, keep, list(given), note, looks, look, style is not None)
+    donors = [*given.values(), *([style] if style is not None else [])]
+    return edit_image.edit(base, said, settings, size=size, donors=donors)

@@ -14,6 +14,7 @@ dependencies = [
     "fastapi>=0.141.1",
     "numpy>=2.5.3",
     "pillow>=12.3.0",
+    "pypdf>=6",
     "python-multipart>=0.0.32",
     "regex>=2026.9.10",
     "safetensors>=0.8.0",

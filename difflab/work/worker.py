@@ -25,7 +25,7 @@ from difflab.core import context, events, protocol, ui
 from difflab.core.settings import DirectorSettings, JudgeSettings
 from difflab.screenplay import made
 from difflab.tools import TOOLS, direct
-from difflab.work import Skipped, runners
+from difflab.work import Skipped, plan_runners, runners
 
 # The tools that ask through the director, which takes its model from the job rather than a parameter.
 _DIRECTED = {tool.name for tool in TOOLS if tool.settings in (DirectorSettings, JudgeSettings)}
@@ -98,10 +98,16 @@ class Worker(threading.Thread):
                 )
             )
             started = time.perf_counter()
-            state, error, outputs = store.DONE, "", {}
+            state, error = store.DONE, ""
+            outputs: dict[str, Any] = {}
             try:
-                with direct.using(job.settings.get("checkpoint") if job.tool in _DIRECTED else None):
-                    outputs = runners.RUNNERS[job.tool](_resolve(job.inputs), job.settings)
+                inputs = _resolve(job.inputs)
+                handed = _skipped(run, job.tool, inputs)
+                if handed is not None:
+                    outputs = Skipped(handed)
+                else:
+                    with direct.using(job.settings.get("checkpoint") if job.tool in _DIRECTED else None):
+                        outputs = runners.RUNNERS[job.tool](inputs, job.settings)
                 if isinstance(outputs, Skipped):
                     state = store.SKIPPED
             except context.Cancelled:
@@ -150,7 +156,10 @@ class Worker(threading.Thread):
                 except (LookupError, ValueError, sqlite3.Error) as problem:
                     ui.note(f"the judge asked for another attempt, but none could be queued ({problem})")
             if not remaining:
-                sink.end(ok=not failed and state != store.CANCELLED, error=error if state != store.DONE else "")
+                if cancelled:
+                    sink.end(ok=False, error="cancelled")
+                else:
+                    sink.end(ok=not failed and state != store.CANCELLED, error=error if state != store.DONE else "")
             self.ctx = None
 
     # --- beside the job: the heartbeat, and the commands that arrive while it runs ------------------
@@ -236,6 +245,13 @@ def _cancel_rest(connection: sqlite3.Connection, run_id: str, why: str) -> None:
     for one in store.jobs_of(connection, run_id):
         if one.state in (store.QUEUED, store.BLOCKED):
             store.end_job(connection, one.id, store.CANCELLED, error=why)
+
+
+def _skipped(run: store.Run | None, tool: str, inputs: dict[str, Any]) -> dict[str, Any] | None:
+    """The outputs a job a person skipped hands on, or None to run it: a step skipped on the ingesting page."""
+    spec = (run.data() if run is not None else None) or {}
+    skip = plan_runners.SKIPS.get(tool)
+    return skip(inputs) if skip is not None and tool in spec.get("skip", []) else None
 
 
 def _resolve(inputs: dict[str, Any]) -> dict[str, Any]:

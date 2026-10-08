@@ -23,9 +23,9 @@ from fastapi.staticfiles import StaticFiles
 from difflab import config
 from difflab.api import assets, runs
 from difflab.core import hub
-from difflab.core.settings import Continuity
+from difflab.core.settings import Continuity, IngestSettings
 from difflab.models.minimax_h3.settings import VideoSettings
-from difflab.screenplay import drawn, ideas, ingest, looks, planner, production, settings
+from difflab.screenplay import drawn, ideas, ingest, ingesting, looks, planner, production, readers, settings
 from difflab.work import queue
 from difflab.work.quick import Job
 
@@ -323,6 +323,8 @@ def describe_member(member_id: int) -> dict[str, Any]:
         return {"run": production.describe_again(member_id)}
     except LookupError as problem:
         raise HTTPException(404, str(problem)) from problem
+    except ValueError as problem:
+        raise HTTPException(400, str(problem)) from problem
 
 
 @app.delete("/api/productions/{production_id}")
@@ -485,49 +487,99 @@ def _review(kind: str, made_id: int, approved: bool) -> dict[str, Any]:
     return _production(owner)
 
 
-@app.post("/api/ingest/idea")
-async def ingest_idea(request: Request) -> dict[str, Any]:
-    """A production from an idea and photographs: one chapter of `take_seconds`, the first photo where
-    it opens. `video` and `continuity` are partial settings over the code defaults."""
+@app.post("/api/ingest/read")
+async def read_story(file: UploadFile) -> dict[str, Any]:
+    """A story file (epub, pdf, txt, md, docx) as markdown text, for the page to split and send back."""
+    data = await file.read()
+    try:
+        text = await asyncio.to_thread(readers.read, data, file.filename or "story.txt")
+    except ValueError as problem:
+        raise HTTPException(400, str(problem)) from problem
+    return {"name": file.filename, "text": text, "words": len(text.split()), "bytes": len(data)}
+
+
+@app.post("/api/ingest/frames")
+async def reference_frames(request: Request) -> dict[str, Any]:
+    """`path`, an uploaded video: `frames` frames spread over it, each measured and kept at `min_sharpness`."""
+    body = await request.json()
+    try:
+        return await asyncio.to_thread(
+            ingest.frames_of, str(body.get("path", "")), int(body.get("frames") or 12),
+            float(body.get("min_sharpness") or 0),
+        )  # fmt: skip
+    except (TypeError, ValueError, OSError) as problem:
+        raise HTTPException(400, str(problem)) from problem
+
+
+@app.post("/api/ingest/guess")
+async def guess_references(request: Request) -> dict[str, Any]:
+    """`paths`, uploaded pictures, each described by the VLM as a run: its kind and what it shows."""
+    body = await request.json()
+    try:
+        return {"run": ingest.guess([str(p) for p in body.get("paths") or []])}
+    except ValueError as problem:
+        raise HTTPException(400, str(problem)) from problem
+
+
+@app.post("/api/ingest")
+async def ingest_story(request: Request) -> dict[str, Any]:
+    """A production from a story and its references: `kind` idea or text, `story`, `references` ({path,
+    kind, entity, guess}), `title`, `target_seconds` for the whole film, `shortest` shot, `aspect`, and
+    partial `video`, `continuity` and `ingest` settings over the code defaults. The bible is built at once;
+    `plan` plans every chapter too, stopping before render."""
     body = await request.json()
     try:
         video = VideoSettings(**body["video"]) if body.get("video") else None
         continuity = Continuity(**body["continuity"]) if body.get("continuity") else None
-        made = ingest.from_idea(
-            str(body.get("slug", "")).strip(),
-            str(body.get("idea", "")),
-            [str(p) for p in body.get("photos") or []],
-            float(body.get("take_seconds") or 0),
-            title=str(body.get("title", "")).strip(),
+        chosen = IngestSettings(**body["ingest"]) if body.get("ingest") else None
+        title = " ".join(str(body.get("title", "")).split())
+        if not title:
+            raise ValueError("a title, in words")
+        made = ingest.from_story(
+            str(body.get("slug") or "").strip() or ingest.slug_for(title),
+            str(body.get("kind", "")),
+            str(body.get("story", "")),
+            ingest.references_of(list(body.get("references") or [])),
+            float(body.get("target_seconds") or 0),
+            float(body.get("shortest") or 0),
+            title=title,
             aspect=None if body.get("aspect") in (None, "") else float(body["aspect"]),
             video=video,
             continuity=continuity,
+            ingesting=chosen,
         )
-    except (TypeError, ValueError) as problem:
+    except (TypeError, ValueError, OSError) as problem:
         raise HTTPException(400, str(problem)) from problem
-    return _production(made.id)
+    planned = _runs(lambda: planner.plan_production(made.id, shots=bool(body.get("plan"))))
+    return {**_production(made.id), "runs": planned["runs"]}
 
 
-@app.post("/api/ingest/text")
-async def ingest_text(request: Request) -> dict[str, Any]:
-    """A production from a text and photographs: one chapter per heading, or per 600 words."""
+@app.get("/api/productions/{production_id}/ingesting")
+def read_ingesting(production_id: int) -> dict[str, Any]:
+    """The newest plan as the ingesting page shows it: four steps, what was found, a log, elapsed and ETA."""
+    found = ingesting.status(production_id)
+    if found is None:
+        raise HTTPException(404, "no such production")
+    return found
+
+
+@app.post("/api/productions/{production_id}/ingesting")
+async def steer_ingesting(production_id: int, request: Request) -> dict[str, int]:
+    """`{"skip": step}` hands on what that step has not done yet, in every run of the plan; `{"cancel": true}`
+    cancels the plan."""
     body = await request.json()
     try:
-        video = VideoSettings(**body["video"]) if body.get("video") else None
-        continuity = Continuity(**body["continuity"]) if body.get("continuity") else None
-        made = ingest.from_text(
-            str(body.get("slug", "")).strip(),
-            str(body.get("text", "")),
-            [str(p) for p in body.get("photos") or []],
-            float(body.get("take_seconds") or 0),
-            title=str(body.get("title", "")).strip(),
-            aspect=None if body.get("aspect") in (None, "") else float(body["aspect"]),
-            video=video,
-            continuity=continuity,
-        )
-    except (TypeError, ValueError) as problem:
+        if body.get("cancel"):
+            return {"cancelled": ingesting.cancel(production_id)}
+        return {"skipped": ingesting.skip(production_id, str(body.get("skip", "")))}
+    except ValueError as problem:
         raise HTTPException(400, str(problem)) from problem
-    return _production(made.id)
+
+
+@app.get("/api/timings")
+def read_timings() -> dict[str, Any]:
+    """Per tool, the median seconds a job takes on this machine: what a fresh ingest estimates with."""
+    return production.timings_now()
 
 
 @app.post("/api/ingest/video")
