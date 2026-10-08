@@ -192,6 +192,19 @@ def set_job_state(connection: sqlite3.Connection, job_id: int, state: str) -> No
     connection.execute("UPDATE jobs SET state = ? WHERE id = ?", (state, job_id))
 
 
+def requeue_job(connection: sqlite3.Connection, job_id: int, inputs: dict[str, Any] | None = None) -> None:
+    """The job to run again where it stands in its run; the jobs that name its outputs read the new ones."""
+    connection.execute(
+        "UPDATE jobs SET state = ?, inputs = coalesce(?, inputs), outputs = '{}', error = '', started_at = NULL, "
+        "ended_at = NULL WHERE id = ?",
+        (QUEUED, None if inputs is None else _dump(inputs), job_id),
+    )
+
+
+def set_job_outputs(connection: sqlite3.Connection, job_id: int, outputs: dict[str, Any]) -> None:
+    connection.execute("UPDATE jobs SET outputs = ? WHERE id = ?", (_dump(outputs), job_id))
+
+
 # --- tasks ------------------------------------------------------------------------------------
 def tasks_of(connection: sqlite3.Connection, job_id: int) -> list[Task]:
     rows = connection.execute("SELECT * FROM tasks WHERE job_id = ? ORDER BY position", (job_id,)).fetchall()
@@ -336,6 +349,13 @@ def catch_up(connection: sqlite3.Connection, run_id: str) -> list[Event]:
 def newest_event(connection: sqlite3.Connection, run_id: str) -> float | None:
     row = connection.execute("SELECT max(t) FROM events WHERE run_id = ?", (run_id,)).fetchone()
     return None if row is None or row[0] is None else float(row[0])
+
+
+def newest_of_kind(connection: sqlite3.Connection, run_id: str, kind: str) -> Event | None:
+    row = connection.execute(
+        "SELECT * FROM events WHERE run_id = ? AND kind = ? ORDER BY id DESC LIMIT 1", (run_id, kind)
+    ).fetchone()
+    return None if row is None else Event.of(row)
 
 
 def newest_events(connection: sqlite3.Connection, run_ids: list[str]) -> dict[str, float]:

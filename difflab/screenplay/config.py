@@ -120,3 +120,7 @@ IDEA_TOKENS = 2048
 IDEA_TEMPERATURE = 0.5
 IDEA_BEAT_WORDS = (70, 110)  # asked, accepted: the hand-written target's beats ran 25 to 65 words
 IDEA_PLACE_WORDS = (15, 140)  # accepted; the prompt asks 35 to 80
+
+# Renders of one clip, the first included, while the judge keeps it below the gate; each is ~436 s on the
+# 3090 (`timings.FALLBACK`), and the best take is kept when the last is spent.
+CLIP_TAKES = 3

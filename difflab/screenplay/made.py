@@ -8,7 +8,9 @@ import sqlite3
 from typing import Any
 
 from difflab import store
-from difflab.screenplay import production, words
+from difflab.core.settings import JudgeSettings
+from difflab.screenplay import config as knobs
+from difflab.screenplay import production, settings, words
 
 
 def settle(connection: sqlite3.Connection, job: store.Job, outputs: dict[str, Any], state: str) -> None:
@@ -137,16 +139,20 @@ def _chain_forward(connection: sqlite3.Connection, shot_id: int, frame: str | No
 
 
 def _judged(connection: sqlite3.Connection, job: store.Job, outputs: dict[str, Any], state: str) -> None:
-    """A verdict on a keyframe, a clip or a drawn reference. A keyframe below the gate is composed again
-    on a new seed, told the judge's fixes, until the retries are spent; anything else below it, and a
-    keyframe out of retries, goes to review."""
+    """A verdict on a keyframe, a clip, a look or a drawn reference. Below the gate a keyframe is composed
+    again on a new seed, told the judge's fixes, and a clip rendered again on one, until their attempts are
+    spent; anything else below it, and whatever is out of attempts, goes to review."""
     if state != store.DONE or job.for_kind not in ("keyframe", "clip", "reference", "casting"):
         return
     kind, made_id = job.for_kind, int(job.for_id or 0)
     thing = store.made_by_id(connection, kind, made_id)
     if thing is None or (thing.state == store.APPROVED and thing.reviewed_by == store.PERSON):
         return
-    review = json.dumps({k: outputs.get(k) for k in ("score", "cast", "issues", "notes", "gate")})
+    verdict = {k: outputs.get(k) for k in ("score", "cast", "issues", "notes", "gate")}
+    if isinstance(thing, store.Clip) and not outputs.get("unjudged"):
+        _clip_judged(connection, job, thing, outputs, verdict)
+        return
+    review = json.dumps(verdict)
     if outputs.get("unjudged"):
         store.set_made(connection, kind, made_id, store.NEEDS_REVIEW, review=review, reviewed_by=store.JUDGE)
         return
@@ -155,20 +161,11 @@ def _judged(connection: sqlite3.Connection, job: store.Job, outputs: dict[str, A
         if kind == "casting":
             production.recompile_look(connection, made_id)
         return
-    # No retries for a reference, whose new seed replaces the picture every prompt casting it hands, nor for a
-    # clip: its retry is a blind re-seed that re-renders it and every shot chained after it, minutes each. A
-    # look below the gate is flagged for a person, who sees the judge's issues beside it.
+    # No retries for a reference, whose new seed replaces the picture every prompt casting it hands. A look
+    # below the gate is flagged for a person, who sees the judge's issues beside it.
     if kind == "casting":
         store.set_made(connection, kind, made_id, store.NEEDS_REVIEW, review=review, reviewed_by=store.JUDGE)
         production.recompile_look(connection, made_id)
-        return
-    if kind in ("reference", "clip"):
-        store.set_made(connection, kind, made_id, store.NEEDS_REVIEW, review=review, reviewed_by=store.JUDGE)
-        if kind == "clip" and any(
-            one.tool == "render_shot" and not one.settled for one in store.jobs_of(connection, job.run_id)
-        ):  # the shots still to come open on this one: they wait for a re-roll or a resume
-            store.set_run_state(connection, job.run_id, store.PAUSED)
-            _paused.append((job.run_id, job.label, "; ".join(str(i) for i in outputs.get("issues") or [])))
         return
     attempts = int(
         connection.execute(
@@ -176,31 +173,114 @@ def _judged(connection: sqlite3.Connection, job: store.Job, outputs: dict[str, A
             (kind, made_id, store.DONE),
         ).fetchone()[0]
     )
-    if attempts > int(outputs.get("retries", 0)):
+    if not isinstance(thing, store.Keyframe) or attempts > int(outputs.get("retries", 0)):
         store.set_made(connection, kind, made_id, store.NEEDS_REVIEW, review=review, reviewed_by=store.JUDGE)
         return
-    store.set_made(connection, kind, made_id, store.STALE, review=review, reviewed_by=store.JUDGE)
     seed = random.randrange(2**32)
-    if kind == "clip" and isinstance(thing, store.Clip):
-        store.set_clip_seed(connection, thing.shot_id, seed)
-        shot = store.shot(connection, thing.shot_id)
-    elif isinstance(thing, store.Keyframe):
-        store.set_made(connection, "keyframe", made_id, store.STALE, seed=seed)
-        fixes = [str(fix) for fix in outputs.get("fixes") or []]
-        restyle = [str(member) for member in outputs.get("restyle") or []]
-        if restyle:
-            fixes.append(
-                words.COMPOSE_CLOTHES_NOTE.format(who=" and ".join(f"the {m.replace('_', ' ')}" for m in restyle))
-            )
-        if fixes:  # the next composition is told what to fix; a note of the user's own stays in front
-            own = (thing.note or "").split(JUDGED, 1)[0].strip()
-            store.set_keyframe_note(connection, made_id, f"{own} {JUDGED} {'; '.join(fixes)}".strip())
-        shot = store.shot(connection, thing.shot_id)
-    else:
-        return
+    store.set_made(connection, "keyframe", made_id, store.STALE, review=review, reviewed_by=store.JUDGE, seed=seed)
+    fixes = [str(fix) for fix in outputs.get("fixes") or []]
+    restyle = [str(member) for member in outputs.get("restyle") or []]
+    if restyle:
+        fixes.append(words.COMPOSE_CLOTHES_NOTE.format(who=" and ".join(f"the {m.replace('_', ' ')}" for m in restyle)))
+    if fixes:  # the next composition is told what to fix; a note of the user's own stays in front
+        own = (thing.note or "").split(JUDGED, 1)[0].strip()
+        store.set_keyframe_note(connection, made_id, f"{own} {JUDGED} {'; '.join(fixes)}".strip())
+    shot = store.shot(connection, thing.shot_id)
     if shot is not None:
         run = store.run(connection, job.run_id)
         _again.append((shot.chapter_id, bool(run is not None and (run.data() or {}).get("keyframes_only"))))
+
+
+def _clip_judged(
+    connection: sqlite3.Connection, job: store.Job, clip: store.Clip, outputs: dict[str, Any], verdict: dict[str, Any]
+) -> None:
+    """Below the gate, with auto-retry on, the clip's render job and this verdict run again in place on a new
+    seed, so the shots after it read the new take; out of takes, the best is put back and goes to review and
+    the run goes on. Every take seen stays in `review.takes`, each with its render's outputs."""
+    path = job.inputs.get("path")
+    render = store.job(connection, int(path["from_job"])) if isinstance(path, dict) else None
+    if render is None:
+        store.set_made(
+            connection, "clip", clip.id, store.NEEDS_REVIEW, review=json.dumps(verdict), reviewed_by=store.JUDGE
+        )
+        return
+    current = render.outputs.get("key")
+    take = {**verdict, "seed": int(render.inputs.get("seed") or clip.seed), "outputs": render.outputs}
+    earlier = takes_of(clip.review)
+    # A new render starts its takes afresh; a retake, or the kept take found again by a later run, goes on
+    # counting, so a chapter rendered again does not spend three more renders on a clip already in review.
+    if not render.inputs.get("retake") and current not in {t["outputs"].get("key") for t in earlier}:
+        earlier = []
+    keys = [t["outputs"].get("key") for t in earlier]
+    if current in keys:  # judged anew in its place
+        takes = [take if k == current else t for t, k in zip(earlier, keys, strict=True)]
+    else:
+        takes = [*earlier, take]
+    name = job.label.split(":")[0]
+    if outputs.get("passed"):
+        store.set_made(
+            connection, "clip", clip.id, store.APPROVED, review=json.dumps({**verdict, "takes": takes}),
+            reviewed_by=store.JUDGE,
+        )  # fmt: skip
+        return
+    production_id = int(job.inputs.get("production") or 0)
+    retrying = _retrying(connection, production_id)
+    issues = "; ".join(str(i) for i in verdict["issues"] or []) or "no issues named"
+    said = f"{float(outputs.get('score') or 0):.2f} below the gate ({issues})"
+    if retrying and len(takes) < knobs.CLIP_TAKES:
+        seed = random.randrange(2**32)
+        store.set_clip_seed(connection, clip.shot_id, seed)
+        store.requeue_job(connection, render.id, {**render.inputs, "seed": seed, "retake": True})
+        store.requeue_job(connection, job.id)
+        store.set_made(
+            connection, "clip", clip.id, store.QUEUED, current_job=render.id,
+            review=json.dumps({**verdict, "takes": takes}), reviewed_by=store.JUDGE,
+        )  # fmt: skip
+        _notes.append(f"{name}: {said}; take {len(takes) + 1} of {knobs.CLIP_TAKES} on seed {seed}")
+        return
+    best = max(takes, key=lambda t: float(t.get("score") or 0))
+    kept = best["outputs"]
+    if best is not take:
+        store.set_job_outputs(connection, render.id, kept)
+        store.set_clip_seed(connection, clip.shot_id, int(best["seed"]))
+        _chain_forward(connection, clip.shot_id, kept.get("frame"), render.id)
+    review = {k: v for k, v in best.items() if k not in ("seed", "outputs")} | {"takes": takes}
+    store.set_made(
+        connection, "clip", clip.id, store.NEEDS_REVIEW, wanted_key=kept.get("key"), artifact=kept.get("chunk"),
+        review=json.dumps(review), reviewed_by=store.JUDGE, handoff=kept.get("cut"),
+    )  # fmt: skip
+    if retrying:
+        _notes.append(
+            f"{name}: {said}; kept take {takes.index(best) + 1} of {len(takes)} ({float(best.get('score') or 0):.2f}) "
+            "for review, and the shots after it are built on it"
+        )
+    elif any(one.tool == "render_shot" and not one.settled for one in store.jobs_of(connection, job.run_id)):
+        store.set_run_state(connection, job.run_id, store.PAUSED)  # the shots still to come open on this one
+        _notes.append(
+            f"{name}: {said}; paused so the shots after it are not built on it. Re-roll the shot, or resume the "
+            "run to keep it."
+        )
+
+
+def takes_of(review: str | None) -> list[dict[str, Any]]:
+    """The takes a clip's verdict was chosen from, newest last; none for a verdict from before they were kept."""
+    try:
+        found = json.loads(review or "")
+    except ValueError:
+        return []
+    if not isinstance(found, dict):
+        return []
+    takes = found.get("takes")
+    return [t for t in takes if isinstance(t, dict)] if isinstance(takes, list) else []
+
+
+def _retrying(connection: sqlite3.Connection, production_id: int) -> bool:
+    """The judge's `clip_retry` as it stands now, not as the run was queued: the Render page flips it mid-run."""
+    machine = store.overrides(connection, settings.MACHINE, "", "judge")
+    own = store.overrides(connection, settings.PRODUCTION, str(production_id), "judge")
+    chosen, _ = JudgeSettings.resolve(machine, own)
+    assert isinstance(chosen, JudgeSettings)
+    return chosen.clip_retry
 
 
 JUDGED = "Fix:"  # where a keyframe's note turns from the user's words to the judge's
@@ -209,13 +289,12 @@ JUDGED = "Fix:"  # where a keyframe's note turns from the user's words to the ju
 # queued from inside the settle transaction would open a second connection mid-transaction.
 _again: list[tuple[int, bool]] = []
 
+# What the verdicts did to a run - a retake queued, a take kept, a run paused - for the worker to say in it.
+_notes: list[str] = []
 
-# Runs a failing clip paused, with what to say about it: the worker's to announce in the run.
-_paused: list[tuple[str, str, str]] = []
 
-
-def pending_pauses() -> list[tuple[str, str, str]]:
-    taken, _paused[:] = list(_paused), []
+def pending_notes() -> list[str]:
+    taken, _notes[:] = list(_notes), []
     return taken
 
 

@@ -563,7 +563,6 @@ export const addShot = (id: number, body: Record<string, unknown>) =>
   json<Production>(`/api/productions/${id}/shots`, post(body))
 export const patchShot = (shotId: number, body: Record<string, unknown>) =>
   json<Production>(`/api/shots/${shotId}`, send('PATCH', body))
-export const deleteShot = (shotId: number) => json<Production>(`/api/shots/${shotId}`, { method: 'DELETE' })
 /** The shot's prose written again and its prompt compiled from it, as a run; a hand-written prompt is let go. */
 export const rewriteShot = (shotId: number) => json<{ run: string; runs: string[] }>(`/api/shots/${shotId}/rewrite`, post({}))
 /** The shot's prompt, keyframe and looks approved, each that is made; `left` says what was not. */
@@ -580,7 +579,51 @@ export const uploadLook = (castingId: number, path: string) => json<Production>(
 /** Every look of the chapter, or of every one, with no picture yet, drawn as one run. */
 export const drawProductionLooks = (id: number, chapter: number | null) =>
   json<{ run: string; runs: string[] }>(`/api/productions/${id}/looks${chapterQuery(chapter)}`, post({}))
+/** Per chapter position, what would stop it rendering; nothing is queued. */
 export const preflight = (id: number) => json<{ problems: Record<string, string[]> }>(`/api/productions/${id}/preflight`)
+
+export type QueueState = 'done' | 'review' | 'running' | 'paused' | 'queued' | 'blocked' | 'failed' | 'stale'
+export interface QueueRow {
+  id: number
+  /** `01.016`: chapter and shot from 1. */
+  label: string
+  chapter: number
+  action: string
+  seconds: number
+  opening: 'keyframe' | 'chain' | 'refs'
+  /** H3's mode: fl2va opens on a frame, ref2va on its references alone. */
+  preset: string
+  state: QueueState
+  /** What the row says: "sampling 3/5", "blocked · look", "to render". */
+  text: string
+  clip: { id: number; state: string; seed: number; video: string | null }
+  still: string | null
+  /** For a clip in review: the judge's reason for the kept take, its score and how many takes it was the best of. */
+  review: { why: string; score: number | null; takes: number; seeds: number[] } | null
+}
+export interface RenderQueue {
+  rows: QueueRow[]
+  total: number
+  done: number
+  flagged: number
+  now: { label: string; doing: string } | null
+  /** Seconds left of the queued clips; with nothing queued, of every clip not made. */
+  eta: { seconds: number; clips: number; queued: boolean }
+  judged: number
+  rejected: number
+  retaken: number
+  vram: [number, number] | null
+  status: 'running' | 'paused' | 'queued' | 'idle'
+  runs: { id: string; state: string; title: string }[]
+  auto_retry: boolean
+  takes: number
+  gate: number
+}
+export const readQueue = (id: number, chapter: number | null) => json<RenderQueue>(`/api/productions/${id}/queue${chapterQuery(chapter)}`)
+/** `pause` every live render run of the production after its clip in flight, or let them go; `auto_retry` re-renders a clip
+ *  below the gate on new seeds, keeping the best take, instead of pausing on it. */
+export const steerQueue = (id: number, body: { pause?: boolean; auto_retry?: boolean }) =>
+  json<{ told?: number; auto_retry?: boolean }>(`/api/productions/${id}/queue`, post(body))
 export const rerollShot = (shotId: number, seed?: number) =>
   json<{ seed: number; run: string }>(`/api/shots/${shotId}/reroll`, post(seed === undefined ? {} : { seed }))
 /** Every member with no usable picture, drawn from its words, as a run. */

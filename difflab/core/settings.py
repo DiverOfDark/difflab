@@ -183,11 +183,17 @@ class JudgeSettings(Settings):
     retries: int = setting(
         2,
         "retries",
-        "keyframe attempts, told the judge's fixes, before a failing one goes to review; a clip goes there at once",
+        "keyframe attempts, told the judge's fixes, before a failing one goes to review",
         low=0,
         high=5,
         keyed=False,
         advanced=True,
+    )
+    clip_retry: bool = setting(
+        True,
+        "auto-retry clips",
+        "a clip below the gate is rendered again on new seeds and the best take kept; off, it pauses the run",
+        keyed=False,
     )
     # 512 cut a clip's verdict off mid-string once it named strangers and fixes (production 14, 2026-10-04).
     max_new_tokens: int = setting(

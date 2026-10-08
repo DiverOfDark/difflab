@@ -25,7 +25,18 @@ from difflab.api import assets, runs
 from difflab.core import hub
 from difflab.core.settings import Continuity, IngestSettings
 from difflab.models.minimax_h3.settings import VideoSettings
-from difflab.screenplay import drawn, ideas, ingest, ingesting, looks, planner, production, readers, settings
+from difflab.screenplay import (
+    drawn,
+    ideas,
+    ingest,
+    ingesting,
+    looks,
+    planner,
+    production,
+    readers,
+    rendering,
+    settings,
+)
 from difflab.work import queue
 from difflab.work.quick import Job
 
@@ -615,6 +626,28 @@ def plan_production(production_id: int, chapter: int | None = None, fresh: bool 
 def render_production(production_id: int, chapter: int | None = None) -> dict[str, Any]:
     """Chapter `chapter` (from 0), or every one, a run each, queued in chapter order."""
     return _runs(lambda: planner.render_production(production_id, chapter_position=chapter))
+
+
+@app.get("/api/productions/{production_id}/queue")
+def read_queue(production_id: int, chapter: int | None = None) -> dict[str, Any]:
+    """The Render page: every shot's clip as the queue holds it, NOW, ETA, the rejection rate and VRAM."""
+    found = rendering.status(production_id, chapter)
+    if found is None:
+        raise HTTPException(404, "no such production")
+    return found
+
+
+@app.post("/api/productions/{production_id}/queue")
+async def steer_queue(production_id: int, request: Request) -> dict[str, Any]:
+    """`{"pause": bool}` pauses every live render run of the production after its clip in flight, or lets them
+    go; `{"auto_retry": bool}` is the judge's `clip_retry` for the production, read at each verdict."""
+    body = await request.json()
+    out: dict[str, Any] = {}
+    if "pause" in body:
+        out["told"] = rendering.hold(production_id, bool(body["pause"]))
+    if "auto_retry" in body:
+        out["auto_retry"] = rendering.auto_retry(production_id, bool(body["auto_retry"]))
+    return out
 
 
 @app.get("/api/productions/{production_id}/preflight")

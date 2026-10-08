@@ -1,7 +1,17 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import { drawProductionLooks, planProduction, readProduction, renderKeyframes, renderProduction, type Production, type ShotInfo } from '../api'
+import {
+  drawProductionLooks,
+  planProduction,
+  preflight,
+  readProduction,
+  renderKeyframes,
+  renderProduction,
+  steerQueue,
+  type Production,
+  type ShotInfo,
+} from '../api'
 import AssembleStage from '../components/stages/AssembleStage.vue'
 import BibleStage from '../components/stages/BibleStage.vue'
 import IngestStage from '../components/stages/IngestStage.vue'
@@ -31,6 +41,8 @@ const missing = ref(false)
 const chapter = ref<number | null>(null)
 const failure = ref('')
 const busy = ref('')
+/** The dry run's problems per chapter position, shown on the Render stage until closed. */
+const checked = ref<Record<string, string[]> | null>(null)
 const listOpen = ref(props.id === undefined)
 
 async function load() {
@@ -50,6 +62,7 @@ watch(
   () => props.id,
   () => {
     production.value = null
+    checked.value = null
     listOpen.value = props.id === undefined
     load()
   },
@@ -148,6 +161,13 @@ watch(production, (p) => {
       }
 })
 const render = () => act('render', () => renderProduction(props.id!, chapter.value))
+const renderPaused = computed(() => chapterRuns.value.some((r) => r.state === 'paused'))
+const resume = () => act('render', () => steerQueue(props.id!, { pause: false }))
+const check = () =>
+  act('check', async () => {
+    const { problems } = await preflight(props.id!)
+    checked.value = chapter.value === null ? problems : { [chapter.value]: problems[chapter.value] ?? [] }
+  })
 
 interface StageDef {
   id: StageId
@@ -181,7 +201,7 @@ const DEFS: StageDef[] = [
     name: 'Render',
     artifact: 'Clip + audio per shot',
     divider: 'RENDER · EXPENSIVE · RUN ONCE',
-    desc: 'MiniMax H3 image-to-video from each keyframe, with its own dialogue and sound from the prompt. Chained shots open on the previous handoff frame. Judged, re-seeded below the gate, flagged.',
+    desc: 'MiniMax H3 from each keyframe, with its own dialogue and sound from the prompt. ref2va where a shot opens on its references alone; chained shots open on the previous last frame. QA-gated, auto-retried, flagged.',
   },
   {
     id: 'assemble',
@@ -407,7 +427,13 @@ function pick(id: number) {
         <div v-if="production" class="buttons">
           <RouterLink v-if="watchable" class="button" :to="`/runs/${watchable.id}`">Watch run</RouterLink>
           <RouterLink v-else class="button" :to="`/settings?production=${production.id}`">Settings</RouterLink>
-          <button v-if="rendersSide" class="primary" :disabled="!!busy || !shots.length || !!renderRun" @click="render">
+          <button v-if="stage === 'render'" :disabled="!!busy || !shots.length" title="what would stop each chapter rendering, checked on the CPU; nothing is queued" @click="check">
+            {{ busy === 'check' ? 'checking…' : 'Dry run · CPU preflight' }}
+          </button>
+          <button v-if="renderPaused && rendersSide" class="primary" :disabled="!!busy" @click="resume">
+            {{ busy === 'render' ? 'resuming…' : 'Resume queue' }}
+          </button>
+          <button v-else-if="rendersSide" class="primary" :disabled="!!busy || !shots.length || !!renderRun" @click="render">
             {{ busy === 'render' ? 'queueing…' : renderRun ? 'Rendering…' : `Render ${scope}` }}
           </button>
           <button
@@ -458,7 +484,17 @@ function pick(id: number) {
       <template v-else-if="production">
         <BibleStage v-if="stage === 'bible'" :production="production" :shots="shots" :editing="editing" :busy="busy" :act="act" @edit="edit" @go="go" />
         <ShotsStage v-else-if="stage === 'shots'" :production="production" :chapter="chapter" :focus="focus" :member="focusMember" :busy="busy" :act="act" @go="go" />
-        <RenderStage v-else-if="stage === 'render'" :production="production" :shots="shots" :focus="focus" :run="renderRun" :busy="busy" :act="act" @go="go" />
+        <RenderStage
+          v-else-if="stage === 'render'"
+          :production="production"
+          :chapter="chapter"
+          :focus="focus"
+          :busy="busy"
+          :act="act"
+          :checked="checked"
+          @go="go"
+          @uncheck="checked = null"
+        />
         <AssembleStage v-else-if="stage === 'assemble'" :production="production" :runs="chapterRuns" />
       </template>
     </main>

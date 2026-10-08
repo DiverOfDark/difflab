@@ -141,9 +141,8 @@ class Worker(threading.Thread):
                 )
             )
             ctx.job_id = None
-            for _, label, issues in made.pending_pauses():
-                ui.note(f"{label}: below the gate ({issues or 'no issues named'}); paused so the shots after it "
-                        "are not built on it. Re-roll the shot, or resume the run to keep it.")  # fmt: skip
+            for note in made.pending_notes():
+                ui.note(note)
             # Once the run has ended, one attempt for everything its verdicts asked: queued after each failing
             # verdict, production 14's eleven clips (2026-10-04) queued seven whole-chapter runs, each with only
             # the seeds re-rolled before it.
