@@ -7,34 +7,35 @@ import { computed, reactive, shallowRef, watch } from 'vue'
 import {
   listProductions,
   listRuns,
-  listTools,
+  readGpu,
   readRun,
   watchRun,
+  type Gpu,
   type Job,
   type ProductionSummary,
   type RunRecord,
   type RunSummary,
-  type ToolInfo,
 } from './api'
 import { refreshStatus, type RunState } from './run'
 
 export const state = reactive({
   runs: [] as RunSummary[],
   productions: [] as ProductionSummary[],
-  tools: [] as ToolInfo[],
   /** The quick form's job, kept across screens so a run's "again" can fill it. */
   quick: null as Job | null,
+  gpu: null as Gpu | null,
+  /** What the open production says in the header: its title, stage and version. */
+  heading: '',
 })
+
+export async function refreshGpu(): Promise<void> {
+  state.gpu = await readGpu().catch(() => null)
+}
 
 export async function refresh(): Promise<void> {
   const [runs, productions] = await Promise.all([listRuns().catch(() => null), listProductions().catch(() => null)])
   if (runs) state.runs = runs
   if (productions) state.productions = productions
-}
-
-export async function refreshTools(production?: number): Promise<void> {
-  const tools = await listTools(production).catch(() => null)
-  if (tools) state.tools = tools
 }
 
 export const live = computed(() => state.runs.some((one) => one.status === 'live'))
@@ -88,8 +89,10 @@ watch(
 let timers: number[] = []
 export function start(): void {
   refresh()
+  refreshGpu()
   timers = [
     window.setInterval(refresh, 10000),
+    window.setInterval(refreshGpu, 3000),
     window.setInterval(() => {
       if (latest) {
         refreshStatus(latest)

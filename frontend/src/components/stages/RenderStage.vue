@@ -2,6 +2,7 @@
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { approveMade, outputUrl, readQueue, redoKeyframe, rerollShot, steerQueue, type Production, type QueueRow, type RenderQueue } from '../../api'
 import { length, type StageId } from '../../production'
+import { state } from '../../store'
 
 const props = defineProps<{
   production: Production
@@ -45,7 +46,7 @@ const rejectRate = computed(() => {
   if (!v || !v.judged) return '—'
   return `${Math.round((v.rejected / v.judged) * 100)}% · ${v.retaken} re-rolled`
 })
-const vram = computed(() => (q.value?.vram ? `${q.value.vram[0].toFixed(1)} / ${q.value.vram[1].toFixed(1)} GB` : '—'))
+const vram = computed(() => (state.gpu?.vram_total ? `${state.gpu.vram_used!.toFixed(1)} / ${state.gpu.vram_total.toFixed(1)} GB` : '—'))
 const live = computed(() => !!q.value && q.value.status !== 'idle')
 const paused = computed(() => q.value?.status === 'paused')
 const reviews = computed(() => q.value?.rows.filter((r) => r.review) ?? [])

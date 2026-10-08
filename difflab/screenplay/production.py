@@ -18,7 +18,7 @@ from difflab.core.keys import key
 from difflab.core.settings import Continuity, EditSettings, IngestSettings, Settings
 from difflab.models.minimax_h3 import pipeline
 from difflab.models.minimax_h3.settings import VideoSettings
-from difflab.screenplay import compiler, crops, drawn, looks, settings, timings, words
+from difflab.screenplay import assembling, compiler, crops, drawn, looks, settings, timings, words
 from difflab.screenplay import config as knobs
 
 _SLUG = re.compile(r"[a-z0-9][a-z0-9_-]*")
@@ -859,6 +859,36 @@ def unmatched(production: store.Production) -> list[dict[str, str]]:
     return [dict(u) for u in production.manifest.get("unmatched", []) if u["photo"] not in placed]
 
 
+def add_photos(production_id: int, paths: list[str]) -> int:
+    """Uploaded pictures given after ingest: the next plan surveys them, and until then they wait in the bible
+    to be attached. How many were new."""
+    given = []
+    for path in paths:
+        found = _under_output(path)
+        if not found.is_file():
+            raise ValueError(f"{path}: no such upload")
+        given.append(store.relative(found))
+    with store.connect() as connection, store.transaction(connection):
+        production = store.production(connection, production_id)
+        if production is None:
+            raise LookupError(f"no production {production_id}")
+        manifest = production.manifest
+        new = [p for p in dict.fromkeys(given) if p not in manifest.get("photos", [])]
+        changed = {
+            "photos": [*manifest.get("photos", []), *new],
+            "unmatched": [
+                *manifest.get("unmatched", []),
+                *({"photo": p, "about": "given after ingest, not read yet", "likely": ""} for p in new),
+            ],
+        }
+        if isinstance(manifest.get("references"), list):
+            changed["references"] = [
+                *manifest["references"], *({"path": p, "kind": "", "entity": "", "guess": ""} for p in new)
+            ]  # fmt: skip
+        store.update_production(connection, production_id, manifest={**manifest, **changed})
+        return len(new)
+
+
 def attach(production_id: int, photo: str, to: str) -> dict[str, int]:
     """An unmatched photograph held as `to`'s picture, or `ignore`d; either way it leaves the list."""
     with store.connect() as connection:
@@ -882,6 +912,13 @@ def attach(production_id: int, photo: str, to: str) -> dict[str, int]:
 def production_of_member(member_id: int) -> int | None:
     with store.connect() as connection:
         member = store.member(connection, member_id)
+        return None if member is None else member.production_id
+
+
+def production_of_conflict(conflict_id: int) -> int | None:
+    with store.connect() as connection:
+        found = store.conflict(connection, conflict_id)
+        member = None if found is None else store.member(connection, found.member_id)
         return None if member is None else member.production_id
 
 
@@ -1155,19 +1192,16 @@ def rewrite(shot_id: int, asked_by: str = "person") -> str:
 
 
 # --- a person's verdict ------------------------------------------------------------------------
-def review(kind: str, made_id: int, approved: bool) -> int:
-    """Approved as it is, or rejected so the next run makes it anew. Returns the production."""
-    if kind not in _REJECT:
-        raise LookupError(f"{kind!r} is not something a person approves (one of {', '.join(_REJECT)})")
+def approve(kind: str, made_id: int) -> int:
+    """Approved by a person as it is: the judge no longer overrules it. Returns the production."""
+    if kind not in _OWNER:
+        raise LookupError(f"{kind!r} is not something a person approves (one of {', '.join(_OWNER)})")
     with store.connect() as connection, store.transaction(connection):
         thing = store.made_by_id(connection, kind, made_id)
         if thing is None:
             raise LookupError(f"no {kind} {made_id}")
         owner = _OWNER[kind](connection, thing)
-        if not approved:
-            _REJECT[kind](connection, thing)
-        else:
-            _approve(connection, kind, thing)
+        _approve(connection, kind, thing)
         if isinstance(thing, store.Casting):
             recompile_look(connection, thing.id)
         return owner
@@ -1228,13 +1262,6 @@ def _casting_owner(connection: Any, thing: store.Made) -> int:
     return chapter.production_id
 
 
-def _reject_casting(connection: Any, thing: store.Made) -> None:
-    assert isinstance(thing, store.Casting)
-    if not thing.amended:
-        raise ValueError("a member as it stands has no picture of its own to reject")
-    store.set_made(connection, "casting", thing.id, store.STALE, review=thing.review, reviewed_by=store.PERSON)
-
-
 def _reference_owner(connection: Any, thing: store.Made) -> int:
     assert isinstance(thing, store.Reference)
     member = store.member(connection, thing.member_id)
@@ -1242,56 +1269,13 @@ def _reference_owner(connection: Any, thing: store.Made) -> int:
     return member.production_id
 
 
-def _reject_keyframe(connection: Any, thing: store.Made) -> None:
-    assert isinstance(thing, store.Keyframe)
-    if thing.source != store.COMPOSED:
-        raise ValueError(
-            "only a composed keyframe is made again: give another picture, or compose this one"
-            if thing.source == store.PROVIDED
-            else "a chained keyframe is the last frame of the shot before: reject that clip"
-        )
-    store.compose_keyframe(connection, thing.shot_id, seed=random.randrange(2**32), note=thing.note)
-    store.set_made(connection, "keyframe", thing.id, store.MISSING, review=thing.review, reviewed_by=store.PERSON)
-    shot = store.shot(connection, thing.shot_id)
-    assert shot is not None
-    _stale(connection, [shot], prompts=False)
-
-
-def _reject_prompt(connection: Any, thing: store.Made) -> None:
-    store.set_made(connection, "prompt", thing.id, store.STALE, review=thing.review, reviewed_by=store.PERSON)
-
-
-def _reject_clip(connection: Any, thing: store.Made) -> None:
-    assert isinstance(thing, store.Clip)
-    shot = store.shot(connection, thing.shot_id)
-    assert shot is not None
-    _reroll(connection, shot, random.randrange(2**32), by=store.PERSON)
-
-
-def _reject_reference(connection: Any, thing: store.Made) -> None:
-    assert isinstance(thing, store.Reference)
-    if not thing.generated:
-        raise ValueError("a picture cut from a photograph is detached, not drawn again")
-    store.set_made(
-        connection, "reference", thing.id, store.STALE, review=thing.review, reviewed_by=store.PERSON,
-        seed=random.randrange(2**32),
-    )  # fmt: skip
-
-
-# Per kind a person can judge: the production it belongs to, and what rejecting it does.
+# Per kind a person can approve, the production it belongs to.
 _OWNER = {
     "keyframe": _shot_owner,
     "prompt": _shot_owner,
     "clip": _shot_owner,
     "reference": _reference_owner,
     "casting": _casting_owner,
-}
-_REJECT = {
-    "keyframe": _reject_keyframe,
-    "prompt": _reject_prompt,
-    "clip": _reject_clip,
-    "reference": _reject_reference,
-    "casting": _reject_casting,
 }
 
 
@@ -1337,14 +1321,228 @@ def delete(production_id: int) -> None:
 
 
 def listing() -> list[dict[str, Any]]:
+    """Every production with its five stages' phases, where it stopped and what it counts, in a few grouped queries."""
     with store.connect() as connection:
         found = store.productions(connection)
-        out = []
-        for production in found:
-            chapters = store.chapters_of(connection, production.id)
-            shots = sum(len(store.shots_of(connection, chapter.id)) for chapter in chapters)
-            out.append({**_production(production), "chapters": len(chapters), "shots": shots})
-        return out
+        sizes = _per_production(
+            connection,
+            "SELECT chapters.production_id, count(DISTINCT chapters.id), count(shots.id), "
+            "coalesce(sum(shots.seconds), 0) FROM chapters LEFT JOIN shots ON shots.chapter_id = chapters.id "
+            "GROUP BY 1",
+        )
+        made = {
+            kind: _states(connection, table, where)
+            for kind, table, where in (
+                ("clip", "clips", ""),
+                ("keyframe", "keyframes", f"AND made.source = '{store.COMPOSED}'"),
+                ("prompt", "prompts", ""),
+                ("casting", "castings", "AND made.amend != ''"),
+            )
+        }
+        checked = _per_production(
+            connection,
+            "SELECT chapters.production_id, count(*) FROM prompts JOIN shots ON shots.id = prompts.shot_id "
+            "JOIN chapters ON chapters.id = shots.chapter_id WHERE prompts.checks != '[]' GROUP BY 1",
+        )
+        members = _per_production(connection, "SELECT production_id, count(*) FROM members GROUP BY 1")
+        unreviewed = _per_production(
+            connection,
+            "SELECT members.production_id, count(*) FROM refs JOIN members ON members.id = refs.member_id "
+            "WHERE refs.artifact IS NOT NULL AND NOT (refs.state = ? AND refs.reviewed_by = ?) GROUP BY 1",
+            (store.APPROVED, store.PERSON),
+        )
+        conflicts = _per_production(
+            connection,
+            "SELECT members.production_id, count(*) FROM conflicts JOIN members ON members.id = conflicts.member_id "
+            "WHERE conflicts.resolution = '' GROUP BY 1",
+        )
+        runs = store.runs(connection)
+    out = []
+    for production in found:
+        own = [r for r in runs if r.production_id == production.id]
+        live = {r.scope.split(":")[0] for r in own if r.state in (store.QUEUED, store.RUNNING)}
+        paused = any(r.state == store.PAUSED and r.scope.startswith("chapter:") for r in own)
+        chapters, shots, seconds = sizes.get(production.id, (0, 0, 0.0))
+        clips = made["clip"].get(production.id, {})
+        planned = [made[kind].get(production.id, {}) for kind in ("keyframe", "prompt", "casting")]
+        counts = {
+            "clips_done": sum(clips.get(state, 0) for state in _FINISHED),
+            "clips_review": sum(clips.get(state, 0) for state in _FLAGGED),
+            "bible_review": unreviewed.get(production.id, (0,))[0]
+            + conflicts.get(production.id, (0,))[0]
+            + len(unmatched(production)),
+            "shots_review": sum(sum(m.get(state, 0) for state in _FLAGGED) for m in planned)
+            + checked.get(production.id, (0,))[0],
+            "to_draw": sum(made["casting"].get(production.id, {}).get(state, 0) for state in _UNDRAWN),
+        }
+        cast = members.get(production.id, (0,))[0]
+        phases = {
+            "ingest": "running" if "plan" in live and not cast else "done" if chapters else "pending",
+            "bible": "running"
+            if "plan" in live
+            else "pending"
+            if not cast
+            else "review"
+            if counts["bible_review"]
+            else "done",
+            "shots": "running" if "plan" in live else _phase(planned) if shots else "pending",
+            "render": "running" if "chapter" in live else _phase([clips]) if shots else "pending",
+            "assemble": "running"
+            if live & {"assemble", "film"}
+            else "done"
+            if shots and counts["clips_done"] == shots and _mastered(production.id)
+            else "pending",
+        }
+        out.append(
+            {
+                **{k: v for k, v in _production(production).items() if k not in ("story", "manifest")},
+                "chapters": chapters,
+                "shots": shots,
+                "seconds": seconds,
+                "when": max([production.updated_at, *(r.ended_at or r.created_at for r in own)]),
+                "stages": phases,
+                "resume": _resume(phases),
+                "live": sorted(live),
+                "paused": paused,
+                **counts,
+            }
+        )
+    return out
+
+
+_FINISHED = (store.MADE, store.APPROVED, store.PINNED)
+_FLAGGED = (store.NEEDS_REVIEW, store.FAILED)
+_UNDRAWN = (store.MISSING, store.FAILED, store.STALE)
+
+
+def _mastered(production_id: int) -> bool:
+    """Every chapter has a master joined from its clips as they are now."""
+    found = assembling.status(production_id)
+    chapters = found["chapters"] if found else []
+    return bool(chapters) and all(
+        any((c.get(k) or {}).get("current") for k in ("finished", "native")) for c in chapters
+    )
+
+
+def _resume(phases: dict[str, str]) -> str:
+    """The stage running, or the one after the furthest the work reached."""
+    stages = list(phases)
+    running = [stage for stage in stages if phases[stage] == "running"]
+    if running:
+        return running[0]
+    reached = max((i for i, stage in enumerate(stages) if phases[stage] != "pending"), default=0)
+    after = reached + 1 if phases[stages[reached]] == "done" and reached + 1 < len(stages) else reached
+    return stages[after]
+
+
+def _per_production(connection: Any, sql: str, given: tuple[Any, ...] = ()) -> dict[int, tuple[Any, ...]]:
+    return {row[0]: tuple(row[1:]) for row in connection.execute(sql, given)}
+
+
+def _states(connection: Any, table: str, where: str) -> dict[int, dict[str, int]]:
+    """Per production, how many of a made thing are in each state."""
+    out: dict[int, dict[str, int]] = {}
+    for production_id, state, n in connection.execute(
+        f"SELECT chapters.production_id, made.state, count(*) FROM {table} AS made "
+        "JOIN shots ON shots.id = made.shot_id JOIN chapters ON chapters.id = shots.chapter_id "
+        f"WHERE 1 {where} GROUP BY 1, 2"
+    ):
+        out.setdefault(production_id, {})[state] = n
+    return out
+
+
+def _phase(counted: list[dict[str, int]]) -> str:
+    """As the page folds made things to one dot: running, review, stale, pending, then done."""
+    states = {state for one in counted for state, n in one.items() if n}
+    for phase, held in (
+        ("running", (store.QUEUED, store.RUNNING)),
+        ("review", _FLAGGED),
+        ("stale", (store.STALE,)),
+        ("pending", (store.MISSING,)),
+    ):
+        if states & set(held):
+            return phase
+    return "done" if states else "pending"
+
+
+def stale_shots(production_id: int) -> set[int]:
+    """The production's shots with anything made gone stale."""
+    with store.connect() as connection:
+        return {row[0] for row in _shot_states(connection, production_id) if store.STALE in row[5:8]}
+
+
+def affected(production_id: int, before: set[int], moved: dict[str, Any]) -> dict[str, Any]:
+    """What a change made stale: `moved` as the change counted it, the shots newly stale, the chained shots after
+    them that re-render because they open on a stale clip, and the GPU seconds to make it all again."""
+    with store.connect() as connection:
+        rows = _shot_states(connection, production_id)
+        measured = timings.measured(connection)
+    new = [row for row in rows if store.STALE in row[5:8] and row[0] not in before]
+    ids = {row[0] for row in new}
+    chained = []
+    for i, row in enumerate(rows):
+        if row[0] not in ids or row[7] != store.STALE:
+            continue
+        for later in rows[i + 1 :]:
+            if later[1] != row[1] or later[4] != store.CHAINED or later[0] in ids:
+                break
+            if later[8]:
+                chained.append(later)
+                ids.add(later[0])
+    render, judge, compose = (
+        measured["render_shot"],
+        measured["judge"]["seconds"],
+        measured["compose_keyframe"]["seconds"],
+    )
+    gpu = 0.0
+    for row in [*new, *chained]:
+        if row[8]:
+            gpu += (render["per_second"] * row[3] if render.get("per_second") else render["seconds"]) + judge
+        if row[4] == store.COMPOSED and row[5] == store.STALE:
+            gpu += compose + judge
+    return {
+        "prompts": sum(row[6] == store.STALE for row in new),
+        "keyframes": sum(row[5] == store.STALE for row in new),
+        "clips": sum(row[7] == store.STALE for row in new),
+        **moved,
+        "shots": [{"id": row[0], "label": f"{row[1] + 1:02d}.{row[2] + 1:03d}"} for row in new],
+        "chained": [{"id": row[0], "label": f"{row[1] + 1:02d}.{row[2] + 1:03d}"} for row in chained],
+        "gpu": round(gpu),
+    }
+
+
+def _shot_states(connection: Any, production_id: int) -> list[tuple[Any, ...]]:
+    """(shot, chapter position, shot position, seconds, keyframe source, keyframe, prompt and clip states, whether
+    the clip was ever made) in film order."""
+    return [
+        tuple(row)
+        for row in connection.execute(
+            "SELECT shots.id, chapters.position, shots.position, shots.seconds, keyframes.source, keyframes.state, "
+            "prompts.state, clips.state, clips.artifact IS NOT NULL FROM shots "
+            "JOIN chapters ON chapters.id = shots.chapter_id JOIN keyframes ON keyframes.shot_id = shots.id "
+            "JOIN prompts ON prompts.shot_id = shots.id JOIN clips ON clips.shot_id = shots.id "
+            "WHERE chapters.production_id = ? ORDER BY chapters.position, shots.position",
+            (production_id,),
+        )
+    ]
+
+
+def approve_bible(production_id: int) -> tuple[int, list[str]]:
+    """Every member's picture that is made, approved by a person; how many, and what could not be."""
+    with store.connect() as connection, store.transaction(connection):
+        if store.production(connection, production_id) is None:
+            raise LookupError(f"no production {production_id}")
+        done, left = 0, []
+        for ref in store.refs_of_production(connection, production_id):
+            if not ref.artifact or (ref.state == store.APPROVED and ref.reviewed_by == store.PERSON):
+                continue
+            try:
+                _approve(connection, "reference", ref)
+            except ValueError as problem:
+                left.append(str(problem))
+                continue
+            done += 1
+        return done, left
 
 
 def describe(production_id: int) -> dict[str, Any] | None:
@@ -1477,7 +1675,7 @@ def _track(resolved: looks.Resolved, member: store.Member, ids: list[int]) -> di
 def _hashes(
     connection: Any, production: store.Production, chapters: list[dict[str, Any]], members: list[dict[str, Any]]
 ) -> dict[str, str]:
-    """A short digest per stage of what it holds: it moves when the stage does."""
+    """A short digest per stage of what it holds, and of them all as `manifest`: it moves when the stage does."""
     # An upload's name begins with its content hash, so the photos' paths stand for their pixels.
     shots = [shot for chapter in chapters for shot in chapter["shots"]]
     stories = [chapter.story for chapter in store.chapters_of(connection, production.id)]
@@ -1490,7 +1688,7 @@ def _hashes(
             (production.id, store.DONE, store.SKIPPED),
         )
     }
-    return {
+    hashes = {
         "ingest": _digest(production.story_kind, production.story, stories, production.manifest.get("photos", [])),
         "bible": _digest(
             [[{k: m[k] for k in _BIBLE}, [r["key"] or r["artifact"] for r in m["references"]]] for m in members]
@@ -1506,6 +1704,7 @@ def _hashes(
         "render": _digest([s["clip"]["key"] for s in shots]),
         "assemble": _digest(sorted(newest.items())),
     }
+    return {**hashes, "manifest": _digest(sorted(hashes.items()))}
 
 
 _BIBLE = (
@@ -1722,8 +1921,42 @@ def _shot(
             "marker": _marker(prompt, shot),
         },
         "plan": shot.plan,
-        "clip": {**_made(clip), "seed": clip.seed, "handoff": clip.handoff},
+        "clip": {
+            **_made(clip),
+            "seed": clip.seed,
+            "handoff": clip.handoff,
+            "takes": dict(zip(_TAKES, judged(clip.review), strict=True)),
+        },
     }
+
+
+_TAKES = ("judged", "rejected", "retaken")
+
+
+def takes_of(review: str | None) -> list[dict[str, Any]]:
+    """The takes a clip's verdict was chosen from, newest last; none for a verdict from before they were kept."""
+    try:
+        found = json.loads(review or "")
+    except ValueError:
+        return []
+    if not isinstance(found, dict):
+        return []
+    takes = found.get("takes")
+    return [t for t in takes if isinstance(t, dict)] if isinstance(takes, list) else []
+
+
+def judged(review: str | None) -> tuple[int, int, int]:
+    """(takes judged, of them below the gate, takes rendered again) of one clip's verdict."""
+    try:
+        verdict = json.loads(review or "")
+    except ValueError:
+        return 0, 0, 0
+    if not isinstance(verdict, dict):
+        return 0, 0, 0
+    takes = takes_of(review) or ([verdict] if isinstance(verdict.get("score"), int | float) else [])
+    scored = [t for t in takes if isinstance(t.get("score"), int | float)]
+    below = sum(isinstance(t.get("gate"), int | float) and t["score"] < t["gate"] for t in scored)
+    return len(scored), below, max(0, len(takes) - 1)
 
 
 def _made_from(connection: Any, keyframe: store.Keyframe) -> dict[str, Any] | None:

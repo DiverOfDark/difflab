@@ -177,14 +177,6 @@ li {
 }
 
 img,
-.blank {
-  width: 36px;
-  height: 56px;
-  object-fit: cover;
-  border-radius: var(--radius-input);
-  background: var(--line);
-  flex: 0 0 auto;
-}
 
 .what {
   min-width: 0;

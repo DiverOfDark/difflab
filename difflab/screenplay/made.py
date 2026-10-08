@@ -206,7 +206,7 @@ def _clip_judged(
         return
     current = render.outputs.get("key")
     take = {**verdict, "seed": int(render.inputs.get("seed") or clip.seed), "outputs": render.outputs}
-    earlier = takes_of(clip.review)
+    earlier = production.takes_of(clip.review)
     # A new render starts its takes afresh; a retake, or the kept take found again by a later run, goes on
     # counting, so a chapter rendered again does not spend three more renders on a clip already in review.
     if not render.inputs.get("retake") and current not in {t["outputs"].get("key") for t in earlier}:
@@ -260,18 +260,6 @@ def _clip_judged(
             f"{name}: {said}; paused so the shots after it are not built on it. Re-roll the shot, or resume the "
             "run to keep it."
         )
-
-
-def takes_of(review: str | None) -> list[dict[str, Any]]:
-    """The takes a clip's verdict was chosen from, newest last; none for a verdict from before they were kept."""
-    try:
-        found = json.loads(review or "")
-    except ValueError:
-        return []
-    if not isinstance(found, dict):
-        return []
-    takes = found.get("takes")
-    return [t for t in takes if isinstance(t, dict)] if isinstance(takes, list) else []
 
 
 def _retrying(connection: sqlite3.Connection, production_id: int) -> bool:

@@ -161,12 +161,6 @@ def models() -> dict[str, list[str]]:
         return store.model_choices(connection)
 
 
-def remember(role: str, value: str) -> None:
-    hub.check(value)
-    with store.connect() as connection, store.transaction(connection):
-        store.remember_model(connection, role, value)
-
-
 def forget(role: str, value: str) -> None:
     with store.connect() as connection, store.transaction(connection):
         store.forget_model(connection, role, value)

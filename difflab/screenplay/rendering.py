@@ -1,4 +1,5 @@
-"""The Render page: every shot's clip as the render queue holds it, and the header over them."""
+"""The Render page: every shot's clip as the render queue holds it, and the header over them. VRAM is the shell's
+`GET /api/gpu`, not this."""
 
 from __future__ import annotations
 
@@ -9,7 +10,7 @@ from typing import Any
 from difflab import store
 from difflab.core.settings import JudgeSettings
 from difflab.screenplay import config as knobs
-from difflab.screenplay import looks, made, settings, timings
+from difflab.screenplay import looks, settings, timings
 from difflab.screenplay import production as production_
 
 LIVE = (store.QUEUED, store.RUNNING, store.PAUSED)
@@ -39,8 +40,6 @@ def status(production_id: int, chapter_position: int | None = None) -> dict[str,
         jobs = {j.id: j for r in live for j in store.jobs_of(connection, r.id)}
         running = next((j for j in jobs.values() if j.state == store.RUNNING), None)
         tasks = store.tasks_of(connection, running.id) if running is not None else []
-        heard = [store.newest_of_kind(connection, r.id, "stats") for r in live if r.state == store.RUNNING]
-        stats = next((e.value() for e in heard if e is not None), None)
         measured = timings.measured(connection)
     paused = {r.id for r in live if r.state == store.PAUSED}
     doing = _doing(running, tasks)
@@ -84,7 +83,6 @@ def status(production_id: int, chapter_position: int | None = None) -> dict[str,
         "judged": judged,
         "rejected": rejected,
         "retaken": retaken,
-        "vram": [stats.get("vram_used"), stats.get("vram_total")] if stats and stats.get("vram_total") else None,
         "status": "paused" if paused else "running" if running else "queued" if live else "idle",
         "runs": [{"id": r.id, "state": r.state, "title": r.title} for r in live],
         "auto_retry": judge.clip_retry,
@@ -180,7 +178,7 @@ def _review(clip: store.Clip) -> dict[str, Any]:
     except ValueError:
         verdict = {}
     issues = [str(i) for i in verdict.get("issues") or []]
-    takes = made.takes_of(clip.review)
+    takes = production_.takes_of(clip.review)
     return {
         "why": "; ".join(issues) or str(verdict.get("notes") or "the judge gave no reason"),
         "score": verdict.get("score"),
@@ -191,22 +189,8 @@ def _review(clip: store.Clip) -> dict[str, Any]:
 
 def _rejections(clips: Any) -> tuple[int, int, int]:
     """(takes judged, of them below the gate, takes rendered again), over the clips' verdicts as they stand."""
-    judged = rejected = retaken = 0
-    for clip in clips:
-        try:
-            verdict = json.loads(clip.review or "")
-        except ValueError:
-            continue
-        if not isinstance(verdict, dict):
-            continue
-        takes = made.takes_of(clip.review) or ([verdict] if isinstance(verdict.get("score"), int | float) else [])
-        for take in takes:
-            score, gate = take.get("score"), take.get("gate")
-            if isinstance(score, int | float):
-                judged += 1
-                rejected += isinstance(gate, int | float) and score < gate
-        retaken += max(0, len(takes) - 1)
-    return judged, rejected, retaken
+    counts = [production_.judged(clip.review) for clip in clips]
+    return sum(c[0] for c in counts), sum(c[1] for c in counts), sum(c[2] for c in counts)
 
 
 def _eta(rows: list[dict[str, Any]], running: store.Job | None, measured: dict[str, dict[str, Any]]) -> dict[str, Any]:

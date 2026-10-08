@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted } from 'vue'
 import { RouterLink, RouterView, useRoute } from 'vue-router'
-import { halt, live, queued, start, state } from './store'
+import { halt, queued, start, state } from './store'
 
 const route = useRoute()
 const SCREENS = [
@@ -12,12 +12,24 @@ const SCREENS = [
 ]
 
 const playing = computed(() => state.runs.find((one) => one.status === 'live'))
+const onProduction = computed(() => route.path === '/' || route.path.startsWith('/productions'))
 const line = computed(() => {
+  if (onProduction.value) return state.heading
   const r = playing.value
   if (!r) return queued.value ? `${queued.value} queued` : ''
   return `${r.title} · job ${r.jobs_done} / ${r.jobs_total}${queued.value ? ` · ${queued.value} queued` : ''}`
 })
-const target = computed(() => (playing.value ? `/runs/${playing.value.id}` : '/runs'))
+const gpu = computed(() => {
+  const g = state.gpu
+  const used = g?.vram_used === undefined ? '' : ` · ${g.vram_used.toFixed(1)} GB`
+  return {
+    total: g?.vram_total === undefined ? '' : `${Math.round(g.vram_total)} GB`,
+    text: `${g?.state ?? 'idle'}${used}`,
+    busy: !!g && g.state !== 'idle',
+    run: g?.run ?? null,
+    title: g?.run ? `${g.title} · ${g.tool} · open the run` : 'nothing is running on the card',
+  }
+})
 
 onMounted(start)
 onUnmounted(halt)
@@ -27,7 +39,6 @@ onUnmounted(halt)
   <div class="app">
     <header class="top">
       <div class="left">
-        <!-- Drawn rather than fetched: one 24px glyph is not worth a request. -->
         <RouterLink to="/" class="brand">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <rect x="1" y="4" width="22" height="16" rx="2" stroke="var(--accent)" stroke-width="1.5" />
@@ -42,13 +53,16 @@ onUnmounted(halt)
           <RouterLink v-for="s in SCREENS" :key="s.to" :to="s.to" :class="{ on: s.here(route.path) }">{{ s.label }}</RouterLink>
         </nav>
       </div>
-      <RouterLink v-if="line" class="line mono" :to="target" title="open the run in progress">
-        <i v-if="playing" class="dot running" /><span>{{ line }}</span><span class="go">→</span>
+      <span v-if="onProduction" class="line mono">{{ line }}</span>
+      <RouterLink v-else-if="line" class="line mono link" :to="playing ? `/runs/${playing.id}` : '/runs'" title="open the run in progress">
+        <span>{{ line }}</span><span class="go">→</span>
       </RouterLink>
       <span v-else />
       <span class="gpu mono">
-        <span>24 GB</span>
-        <span class="state"><i class="dot" :class="live ? 'running' : 'done'" />{{ live ? 'rendering' : 'idle' }}</span>
+        <span>{{ gpu.total }}</span>
+        <component :is="gpu.run ? RouterLink : 'span'" class="state" :to="gpu.run ? `/runs/${gpu.run}` : undefined" :title="gpu.title">
+          <i class="dot" :class="gpu.busy ? 'running' : 'idle'" />{{ gpu.text }}
+        </component>
       </span>
     </header>
 
@@ -115,7 +129,13 @@ onUnmounted(halt)
   text-overflow: ellipsis;
 }
 
-.line:hover {
+span.line {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.line.link:hover {
   color: var(--accent);
   border-color: var(--border-strong);
 }
@@ -138,6 +158,16 @@ onUnmounted(halt)
   display: flex;
   align-items: center;
   gap: var(--space-1);
+  color: inherit;
+  text-decoration: none;
+}
+
+a.state:hover {
+  color: var(--accent);
+}
+
+.dot.idle {
+  background: var(--status-stopped);
 }
 
 @media (max-width: 900px) {

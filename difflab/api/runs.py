@@ -8,6 +8,7 @@ nothing - so a row whose newest event has gone quiet reads `stopped` however the
 from __future__ import annotations
 
 import sqlite3
+import subprocess
 import time
 from typing import Any
 
@@ -88,6 +89,63 @@ def control(run_id: str, command: dict[str, Any]) -> str:
     except sqlite3.Error as failure:
         return f"the command could not be written ({failure})"
     return ""
+
+
+# --- the card ------------------------------------------------------------------------------------
+# What the header says the card is doing, by the tool of the job in flight; a tool not named is "working".
+DOING = {
+    "render_shot": "rendering", "render_clip": "rendering", "enlarge_shot": "rendering", "finish": "rendering",
+    "enlarge_pixels": "rendering",
+    "draw_reference": "drawing", "draw_look": "drawing", "compose_keyframe": "drawing", "edit_image": "drawing",
+    "plate_ref": "drawing", "cut_crops": "drawing",
+    "judge": "judging",
+    "assemble": "assembling", "film": "assembling", "master": "assembling",
+}  # fmt: skip
+PLANNING = "planning"  # every other job runs the VLM: survey, cards, plan_shots, write_shot, ...
+SMI_EVERY = 2.0  # seconds a VRAM reading is reused for; every open tab asks
+_smi: tuple[float, dict[str, Any] | None] = (0.0, None)
+
+
+def gpu() -> dict[str, Any]:
+    """What the card is doing - the tool of the job in flight, as a word - and its VRAM, whoever holds it."""
+    with store.connect() as connection:
+        row = connection.execute(
+            "SELECT jobs.tool, jobs.run_id, runs.production_id, runs.title FROM jobs "
+            "JOIN runs ON runs.id = jobs.run_id WHERE jobs.state = ? ORDER BY jobs.started_at DESC LIMIT 1",
+            (store.RUNNING,),
+        ).fetchone()
+        heard = None if row is None else store.newest_event(connection, row[1])
+    # A job a killed worker left `running` writes nothing more: it is not what the card is doing.
+    live = row is not None and heard is not None and time.time() - heard < STALE_AFTER
+    tool = row[0] if live else ""
+    return {
+        "state": DOING.get(tool, PLANNING) if tool else "idle",
+        "tool": tool,
+        "run": row[1] if live else None,
+        "production": row[2] if live else None,
+        "title": row[3] if live else "",
+        **(_card() or {}),
+    }
+
+
+def _card() -> dict[str, Any] | None:
+    """The card's name and VRAM in GB from nvidia-smi: device-wide, so another process's memory counts too."""
+    global _smi
+    if time.time() - _smi[0] < SMI_EVERY:
+        return _smi[1]
+    try:
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name,memory.used,memory.total", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=5, check=True,
+        ).stdout.splitlines()[0]  # fmt: skip
+        name, used, total = (part.strip() for part in out.split(","))
+        found: dict[str, Any] | None = {
+            "name": name, "vram_used": round(float(used) / 1024, 1), "vram_total": round(float(total) / 1024, 1),
+        }  # fmt: skip
+    except (OSError, subprocess.SubprocessError, IndexError, ValueError):
+        found = None
+    _smi = (time.time(), found)
+    return found
 
 
 # --- the event stream ----------------------------------------------------------------------------

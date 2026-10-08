@@ -350,6 +350,3 @@ export function duration(seconds: number): string {
   if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, '0')}s`
   return `${Math.floor(seconds / 3600)}h ${String(Math.floor((seconds % 3600) / 60)).padStart(2, '0')}m`
 }
-
-/** Glyph and colour per state, said together so neither carries it alone. */
-export const GLYPH: Record<string, string> = { pending: '·', running: '●', done: '✓', failed: '✕' }

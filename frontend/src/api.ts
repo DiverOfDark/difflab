@@ -1,4 +1,5 @@
-/** The server, as functions. Every call is one route in `difflab/web/api.py`. */
+/** The server, as functions. Every call is one route in `difflab/api/app.py`. */
+import { shallowRef } from 'vue'
 import type { RunState } from './run'
 import { apply, emptyRun } from './run'
 
@@ -109,10 +110,15 @@ export interface RunRecord extends RunSummary {
   artifacts: RunArtifact[]
 }
 
+/** The newest edit that left shots stale, whichever screen made it: the shell's STALE banner reads it. */
+export const staled = shallowRef<{ production: number; stale: Stale } | null>(null)
+
 async function json<T>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(url, options)
   if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as any).detail ?? (await res.text()))
-  return res.json() as Promise<T>
+  const found = await res.json()
+  if (found?.stale?.shots?.length) staled.value = { production: found.id, stale: found.stale }
+  return found as T
 }
 
 const send = (method: string, body: unknown): RequestInit => ({
@@ -256,7 +262,7 @@ export interface ShotInfo {
     checks: { severity: string; code: string; message: string }[]
     marker: { kind: 'pinned' | 'changed' | 'rewritten' | 'written'; label: string; at: number | null } | null
   }
-  clip: MadeThing & { seed: number; handoff: number | null }
+  clip: MadeThing & { seed: number; handoff: number | null; takes: { judged: number; rejected: number; retaken: number } }
   plan: Record<string, unknown>
 }
 
@@ -289,6 +295,16 @@ export interface Stale {
   references?: number
   /** 1 when turning plates on queued a run to draw the missing ones. */
   plating?: number
+  /** The shots newly stale, and the chained shots after them that re-render because they open on a stale clip. */
+  shots: StaleShot[]
+  chained: StaleShot[]
+  /** Measured GPU seconds to make them all again. */
+  gpu: number
+}
+
+export interface StaleShot {
+  id: number
+  label: string
 }
 
 export interface MemberInfo {
@@ -335,17 +351,43 @@ export interface MemberInfo {
   off_screen?: number[][]
 }
 
+export type StagePhase = 'done' | 'review' | 'running' | 'stale' | 'pending'
+
 export interface ProductionSummary {
   id: number
   slug: string
   title: string
   story_kind: string
-  story: string
-  manifest: Record<string, unknown>
   created: number
   updated: number
+  /** The newest thing that happened to it: an edit, or a run starting or ending. */
+  when: number
   chapters: number
   shots: number
+  seconds: number
+  stages: Record<'ingest' | 'bible' | 'shots' | 'render' | 'assemble', StagePhase>
+  /** The stage running, or the one after the furthest the work reached. */
+  resume: 'ingest' | 'bible' | 'shots' | 'render' | 'assemble'
+  /** Scope kinds of its runs queued or running: plan, chapter, references, assemble, film. */
+  live: string[]
+  paused: boolean
+  clips_done: number
+  clips_review: number
+  bible_review: number
+  shots_review: number
+  to_draw: number
+}
+
+/** The card: what the job in flight is doing as a word, and the VRAM in GB, whoever holds it. */
+export interface Gpu {
+  state: 'idle' | 'planning' | 'drawing' | 'judging' | 'rendering' | 'assembling'
+  tool: string
+  run: string | null
+  production: number | null
+  title: string
+  name?: string
+  vram_used?: number
+  vram_total?: number
 }
 
 export interface Production {
@@ -368,7 +410,7 @@ export interface Production {
   unmatched: { photo: string; about: string; likely: string }[]
   ideas: IdeaRound[]
   /** A short digest per stage of what it holds; it moves when the stage's content does. */
-  hashes: Record<'ingest' | 'bible' | 'shots' | 'render' | 'assemble', string>
+  hashes: Record<'ingest' | 'bible' | 'shots' | 'render' | 'assemble' | 'manifest', string>
   /** Per tool, measured on this machine: median seconds a job, and per second of clip for render_shot.
    *  `samples` 0 means no history yet, and the numbers are the code's fallback. */
   timings: Record<string, { seconds: number; per_second: number | null; samples: number }>
@@ -549,9 +591,17 @@ const chapterQuery = (chapter: number | null, more = '') => {
   const q = [chapter === null ? '' : `chapter=${chapter}`, more].filter(Boolean).join('&')
   return q ? `?${q}` : ''
 }
-/** `fresh` asks the director for new shots even when nothing they are planned from changed. */
-export const planProduction = (id: number, chapter: number | null, fresh = false) =>
-  json<{ run: string; runs: string[] }>(`/api/productions/${id}/plan${chapterQuery(chapter, fresh ? 'fresh=true' : '')}`, post({}))
+/** `fresh` asks the director for new shots even when nothing they are planned from changed; `bible` builds the
+ *  bible again from the story and the photographs, and plans no chapter. */
+export const planProduction = (id: number, chapter: number | null, fresh = false, bible = false) =>
+  json<{ run: string; runs: string[] }>(
+    `/api/productions/${id}/plan${chapterQuery(chapter, [fresh ? 'fresh=true' : '', bible ? 'shots=false' : ''].filter(Boolean).join('&'))}`,
+    post({}),
+  )
+export const approveBible = (id: number) => json<Production & { left: string[] }>(`/api/productions/${id}/bible/approve`, post({}))
+/** Pictures given after ingest: they wait in the bible to be attached, and the next plan reads them. */
+export const addPhotos = (id: number, paths: string[]) => json<Production>(`/api/productions/${id}/photos`, post({ paths }))
+export const readGpu = () => json<Gpu>('/api/gpu')
 export const renderProduction = (id: number, chapter: number | null) =>
   json<{ run: string; runs: string[] }>(`/api/productions/${id}/render${chapterQuery(chapter)}`, post({}))
 /** Joined, levelled and subtitled from the clips there are; every chapter also queues the film. Nothing renders. */
@@ -592,10 +642,6 @@ export const readAssembled = (id: number) => json<Assembled>(`/api/productions/$
 export type MadeKind = 'keyframe' | 'prompt' | 'clip' | 'reference' | 'casting'
 /** Approved as it is by a person: the judge no longer overrules it, and a run paused on the clip goes on. */
 export const approveMade = (kind: MadeKind, id: number) => json<Production>(`/api/made/${kind}/${id}/approve`, post({}))
-/** Made anew by the next run, on a new seed; a prompt stays stale until re-planned or written by hand. */
-export const rejectMade = (kind: MadeKind, id: number) => json<Production>(`/api/made/${kind}/${id}/reject`, post({}))
-export const addShot = (id: number, body: Record<string, unknown>) =>
-  json<Production>(`/api/productions/${id}/shots`, post(body))
 export const patchShot = (shotId: number, body: Record<string, unknown>) =>
   json<Production>(`/api/shots/${shotId}`, send('PATCH', body))
 /** The shot's prose written again and its prompt compiled from it, as a run; a hand-written prompt is let go. */
@@ -647,7 +693,6 @@ export interface RenderQueue {
   judged: number
   rejected: number
   retaken: number
-  vram: [number, number] | null
   status: 'running' | 'paused' | 'queued' | 'idle'
   runs: { id: string; state: string; title: string }[]
   auto_retry: boolean
@@ -724,7 +769,6 @@ export const settingsImpact = (tool: string, scopeKind: string, scopeId: string,
     post({ scope_kind: scopeKind, scope_id: scopeId, tool, overrides }),
   )
 export const listModels = () => json<Record<string, string[]>>('/api/models')
-export const rememberModel = (role: string, value: string) => json<Record<string, string[]>>('/api/models', post({ role, value }))
 export const resolveModel = (text: string) => json<{ value: string }>('/api/models/resolve', post({ text }))
 export const forgetModel = (role: string, value: string) =>
   json<Record<string, string[]>>('/api/models', send('DELETE', { role, value }))

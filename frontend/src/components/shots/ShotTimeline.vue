@@ -15,6 +15,8 @@ const props = defineProps<{
   /** Read on every frame of playback; passed as a getter so a new time is no new prop to redraw for. */
   clock: { t: number }
   summary: string
+  /** Shots marked as affected by a change: tinted red. */
+  marked: Set<number>
   zoom: Zoom
 }>()
 const emit = defineEmits<{ seek: [t: number, member: string | null]; zoom: [z: Zoom] }>()
@@ -110,6 +112,7 @@ const blocks = computed(() => {
     const s = props.shots[i]
     const w = s.seconds * z.value - 2
     const on = i === props.open
+    const hit = props.marked.has(s.id)
     out.push({
       key: s.id,
       title: `${pad(s.chapter + 1, 2)}.${pad(s.position + 1, 3)} · ${s.seconds.toFixed(1)} s · ${s.action}`,
@@ -117,8 +120,8 @@ const blocks = computed(() => {
       style: {
         left: px(props.starts[i] * z.value + 1),
         width: px(Math.max(w, 1)),
-        background: on ? 'var(--bg-raised)' : s.pipe[2] === 'done' ? 'oklch(24% 0.02 260)' : 'var(--bg-base)',
-        borderColor: on ? 'var(--accent)' : s.waiting ? 'var(--status-degraded)' : 'var(--border-strong)',
+        background: on ? 'var(--bg-raised)' : hit ? 'oklch(from var(--status-error) l c h / 0.12)' : s.pipe[2] === 'done' ? 'oklch(24% 0.02 260)' : 'var(--bg-base)',
+        borderColor: on ? 'var(--accent)' : hit ? 'var(--status-error)' : s.waiting ? 'var(--status-degraded)' : 'var(--border-strong)',
         padding: w >= 12 ? '4px' : '4px 0',
       },
       color: on ? 'var(--accent)' : 'var(--text-secondary)',
@@ -174,7 +177,7 @@ const overview = computed(() =>
     title: `${pad(s.chapter + 1, 2)}.${pad(s.position + 1, 3)} · ${s.seconds.toFixed(1)} s`,
     style: {
       flex: `${s.seconds} 1 0`,
-      background: s.pipe[2] === 'done' ? 'var(--text-primary)' : s.waiting ? 'var(--status-degraded)' : s.pipe[0] === 'done' ? 'var(--text-secondary)' : 'var(--bg-raised)',
+      background: props.marked.has(s.id) ? 'var(--status-error)' : s.pipe[2] === 'done' ? 'var(--text-primary)' : s.waiting ? 'var(--status-degraded)' : s.pipe[0] === 'done' ? 'var(--text-secondary)' : 'var(--bg-raised)',
       outline: `1px solid ${i === props.open ? 'var(--accent)' : 'transparent'}`,
     },
   })),

@@ -245,11 +245,9 @@ const problems = computed(() => {
   return out
 })
 const note = ref('')
+/** What went stale is the shell's STALE banner's to say. */
 function told(stale: Stale) {
-  const parts = Object.entries(stale)
-    .filter(([k, n]) => n && k !== 'plating')
-    .map(([k, n]) => `${n} ${k}`)
-  note.value = [stale.plating ? 'Plates are being drawn.' : '', parts.length ? `${parts.join(', ')} went stale.` : ''].filter(Boolean).join(' ')
+  note.value = stale.plating ? 'Plates are being drawn.' : ''
 }
 function save() {
   const d = draft.value
@@ -313,7 +311,8 @@ const remove = () => {
               </label>
               <label>
                 <span class="eyebrow">KIND</span>
-                <select v-model="draft.kind" class="mono" @change="part = PART_FOR[draft.kind] ?? part">
+                <select v-model="draft.kind" class="mono" :disabled="draft.kind === 'style'" @change="part = PART_FOR[draft.kind] ?? part">
+                  <option v-if="draft.kind === 'style'" value="style">style</option>
                   <option v-for="k in KINDS" :key="k.value" :value="k.value">{{ k.label }}</option>
                 </select>
               </label>

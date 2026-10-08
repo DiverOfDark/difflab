@@ -11,10 +11,12 @@ const props = defineProps<{
   focus: number | null
   /** A member to focus as the stage opens: its track and its references in the open shot. */
   member?: string | null
+  /** Shots a STALE banner sent here to be shown: marked on the timeline until cleared. */
+  affected: number[]
   busy: string
   act: (name: string, what: () => Promise<unknown>) => Promise<void>
 }>()
-const emit = defineEmits<{ go: [to: StageId, shot?: number | null] }>()
+const emit = defineEmits<{ go: [to: StageId, shot?: number | null]; unmark: [] }>()
 
 const timeline = ref<Timeline | null>(null)
 const failed = ref('')
@@ -42,6 +44,8 @@ const total = computed(() => shots.value.reduce((n, s) => n + s.seconds, 0))
 const film = computed<ShotInfo[]>(() => props.production.chapters.flatMap((c) => c.shots))
 const detail = computed(() => new Map(film.value.map((s) => [s.id, s])))
 const inView = computed(() => new Set(shots.value.map((s) => s.id)))
+const marked = computed(() => new Set(props.affected))
+const markedLabels = computed(() => shots.value.filter((s) => marked.value.has(s.id)).map(label))
 
 const openId = ref<number | null>(props.focus)
 watch(
@@ -210,6 +214,11 @@ const summary = computed(() => {
   <p v-if="timeline && !shots.length" class="band hint">No shots yet. Plan the {{ chapter === null ? 'production' : 'chapter' }}: the director writes the shots and who is in each.</p>
   <div v-else-if="light" class="shots" data-screen-label="Shots timeline">
     <p v-if="said" class="band hint">{{ said }} <button class="link" @click="said = ''">dismiss</button></p>
+    <p v-if="markedLabels.length" class="band hint marked">
+      Marked on the timeline: {{ markedLabels.length }} affected shot{{ markedLabels.length > 1 ? 's' : '' }},
+      {{ markedLabels.length > 1 ? `${markedLabels[0]} → ${markedLabels[markedLabels.length - 1]}` : markedLabels[0] }}.
+      <button class="link" @click="emit('unmark')">clear</button>
+    </p>
     <div class="upper">
       <section class="viewer">
         <div class="topbar">
@@ -282,6 +291,7 @@ const summary = computed(() => {
       :focus="memberFocus"
       :clock="clock"
       :summary="summary"
+      :marked="marked"
       :zoom="zoom"
       @seek="seek"
       @zoom="zoom = $event"

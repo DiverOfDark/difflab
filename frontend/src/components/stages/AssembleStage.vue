@@ -13,7 +13,7 @@ import {
   type ShotInfo,
   type ToolInfo,
 } from '../../api'
-import { ago, seconds } from '../../production'
+import { ago, plural, seconds } from '../../production'
 
 const props = defineProps<{
   production: Production
@@ -196,7 +196,7 @@ const file = (path: string) => path.split('/').at(-1)
       </div>
       <div class="out">
         <span class="mono">Full film</span>
-        <span class="dim small">{{ assembled?.film ? `${assembled.film.chapters} chapters · ${assembled.film.lines ?? 0} lines` : 'every chapter joined, with chapter markers' }}</span>
+        <span class="dim small">{{ assembled?.film ? `${plural(assembled.film.chapters, 'chapter')} · ${plural(assembled.film.lines ?? 0, 'line')}` : 'every chapter joined, with chapter markers' }}</span>
         <span class="files">
           <template v-if="assembled?.film">
             <a class="mono small" :href="outputUrl(assembled.film.video)" target="_blank">{{ file(assembled.film.video) }}</a>

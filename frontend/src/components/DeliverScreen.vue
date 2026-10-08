@@ -431,25 +431,6 @@ a.primary.button {
   text-decoration: none;
 }
 
-.picks {
-  display: flex;
-  flex-direction: column;
-  padding: var(--space-1) var(--space-2) var(--space-2);
-  gap: 4px;
-}
-
-.picks button {
-  text-align: left;
-  font-family: var(--mono);
-  font-size: var(--text-xs);
-  border-color: var(--line);
-}
-
-.picks button.on {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
 .head.block {
   display: block;
 }

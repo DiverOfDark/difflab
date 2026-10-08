@@ -447,16 +447,6 @@ const label = computed(() => {
 }
 
 /* Beside the label, not after the box: sharing that row it would be the first thing tabbed into. */
-.roll {
-  border: 0;
-  background: none;
-  padding: 0 0 0 var(--space-1);
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  letter-spacing: 0.06em;
-  color: var(--accent);
-  text-transform: none;
-}
 
 .segmented {
   display: flex;
@@ -478,11 +468,6 @@ const label = computed(() => {
 .segmented > button.on {
   background: var(--accent);
   color: var(--accent-fg);
-}
-
-.ruled {
-  padding-top: var(--space-2);
-  border-top: 1px solid var(--line);
 }
 
 .group {
@@ -537,16 +522,6 @@ const label = computed(() => {
 
 .grow {
   flex: 1;
-}
-
-.legend {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.loud {
-  color: var(--warn);
 }
 
 code {

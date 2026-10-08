@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { deleteProduction, listTools, outputUrl, patchProduction, patchShot, putSettings, readIngesting, type Production } from '../../api'
-import { ASPECTS, canvasFor, runLive } from '../../production'
+import { ASPECTS, canvasFor, plural, runLive } from '../../production'
 import { useDraft } from '../../draft'
 import IdeaPanel from '../IdeaPanel.vue'
 import IngestForm from './IngestForm.vue'
@@ -220,7 +220,7 @@ const discard = () => {
     <section class="card">
       <div class="head">
         <h5>References</h5>
-        <span class="note">{{ photos.length }} photographs{{ source ? ' · a source video' : '' }}</span>
+        <span class="note">{{ plural(photos.length, 'photograph') }}{{ source ? ' · a source video' : '' }}</span>
       </div>
       <div class="body">
         <video v-if="source" class="frame" :src="outputUrl(source)" controls muted preload="metadata" />
@@ -237,7 +237,7 @@ const discard = () => {
                   : r.guess || '—'
               }}</span>
             </span>
-            <span class="mono dim">{{ r.kind === 'video' ? 'motion ref' : r.kind }}</span>
+            <span class="mono dim">{{ r.kind === 'video' ? 'motion ref' : r.kind || 'unmatched' }}</span>
             <span class="mono">{{ r.entity || (r.kind === 'style' ? 'style' : '—') }}</span>
           </div>
         </div>
@@ -314,7 +314,6 @@ const discard = () => {
   flex-wrap: wrap;
 }
 
-.stacked > label,
 .field {
   display: flex;
   flex-direction: column;
@@ -339,62 +338,8 @@ const discard = () => {
   gap: var(--space-1);
 }
 
-.row {
-  display: flex;
-  justify-content: space-between;
-  font-size: 11px;
-}
-
-.bars {
-  display: flex;
-  gap: 2px;
-  height: 16px;
-}
-
-.bars span {
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
-  border-radius: 2px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-family: var(--font-mono);
-  font-size: 9px;
-  color: var(--text-tertiary);
-  overflow: hidden;
-  min-width: 0;
-}
-
-.go,
 .foot {
   grid-column: 1 / -1;
-}
-
-.go {
-  border-color: var(--border-strong);
-  padding: var(--space-2) var(--space-3);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: var(--space-3);
-  flex-wrap: wrap;
-}
-
-.estimate {
-  display: flex;
-  gap: var(--space-3);
-  flex-wrap: wrap;
-  font-size: var(--text-xs);
-}
-
-.estimate > span {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.estimate .eyebrow {
-  font-size: 10px;
 }
 
 .buttons {
@@ -402,25 +347,6 @@ const discard = () => {
   gap: var(--space-1);
   align-items: center;
   flex-wrap: wrap;
-}
-
-.check {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  font-size: var(--text-xs);
-  font-weight: var(--weight-light);
-  color: var(--text-secondary);
-  margin-right: var(--space-1);
-}
-
-.check input {
-  width: auto;
-  accent-color: var(--accent);
-}
-
-.needs {
-  flex-basis: 100%;
 }
 
 .aspect {

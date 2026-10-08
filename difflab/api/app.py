@@ -70,22 +70,6 @@ def list_productions() -> list[dict[str, Any]]:
     return production.listing()
 
 
-@app.post("/api/productions")
-async def create_production(request: Request) -> dict[str, Any]:
-    """A production with one chapter. `video` and `continuity` are partial settings over the code
-    defaults; what is not given is not stored either."""
-    body = await request.json()
-    try:
-        video = VideoSettings(**body["video"]) if body.get("video") else None
-        continuity = Continuity(**body["continuity"]) if body.get("continuity") else None
-        made = production.create(
-            str(body.get("slug", "")).strip(), str(body.get("title", "")).strip(), video, continuity
-        )
-    except (TypeError, ValueError) as problem:
-        raise HTTPException(400, str(problem)) from problem
-    return _production(made.id)
-
-
 @app.get("/api/productions/{production_id}")
 def read_production(production_id: int) -> dict[str, Any]:
     return _production(production_id)
@@ -105,13 +89,7 @@ async def patch_production(production_id: int, request: Request) -> dict[str, An
     """`title`, `story`, `opening` (the first frame in words). A changed story or opening says how
     much went stale under `stale`."""
     body = await request.json()
-    try:
-        moved = production.update(production_id, **dict(body))
-    except LookupError as problem:
-        raise HTTPException(404, str(problem)) from problem
-    except (TypeError, ValueError) as problem:
-        raise HTTPException(400, str(problem)) from problem
-    return {**_production(production_id), "stale": moved}
+    return _staling(production_id, lambda: production.update(production_id, **dict(body)))
 
 
 @app.get("/api/productions/{production_id}/ideas")
@@ -141,13 +119,7 @@ async def improve_idea(production_id: int, request: Request) -> dict[str, Any]:
 @app.post("/api/productions/{production_id}/ideas/{round_}/adopt")
 def adopt_idea(production_id: int, round_: int) -> dict[str, Any]:
     """The round's story becomes the production's; `stale` says how much a re-plan now has to redo."""
-    try:
-        moved = ideas.adopt(production_id, round_)
-    except LookupError as problem:
-        raise HTTPException(404, str(problem)) from problem
-    except ValueError as problem:
-        raise HTTPException(400, str(problem)) from problem
-    return {**_production(production_id), "stale": moved}
+    return _staling(production_id, lambda: ideas.adopt(production_id, round_))
 
 
 @app.post("/api/productions/{production_id}/members")
@@ -167,28 +139,12 @@ async def add_member(production_id: int, request: Request) -> dict[str, Any]:
 async def patch_member(member_id: int, request: Request) -> dict[str, Any]:
     """A member by hand, pinned; `{"pinned": false}` alone gives it back to the director."""
     body = await request.json()
-    owner = production.production_of_member(member_id)
-    if owner is None:
-        raise HTTPException(404, "no such member")
-    try:
-        moved = production.update_member(member_id, **dict(body))
-    except (TypeError, ValueError) as problem:
-        raise HTTPException(400, str(problem)) from problem
-    except (sqlite3.Error, OSError) as problem:
-        raise HTTPException(500, f"the plates could not be queued ({problem})") from problem
-    return {**_production(owner), "stale": moved}
+    return _staling(_member_owner(member_id), lambda: production.update_member(member_id, **dict(body)))
 
 
 @app.delete("/api/members/{member_id}")
 def delete_member(member_id: int) -> dict[str, Any]:
-    owner = production.production_of_member(member_id)
-    if owner is None:
-        raise HTTPException(404, "no such member")
-    try:
-        moved = production.delete_member(member_id)
-    except ValueError as problem:
-        raise HTTPException(400, str(problem)) from problem
-    return {**_production(owner), "stale": moved}
+    return _staling(_member_owner(member_id), lambda: production.delete_member(member_id))
 
 
 @app.delete("/api/refs/{ref_id}")
@@ -197,8 +153,7 @@ def detach_ref(ref_id: int) -> dict[str, Any]:
     owner = production.production_of_ref(ref_id)
     if owner is None:
         raise HTTPException(404, "no such reference")
-    moved = production.detach_ref(ref_id)
-    return {**_production(owner), "stale": moved}
+    return _staling(owner, lambda: production.detach_ref(ref_id))
 
 
 @app.post("/api/productions/{production_id}/references")
@@ -245,15 +200,7 @@ def draw_variants(member_id: int) -> dict[str, Any]:
 @app.post("/api/members/{member_id}/variants/pick")
 async def pick_variant(member_id: int, request: Request) -> dict[str, Any]:
     body = await request.json()
-    try:
-        moved = production.pick_drawn(member_id, int(body["seed"]))
-    except LookupError as problem:
-        raise HTTPException(404, str(problem)) from problem
-    except (KeyError, ValueError) as problem:
-        raise HTTPException(400, str(problem)) from problem
-    owner = production.production_of_member(member_id)
-    assert owner is not None
-    return {**_production(owner), "stale": moved}
+    return _staling(_member_owner(member_id), lambda: production.pick_drawn(member_id, int(body["seed"])))
 
 
 @app.post("/api/shots/{shot_id}/keyframe")
@@ -280,15 +227,9 @@ def render_keyframes(production_id: int, chapter: int | None = None) -> dict[str
 async def give_reference(member_id: int, request: Request) -> dict[str, Any]:
     """`path`, an uploaded picture of the member, held as its `role` picture; says what went stale."""
     body = await request.json()
-    try:
-        moved = production.give_ref(member_id, str(body["path"]), str(body["role"]))
-    except LookupError as problem:
-        raise HTTPException(404, str(problem)) from problem
-    except (KeyError, ValueError, OSError) as problem:
-        raise HTTPException(400, str(problem)) from problem
-    owner = production.production_of_member(member_id)
-    assert owner is not None
-    return {**_production(owner), "stale": moved}
+    return _staling(
+        _member_owner(member_id), lambda: production.give_ref(member_id, str(body["path"]), str(body["role"]))
+    )
 
 
 @app.post("/api/conflicts/{conflict_id}/resolve")
@@ -306,26 +247,42 @@ async def resolve_conflict(conflict_id: int, request: Request) -> dict[str, Any]
 async def keep_conflict(conflict_id: int, request: Request) -> dict[str, Any]:
     """`keep`: `reference` rewrites the story's sentences to the photograph, `novel` takes the story's trait."""
     body = await request.json()
-    try:
-        owner = production.keep(conflict_id, str(body.get("keep", "")))
-    except LookupError as problem:
-        raise HTTPException(404, str(problem)) from problem
-    except ValueError as problem:
-        raise HTTPException(400, str(problem)) from problem
-    return _production(owner)
+    owner = production.production_of_conflict(conflict_id)
+    if owner is None:
+        raise HTTPException(404, "no such conflict")
+    return _staling(owner, lambda: production.keep(conflict_id, str(body.get("keep", ""))))
 
 
 @app.post("/api/productions/{production_id}/unmatched")
 async def attach_unmatched(production_id: int, request: Request) -> dict[str, Any]:
     """`photo`, one the survey placed with no member, held as member `to`'s picture, or `to` "ignore"."""
     body = await request.json()
+    return _staling(
+        production_id, lambda: production.attach(production_id, str(body.get("photo", "")), str(body.get("to", "")))
+    )
+
+
+@app.post("/api/productions/{production_id}/photos")
+async def add_photos(production_id: int, request: Request) -> dict[str, Any]:
+    """`paths`, pictures given after ingest: they wait in the bible to be attached, and the next plan reads them."""
+    body = await request.json()
     try:
-        moved = production.attach(production_id, str(body.get("photo", "")), str(body.get("to", "")))
+        production.add_photos(production_id, [str(p) for p in body.get("paths") or []])
     except LookupError as problem:
         raise HTTPException(404, str(problem)) from problem
-    except (ValueError, OSError) as problem:
+    except ValueError as problem:
         raise HTTPException(400, str(problem)) from problem
-    return {**_production(production_id), "stale": moved}
+    return _production(production_id)
+
+
+@app.post("/api/productions/{production_id}/bible/approve")
+def approve_bible(production_id: int) -> dict[str, Any]:
+    """Every member's picture that is made, approved by a person; `left` says which could not be."""
+    try:
+        _, left = production.approve_bible(production_id)
+    except LookupError as problem:
+        raise HTTPException(404, str(problem)) from problem
+    return {**_production(production_id), "left": left}
 
 
 @app.post("/api/members/{member_id}/describe")
@@ -345,37 +302,10 @@ def delete_production(production_id: int) -> dict[str, bool]:
     return {"ok": True}
 
 
-@app.post("/api/productions/{production_id}/shots")
-async def add_shot(production_id: int, request: Request) -> dict[str, Any]:
-    body = await request.json()
-    try:
-        production.add_shot(
-            production_id,
-            prompt=str(body.get("prompt", "")),
-            seconds=float(body.get("seconds") or 0),
-            keyframe=body.get("keyframe") or None,
-            seed=None if body.get("seed") in (None, "") else int(body["seed"]),
-            action=str(body.get("action", "")),
-            chained=bool(body.get("chained", True)),
-        )
-    except LookupError as problem:
-        raise HTTPException(404, str(problem)) from problem
-    except (TypeError, ValueError) as problem:
-        raise HTTPException(400, str(problem)) from problem
-    return _production(production_id)
-
-
 @app.patch("/api/shots/{shot_id}")
 async def patch_shot(shot_id: int, request: Request) -> dict[str, Any]:
     body = await request.json()
-    owner = production.production_of_shot(shot_id)
-    if owner is None:
-        raise HTTPException(404, "no such shot")
-    try:
-        production.update_shot(shot_id, **dict(body))
-    except (TypeError, ValueError, LookupError) as problem:
-        raise HTTPException(400, str(problem)) from problem
-    return _production(owner)
+    return _staling(_shot_owner(shot_id), lambda: production.update_shot(shot_id, **dict(body)))
 
 
 @app.delete("/api/shots/{shot_id}")
@@ -421,34 +351,32 @@ def approve_shot(shot_id: int) -> dict[str, Any]:
 async def add_casting(shot_id: int, request: Request) -> dict[str, Any]:
     """`member` (its slug) into the shot, as it stands unless `parent`, `amend` or `label` say otherwise."""
     body = dict(await request.json())
-    return _casting(lambda: production.add_casting(shot_id, str(body.pop("member", "")), **body))
+    return _staling(_shot_owner(shot_id), lambda: production.add_casting(shot_id, str(body.pop("member", "")), **body))
 
 
 @app.patch("/api/castings/{casting_id}")
 async def patch_casting(casting_id: int, request: Request) -> dict[str, Any]:
     """`parent` (null its last look, "base", or an earlier look's casting id), `amend`, `label`; restales its shots."""
     body = dict(await request.json())
-    return _casting(lambda: production.edit_casting(casting_id, **body))
+    return _staling(_casting_owner(casting_id), lambda: production.edit_casting(casting_id, **body))
 
 
 @app.delete("/api/castings/{casting_id}")
 def delete_casting(casting_id: int) -> dict[str, Any]:
-    return _casting(lambda: production.remove_casting(casting_id))
+    return _staling(_casting_owner(casting_id), lambda: production.remove_casting(casting_id))
 
 
 @app.post("/api/castings/{casting_id}/upload")
 async def upload_look(casting_id: int, request: Request) -> dict[str, Any]:
     """`path`, an uploaded picture, as the look's own instead of a drawn one, approved."""
     body = await request.json()
-    return _casting(lambda: production.upload_look(casting_id, str(body.get("path", ""))))
+    return _staling(_casting_owner(casting_id), lambda: production.upload_look(casting_id, str(body.get("path", ""))))
 
 
 @app.post("/api/castings/{casting_id}/draw")
 def draw_look(casting_id: int) -> dict[str, Any]:
     """The look drawn by the editor from its source's picture and judged, as a run; drawn again, a new seed."""
-    owner = production.production_of_casting(casting_id)
-    if owner is None:
-        raise HTTPException(404, "no such casting")
+    owner = _casting_owner(casting_id)
     return _runs(lambda: [looks.draw(owner, [casting_id])])
 
 
@@ -467,31 +395,46 @@ def draw_production_looks(production_id: int, chapter: int | None = None) -> dic
     return _runs(lambda: [looks.draw(production_id, production.undrawn_looks_of(production_id, chapter))])
 
 
-def _casting(change: Callable[[], int]) -> dict[str, Any]:
+def _staling(owner: int, change: Callable[[], Any]) -> dict[str, Any]:
+    """The production after `change`, with `stale`: what the change counted, and the shots it left stale."""
+    before = production.stale_shots(owner)
     try:
-        owner = change()
+        moved = change()
     except LookupError as problem:
         raise HTTPException(404, str(problem)) from problem
-    except (TypeError, ValueError, OSError) as problem:
+    except (TypeError, ValueError, KeyError, OSError) as problem:
         raise HTTPException(400, str(problem)) from problem
-    return _production(owner)
+    except sqlite3.Error as problem:
+        raise HTTPException(500, f"the change could not be written ({problem})") from problem
+    return {**_production(owner), "stale": production.affected(owner, before, moved if isinstance(moved, dict) else {})}
+
+
+def _member_owner(member_id: int) -> int:
+    owner = production.production_of_member(member_id)
+    if owner is None:
+        raise HTTPException(404, "no such member")
+    return owner
+
+
+def _shot_owner(shot_id: int) -> int:
+    owner = production.production_of_shot(shot_id)
+    if owner is None:
+        raise HTTPException(404, "no such shot")
+    return owner
+
+
+def _casting_owner(casting_id: int) -> int:
+    owner = production.production_of_casting(casting_id)
+    if owner is None:
+        raise HTTPException(404, "no such casting")
+    return owner
 
 
 @app.post("/api/made/{kind}/{made_id}/approve")
 def approve(kind: str, made_id: int) -> dict[str, Any]:
     """A person's approval: the judge no longer overrules it, and a run paused on the clip goes on."""
-    return _review(kind, made_id, True)
-
-
-@app.post("/api/made/{kind}/{made_id}/reject")
-def reject(kind: str, made_id: int) -> dict[str, Any]:
-    """Made anew by the next run on a new seed; a prompt stays stale until re-planned or written by hand."""
-    return _review(kind, made_id, False)
-
-
-def _review(kind: str, made_id: int, approved: bool) -> dict[str, Any]:
     try:
-        owner = production.review(kind, made_id, approved)
+        owner = production.approve(kind, made_id)
     except LookupError as problem:
         raise HTTPException(404, str(problem)) from problem
     except ValueError as problem:
@@ -618,9 +561,12 @@ async def ingest_video(request: Request) -> dict[str, Any]:
 
 
 @app.post("/api/productions/{production_id}/plan")
-def plan_production(production_id: int, chapter: int | None = None, fresh: bool = False) -> dict[str, Any]:
-    """Chapter `chapter` (from 0) or every one, a plan run each; `fresh` asks for new shots though nothing changed."""
-    return _runs(lambda: planner.plan_production(production_id, chapter_position=chapter, fresh=fresh))
+def plan_production(
+    production_id: int, chapter: int | None = None, fresh: bool = False, shots: bool = True
+) -> dict[str, Any]:
+    """Chapter `chapter` (from 0) or every one, a plan run each; `fresh` asks for new shots though nothing changed.
+    Without `shots`, one run that builds the bible again from the story and the photographs and plans no chapter."""
+    return _runs(lambda: planner.plan_production(production_id, chapter_position=chapter, fresh=fresh, shots=shots))
 
 
 @app.post("/api/productions/{production_id}/render")
@@ -647,7 +593,7 @@ def read_assembled(production_id: int) -> dict[str, Any]:
 
 @app.get("/api/productions/{production_id}/queue")
 def read_queue(production_id: int, chapter: int | None = None) -> dict[str, Any]:
-    """The Render page: every shot's clip as the queue holds it, NOW, ETA, the rejection rate and VRAM."""
+    """The Render page: every shot's clip as the queue holds it, NOW, ETA and the rejection rate."""
     found = rendering.status(production_id, chapter)
     if found is None:
         raise HTTPException(404, "no such production")
@@ -723,17 +669,6 @@ async def put_settings(tool: str, request: Request) -> dict[str, Any]:
 @app.get("/api/models")
 def list_models() -> dict[str, list[str]]:
     """Per model role, what was chosen before, newest first."""
-    return settings.models()
-
-
-@app.post("/api/models")
-async def remember_model(request: Request) -> dict[str, list[str]]:
-    """`{"role": ..., "value": "org/repo@<commit>[:files]"}`: offered for that role from now on."""
-    body = await request.json()
-    try:
-        settings.remember(str(body.get("role", "")), str(body.get("value", "")).strip())
-    except ValueError as problem:
-        raise HTTPException(400, str(problem)) from problem
     return settings.models()
 
 
@@ -839,6 +774,12 @@ async def start_run(request: Request) -> dict[str, Any]:
 @app.get("/api/runs")
 def list_runs() -> list[dict[str, Any]]:
     return runs.runs()
+
+
+@app.get("/api/gpu")
+def read_gpu() -> dict[str, Any]:
+    """The header's card: what it is doing (idle, planning, drawing, judging, rendering, assembling) and its VRAM."""
+    return runs.gpu()
 
 
 @app.get("/api/runs/{run_id}")

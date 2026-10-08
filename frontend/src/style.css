@@ -166,7 +166,7 @@ button {
   background: transparent;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-btn);
-  padding: 7px 14px;
+  padding: 7px 15px;
   font-weight: var(--weight-medium);
   font-size: var(--text-sm);
   cursor: pointer;
@@ -189,7 +189,6 @@ button.primary {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--accent-fg);
-  font-weight: var(--weight-semibold);
 }
 
 button.primary:hover:not(:disabled) {
@@ -461,8 +460,8 @@ a {
 }
 
 .dot.running {
-  background: var(--accent);
-  animation: pulse 1.6s ease-in-out infinite;
+  background: var(--status-building);
+  animation: pulse 1.4s ease-in-out infinite;
 }
 
 .dot.done {
@@ -579,7 +578,8 @@ button.link:hover:not(:disabled) {
 
 .dot.pending {
   background: transparent;
-  border: 1px solid var(--border-strong);
+  border: 1.5px solid var(--border-strong);
+  box-sizing: border-box;
 }
 
 .ph {
@@ -599,7 +599,7 @@ button.link:hover:not(:disabled) {
 }
 
 .ph.running {
-  color: var(--accent);
+  color: var(--status-building);
 }
 
 .ph.stale {

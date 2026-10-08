@@ -1,5 +1,5 @@
 /** What the stage rail and the stage screens derive from one production, so they cannot disagree. */
-import type { MadeThing, Production, ShotInfo } from './api'
+import type { MadeThing, Production, ProductionSummary, ShotInfo } from './api'
 
 export type StageId = 'ingest' | 'bible' | 'shots' | 'render' | 'assemble'
 export type Phase = 'done' | 'review' | 'running' | 'stale' | 'pending'
@@ -142,4 +142,38 @@ export function length(total: number): string {
   if (total >= 3600) return `${Math.floor(total / 3600)} h ${pad(Math.round((total % 3600) / 60), 2)} min`
   if (total >= 60) return `${Math.floor(total / 60)} min ${pad(Math.round(total % 60), 2)} s`
   return `${Math.round(total)} s`
+}
+
+export const count = (n: number) => n.toLocaleString('en-US')
+export const plural = (n: number, one: string, many = `${one}s`) => `${count(n)} ${n === 1 ? one : many}`
+
+export const PHASE_COLOR: Record<Phase, string> = {
+  done: 'var(--status-ready)',
+  review: 'var(--status-degraded)',
+  running: 'var(--status-building)',
+  stale: 'var(--status-error)',
+  pending: 'var(--bg-raised)',
+}
+
+/** What a production's row in the list says: its state, in the colour it is said in, and a fact beside it. */
+export function standing(p: ProductionSummary): { state: string; color: string; meta: string } {
+  const BL = PHASE_COLOR.running
+  const clips = `${count(p.clips_done)} / ${count(p.shots)}`
+  if (p.live.includes('chapter')) return { state: `RENDERING · ${clips}`, color: BL, meta: p.clips_review ? `${count(p.clips_review)} review` : 'clips' }
+  if (p.live.includes('plan')) return { state: 'PLANNING', color: BL, meta: p.stages.bible === 'running' && !p.shots ? 'building the bible' : plural(p.chapters, 'chapter') }
+  if (p.live.includes('assemble') || p.live.includes('film')) return { state: 'ASSEMBLING', color: BL, meta: plural(p.chapters, 'chapter') }
+  if (p.live.includes('references')) return { state: 'DRAWING', color: BL, meta: 'bible pictures' }
+  if (p.paused) return { state: 'PAUSED · RENDER', color: PHASE_COLOR.review, meta: `${clips} · ${count(p.clips_review)} flagged` }
+  const phase = p.stages[p.resume]
+  if (p.resume === 'assemble' && phase === 'done') return { state: 'DONE', color: PHASE_COLOR.done, meta: `${plural(p.chapters, 'chapter')} · ${length(p.seconds)}` }
+  const meta: Record<StageId, string> = {
+    ingest: 'nothing planned',
+    bible: p.bible_review ? `${count(p.bible_review)} to review` : 'no cast yet',
+    shots: p.shots_review ? `${count(p.shots_review)} to review` : p.to_draw ? `${plural(p.to_draw, 'image')} to draw` : plural(p.shots, 'shot'),
+    render: `${clips}${p.clips_review ? ` · ${count(p.clips_review)} flagged` : ''}`,
+    assemble: 'not assembled',
+  }
+  const name = p.resume.toUpperCase()
+  if (phase === 'review') return { state: `${name} REVIEW`, color: PHASE_COLOR.review, meta: meta[p.resume] }
+  return { state: `STOPPED · ${name}`, color: 'var(--text-tertiary)', meta: meta[p.resume] }
 }

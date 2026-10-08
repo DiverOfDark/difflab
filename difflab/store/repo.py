@@ -351,13 +351,6 @@ def newest_event(connection: sqlite3.Connection, run_id: str) -> float | None:
     return None if row is None or row[0] is None else float(row[0])
 
 
-def newest_of_kind(connection: sqlite3.Connection, run_id: str, kind: str) -> Event | None:
-    row = connection.execute(
-        "SELECT * FROM events WHERE run_id = ? AND kind = ? ORDER BY id DESC LIMIT 1", (run_id, kind)
-    ).fetchone()
-    return None if row is None else Event.of(row)
-
-
 def newest_events(connection: sqlite3.Connection, run_ids: list[str]) -> dict[str, float]:
     if not run_ids:
         return {}
