@@ -17,12 +17,13 @@ import torch
 from PIL import Image
 
 from difflab import config, store
-from difflab.core import events, media, models, protocol, record, ui, video_io
+from difflab.core import context, events, media, models, protocol, record, ui, video_io
 from difflab.core.cache import cache
 from difflab.core.hub import HubFile
 from difflab.core.imaging import megapixel_size, video_length
-from difflab.core.keys import key
+from difflab.core.keys import Key, key
 from difflab.core.settings import (
+    AssembleSettings,
     Continuity,
     EditSettings,
     EnlargePixelsSettings,
@@ -47,6 +48,7 @@ from difflab.tools import (
     grade,
     handoff,
     judge,
+    master,
     previews,
     render_chunk,
     restore,
@@ -232,9 +234,8 @@ def _excerpt(source: Any, opening: Frame, video: VideoSettings) -> tuple[list[Cl
 def run_assemble(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
     chunks = [_path(p) for p in inputs["chunks"]]
     audios = [_path(p) for p in inputs["audios"]]
-    cuts = [int(cut) for cut in inputs["cuts"]]
-    crossfade = float(inputs.get("crossfade") or 0.0)
-    at = assemble.assemble_key([str(k) for k in inputs["keys"]], cuts, crossfade)
+    joins = assemble.joins_of(inputs)
+    at = assemble.assemble_key([str(k) for k in inputs["keys"]], joins)
     with store.connect() as connection:
         existing = store.artifact_by_key(connection, str(at))
     if existing is not None:
@@ -242,7 +243,7 @@ def run_assemble(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, 
         events.emit(protocol.Final(video=existing.path))
         return Skipped({"video": existing.path})
     destination = video_io.output_path(config.VIDEO_DIR, str(inputs.get("name") or "chapter"))
-    frames, seconds = assemble.assemble(list(zip(chunks, audios, strict=True)), cuts, crossfade, destination)
+    frames, seconds = assemble.assemble(list(zip(chunks, audios, strict=True)), joins, destination)
     record.artifact_made(destination, store.VIDEO, key=str(at))
     events.emit(protocol.Final(video=store.relative(destination), frames=frames, seconds=seconds))
     return {"video": store.relative(destination), "frames": frames, "seconds": seconds}
@@ -280,9 +281,8 @@ def run_finish(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, An
     """The enlarged chunks joined at the native join's cuts and crossfade, then retimed by RIFE."""
     fps = int(inputs["fps"])
     retiming, _ = RetimeSettings.resolve(settings.get("retime"))
-    cuts = [int(cut) for cut in inputs["cuts"]]
-    crossfade = float(inputs.get("crossfade") or 0.0)
-    joined_key = assemble.assemble_key([str(k) for k in inputs["keys"]], cuts, crossfade)
+    joins = assemble.joins_of(inputs)
+    joined_key = assemble.assemble_key([str(k) for k in inputs["keys"]], joins)
     at = key("finish", 1, joined=str(joined_key), fps=fps, settings=retiming)
     with store.connect() as connection:
         existing = store.artifact_by_key(connection, str(at))
@@ -292,7 +292,7 @@ def run_finish(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, An
         return Skipped({"video": existing.path})
     joined = cache.path(joined_key, ".mp4")
     parts = list(zip([_path(p) for p in inputs["chunks"]], [_path(p) for p in inputs["audios"]], strict=True))
-    assemble.assemble(parts, cuts, crossfade, joined)
+    assemble.assemble(parts, joins, joined)
     destination = video_io.output_path(config.VIDEO_DIR, f"{inputs.get('name') or 'chapter'}_{fps}fps")
     frames, seconds = retime.retime_file(joined, destination, fps, retiming)
     # About a gigabyte a minute at 4K, and nothing reads it once the retimed file exists.
@@ -300,6 +300,90 @@ def run_finish(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, An
     record.artifact_made(destination, store.VIDEO, key=str(at))
     events.emit(protocol.Final(video=store.relative(destination), frames=frames, seconds=seconds))
     return {"video": store.relative(destination), "frames": frames, "seconds": seconds}
+
+
+def run_master(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
+    """A joined chapter levelled and subtitled; its cues are the dialogue at where each shot plays in it."""
+    chosen, _ = AssembleSettings.resolve(settings)
+    chunks = [_path(p) for p in inputs["chunks"]]
+    joins = assemble.joins_of(inputs)
+    starts = media.starts([media.frames_of(chunk) for chunk in chunks], joins, media.rate_of(chunks[0]))
+    cues = [
+        master.Cue(round(at + float(start), 3), round(at + float(end), 3), str(text))
+        for at, lines in zip(starts, inputs["lines"], strict=True)
+        for start, end, text in lines
+    ]
+    subtitled = chosen.subtitles != "off"
+    made = key("master", 1, video=str(inputs["video"]), lufs=chosen.lufs, subtitles=chosen.subtitles, cues=cues)
+    reused = _reused("master", made)
+    if reused is not None:
+        return reused
+    destination = video_io.output_path(config.VIDEO_DIR, str(inputs.get("name") or "chapter"))
+    with ui.step("Levelling the chapter") as detail:
+        lufs = master.master(
+            _path(inputs["video"]), destination, chosen.lufs, cues, chosen.subtitles == "separate track"
+        )
+        detail(f"{lufs:.1f} LUFS" if lufs is not None else "silent")
+    srt, vtt = _sidecars(destination, cues) if subtitled else (None, None)
+    seconds = master.seconds_of(destination)
+    record.artifact_made(destination, store.VIDEO, key=str(made))
+    events.emit(protocol.Final(video=store.relative(destination), seconds=seconds))
+    return {
+        "video": store.relative(destination), "srt": srt, "vtt": vtt, "seconds": seconds, "lufs": lufs,
+        "cues": [list(cue) for cue in cues], "finished": bool(inputs.get("finished")),
+    }  # fmt: skip
+
+
+def run_film(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
+    """The mastered chapters end to end, their streams copied: nothing is re-encoded but the subtitles."""
+    chosen, _ = AssembleSettings.resolve(settings)
+    chapters = [
+        master.Chapter(_path(video), str(title), [master.Cue(*cue) for cue in cues])
+        for video, title, cues in zip(inputs["videos"], inputs["titles"], inputs["cues"], strict=True)
+    ]
+    made = key(
+        "film", 1, chapters=[[str(c.video), c.title, c.cues] for c in chapters], markers=chosen.markers,
+        subtitles=chosen.subtitles, title=str(inputs["title"]),
+    )  # fmt: skip
+    reused = _reused("film", made)
+    if reused is not None:
+        return reused
+    destination = video_io.output_path(config.VIDEO_DIR, f"{inputs.get('name') or 'production'}_film")
+    with ui.step("Joining the chapters") as detail:
+        cues = master.film(
+            chapters, destination, str(inputs["title"]), chosen.markers, chosen.subtitles == "separate track"
+        )
+        detail(f"{len(chapters)} chapters · {len(cues)} lines")
+    srt, vtt = _sidecars(destination, cues) if chosen.subtitles != "off" else (None, None)
+    seconds = master.seconds_of(destination)
+    record.artifact_made(destination, store.VIDEO, key=str(made))
+    events.emit(protocol.Final(video=store.relative(destination), seconds=seconds))
+    return {
+        "video": store.relative(destination), "srt": srt, "vtt": vtt, "seconds": seconds,
+        "chapters": len(chapters), "lines": len(cues),
+    }  # fmt: skip
+
+
+def _reused(tool: str, made: Key) -> dict[str, Any] | None:
+    """An earlier job's outputs under the same key, while its video is still on disk."""
+    ctx = context.current()
+    with store.connect() as connection:
+        if ctx.job_id is not None:
+            store.set_job_key(connection, ctx.job_id, str(made))
+        previous = store.last_done_job(connection, tool, str(made))
+    if previous is None or previous.id == ctx.job_id or not _path(previous.outputs["video"]).is_file():
+        return None
+    ui.note(f"{tool}: already made as {made}")
+    events.emit(protocol.Final(video=str(previous.outputs["video"])))
+    return Skipped(previous.outputs)
+
+
+def _sidecars(video: Path, cues: list[master.Cue]) -> tuple[str, str]:
+    """The subtitles beside the video as SRT, and as WebVTT, which is what a page's <track> reads."""
+    srt, vtt = video.with_suffix(".srt"), video.with_suffix(".vtt")
+    srt.write_text(master.srt(cues))
+    vtt.write_text(master.vtt(cues))
+    return store.relative(srt), store.relative(vtt)
 
 
 def run_compose_keyframe(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
@@ -520,6 +604,8 @@ RUNNERS: dict[str, Runner] = {
     "assemble": run_assemble,
     "enlarge_shot": run_enlarge_shot,
     "finish": run_finish,
+    "master": run_master,
+    "film": run_film,
     "compose_keyframe": run_compose_keyframe,
     "draw_reference": run_draw_reference,
     "draw_look": run_draw_look,

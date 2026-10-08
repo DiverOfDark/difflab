@@ -554,6 +554,41 @@ export const planProduction = (id: number, chapter: number | null, fresh = false
   json<{ run: string; runs: string[] }>(`/api/productions/${id}/plan${chapterQuery(chapter, fresh ? 'fresh=true' : '')}`, post({}))
 export const renderProduction = (id: number, chapter: number | null) =>
   json<{ run: string; runs: string[] }>(`/api/productions/${id}/render${chapterQuery(chapter)}`, post({}))
+/** Joined, levelled and subtitled from the clips there are; every chapter also queues the film. Nothing renders. */
+export const assembleProduction = (id: number, chapter: number | null) =>
+  json<{ run: string; runs: string[] }>(`/api/productions/${id}/assemble${chapterQuery(chapter)}`, post({}))
+export interface Mastered {
+  video: string
+  srt: string | null
+  vtt: string | null
+  seconds: number
+  lines?: number
+  job: number
+  run: string
+  hash: string
+}
+export interface ChapterMaster extends Mastered {
+  lufs: number | null
+  finished: boolean
+  /** made from the chapter's clips as they are now */
+  current: boolean
+}
+export interface Assembled {
+  chapters: {
+    id: number
+    position: number
+    marker: string
+    shots: number
+    boundaries: number
+    chained: number
+    lines: number
+    native?: ChapterMaster
+    finished?: ChapterMaster
+  }[]
+  film: (Mastered & { chapters: number }) | null
+  busy: number
+}
+export const readAssembled = (id: number) => json<Assembled>(`/api/productions/${id}/assembled`)
 export type MadeKind = 'keyframe' | 'prompt' | 'clip' | 'reference' | 'casting'
 /** Approved as it is by a person: the judge no longer overrules it, and a run paused on the clip goes on. */
 export const approveMade = (kind: MadeKind, id: number) => json<Production>(`/api/made/${kind}/${id}/approve`, post({}))

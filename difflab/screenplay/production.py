@@ -1485,8 +1485,8 @@ def _hashes(
         (scope, tool): video
         for scope, tool, video in connection.execute(
             "SELECT runs.scope, jobs.tool, json_extract(jobs.outputs, '$.video') FROM jobs "
-            "JOIN runs ON runs.id = jobs.run_id WHERE runs.production_id = ? AND runs.scope LIKE 'chapter:%' "
-            "AND jobs.tool IN ('assemble', 'finish') AND jobs.state IN (?, ?) ORDER BY jobs.id",
+            "JOIN runs ON runs.id = jobs.run_id WHERE runs.production_id = ? "
+            "AND jobs.tool IN ('assemble', 'finish', 'master', 'film') AND jobs.state IN (?, ?) ORDER BY jobs.id",
             (production.id, store.DONE, store.SKIPPED),
         )
     }

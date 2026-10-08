@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections import deque
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import replace
 from pathlib import Path
@@ -253,16 +252,25 @@ def sheet(columns: Sequence[Sequence[Frame]], height: int = 420, gap: int = 8) -
     return Frame.from_pil(canvas, "contact sheet")
 
 
+class Join(NamedTuple):
+    """How one part hands over to the next: `cut` is the frame the next part opened on, if `chained`. A
+    chained join blends `fade` seconds of the frames both parts share, past the cut; any other join
+    fades over the `fade` seconds before it, so 0 is a hard cut."""
+
+    cut: int
+    fade: float
+    chained: bool
+
+
 def join_files(
     parts: Sequence[tuple[Path, Path]],
     path: Path,
-    crossfade: float = 0.0,
-    cuts: Sequence[int | None] | None = None,
+    joins: Sequence[Join],
     fps: int | None = None,
     sample_rate: int = SAMPLE_RATE,
 ) -> tuple[int, float]:
-    """Join chunk files - `(video.mp4, audio.pt)` pairs - into one video.
-    Returns `(frames, seconds)`.
+    """Join chunk files - `(video.mp4, audio.pt)` pairs - into one video, `joins[k]` between part k and
+    k+1. Returns `(frames, seconds)`.
 
     Frames stream through one at a time, holding back only the few that wait for a blend, so a minute
     at 2 MP costs a few frames of memory rather than tens of gigabytes.
@@ -273,34 +281,74 @@ def join_files(
     """
     if not parts:
         raise ValueError("nothing to join")
-    fps = _rate_of(parts[0][0]) if fps is None else fps
-    overlap = round(crossfade * fps)
-    handovers: list[int | None] = list(cuts) if cuts is not None else [None] * len(parts)
+    fps = rate_of(parts[0][0]) if fps is None else fps
+    spans = layout([frames_of(video) for video, _ in parts], joins, fps)
     # Joining reads and rewrites every frame of every chunk, which for an hour-long take is minutes
     # at the very end of a render - the point at which a page that stops moving looks like a death.
     with ui.progress("Joining chunks", len(parts), unit="chunk") as joined:
-        frames, seconds = _join_parts(path, parts, handovers, fps, overlap, sample_rate, joined)
+        frames, seconds = _join_parts(path, parts, spans, fps, sample_rate, joined)
     return frames, seconds
+
+
+class Span(NamedTuple):
+    """What a part gives the joined video: its frames from `head` (those before were blended into the part
+    before's `kept`) to `end`, then `kept` frames from `end` blended with the next part's head."""
+
+    head: int
+    end: int
+    kept: int
+
+
+def layout(counts: Sequence[int], joins: Sequence[Join], fps: int) -> list[Span]:
+    spans: list[Span] = []
+    head = 0
+    for number, count in enumerate(counts):
+        if number + 1 == len(counts):
+            spans.append(Span(head, count, 0))
+            break
+        cut, fade, chained = joins[number]
+        if cut < head:
+            raise ValueError(f"part {number + 1} hands over at frame {cut}, inside its own blend")
+        if chained:
+            kept = min(round(fade * fps), count - cut)
+            spans.append(Span(head, cut, kept))
+        else:
+            kept = min(round(fade * fps), cut - head)
+            spans.append(Span(head, cut - kept, kept))
+        head = kept
+    return spans
+
+
+def starts(counts: Sequence[int], joins: Sequence[Join], fps: int) -> list[float]:
+    """Where each part's first frame plays in the joined video, in seconds."""
+    out, at = [], 0
+    for span in layout(counts, joins, fps):
+        out.append(at / fps)
+        at += span.end
+    return out
+
+
+def frames_of(video: Path) -> int:
+    """A video's frame count from its container, or by decoding it when the container does not say."""
+    with av.open(str(video)) as container:
+        stream = container.streams.video[0]
+        if stream.frames:
+            return int(stream.frames)
+        return sum(1 for _ in container.decode(stream))
 
 
 def _join_parts(
     path: Path,
     parts: Sequence[tuple[Path, Path]],
-    handovers: list[int | None],
+    spans: Sequence[Span],
     fps: int,
-    overlap: int,
     sample_rate: int,
     joined: Callable[[], None],
 ) -> tuple[int, float]:
     writer: video_io.VideoWriter | None = None
     held: list[torch.Tensor] = []  # the previous part's frames that wait to be blended with this one's head
     audio: torch.Tensor | None = None
-    for number, ((video, soundtrack), cut) in enumerate(zip(parts, handovers, strict=True)):
-        cut = cut if number + 1 < len(parts) else None  # the last part plays out
-        if cut is not None and cut < len(held):
-            raise ValueError(f"part {number + 1} hands over at frame {cut}, inside its own blend")
-        incoming = len(held)
-        queue: deque[torch.Tensor] = deque()
+    for (video, soundtrack), span in zip(parts, spans, strict=True):
         kept: list[torch.Tensor] = []
         count = 0
         for index, picture in enumerate(read_frames(video)):
@@ -308,29 +356,22 @@ def _join_parts(
                 writer = video_io.VideoWriter(path, picture.shape[1], picture.shape[0], fps, sample_rate, crf=JOIN_CRF)
             frame = picture.float().div_(255)
             count = index + 1
-            if index < len(held):
-                ramp = (index + 1) / (len(held) + 1)  # _ramp(len(held))[index]
+            if index < span.head:
+                ramp = (index + 1) / (span.head + 1)  # _ramp(span.head)[index]
                 writer.write((held[index] * (1 - ramp) + frame * ramp)[None])
-            elif cut is None:
-                queue.append(frame)
-                if len(queue) > overlap:
-                    writer.write(queue.popleft()[None])
-            elif index < cut:
+            elif index < span.end:
                 writer.write(frame[None])
-            elif index < cut + overlap:
-                kept.append(frame)  # shared with the next part: blended with its first frames
-            # frames past that are redrawn by the next part, which opened on frame `cut`
-        held = kept if cut is not None else list(queue)
+            elif index < span.end + span.kept:
+                kept.append(frame)
+            # frames past that are redrawn by the next part, which opened on its cut
         # Anchored to the part's own frames, so a track a few samples short cannot slide the next one early.
         waveform = _fit(torch.load(soundtrack, map_location="cpu", weights_only=True), count, fps, sample_rate)
-        if cut is not None:
-            waveform = waveform[:, : _samples(cut + len(held), fps, sample_rate)]
-        audio = waveform if audio is None else _join_audio(audio, waveform, incoming, fps, sample_rate)
+        waveform = waveform[:, : _samples(span.end + span.kept, fps, sample_rate)]
+        audio = waveform if audio is None else _join_audio(audio, waveform, span.head, fps, sample_rate)
+        held = kept
         joined()
     if writer is None:
         raise ValueError("nothing to join")
-    for frame in held:
-        writer.write(frame[None])
     frames = writer.frames
     writer.close(audio)
     return frames, frames / fps
@@ -355,7 +396,7 @@ def _ramp(count: int, dtype: torch.dtype) -> torch.Tensor:
     return torch.arange(1, count + 1, dtype=dtype) / (count + 1)
 
 
-def _rate_of(video: Path) -> int:
+def rate_of(video: Path) -> int:
     """A video file's own frame rate, for a joiner that must not invent one."""
     with av.open(str(video)) as container:
         return round(float(container.streams.video[0].average_rate or 24))

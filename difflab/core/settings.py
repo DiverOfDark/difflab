@@ -339,7 +339,11 @@ class Continuity(Settings):
         advanced=True,
     )
     crossfade: float = setting(
-        0.0, "crossfade", "seconds of overlap blended rather than cut; at most the handoff window", unit="s", low=0
+        0.0,
+        "seam blend",
+        "seconds a chained shot blends over the frames it shares with the shot before; at most the handoff window",
+        unit="s",
+        low=0,
     )
     # A chain inherits its own colour. Chunk k+1 opens on chunk k's pixels, so a cast that enters once is
     # carried forward rather than corrected, and the reference crops cannot undo it: they are semantic
@@ -376,3 +380,16 @@ class Continuity(Settings):
         from difflab.models.minimax_h3 import pipeline  # here, not at the top: it imports torch
 
         return pipeline.tail_frames(self.tail_seconds)
+
+
+Subtitles = Literal["separate track", "sidecar files", "off"]
+
+
+@dataclass(frozen=True)
+class AssembleSettings(Settings):
+    """A chapter's joins, loudness and subtitles, and the film's chapter markers."""
+
+    lufs: float = setting(-16.0, "loudness", "target per chapter, LUFS", unit="LUFS", low=-36, high=-6)
+    crossfade: float = setting(0.25, "crossfade", "seconds at scene boundaries", unit="s", low=0, high=2)
+    subtitles: Subtitles = setting("separate track", "subtitles", "dialogue lines")
+    markers: bool = setting(True, "chapter markers", "in the full film")

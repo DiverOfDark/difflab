@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from difflab.core.settings import (
+    AssembleSettings,
     Continuity,
     DirectorSettings,
     EditSettings,
@@ -54,7 +55,9 @@ TOOLS: tuple[Tool, ...] = (
     Tool("retime", 1, ("load", "interpolate"), RetimeSettings, "RIFE draws the frames between"),
     Tool("grade", 1, ("measure", "grade"), None, "a take pulled back to the colour it opened in"),
     Tool("handoff", 1, ("handoff",), Continuity, "the frame the next shot opens on, and the motion into it"),
-    Tool("assemble", 1, ("join",), None, "a chapter's chunks as one video"),
+    Tool("assemble", 2, ("join",), AssembleSettings, "a chapter's chunks as one video"),
+    Tool("master", 1, ("measure", "level"), None, "a chapter levelled to its loudness, with its subtitles"),
+    Tool("film", 1, ("join",), None, "every chapter as one film, with chapter markers"),
     Tool("judge", 1, ("load VLM", "judge"), JudgeSettings, "does it show the shot, with the cast looking right"),
     Tool("compose_keyframe", 1, ("load editor", "compose"), EditSettings, "a first frame from the plan's words"),
     Tool("draw_reference", 1, ("load editor", "draw"), None, "a member no photo shows, drawn from its words"),

@@ -2,13 +2,16 @@
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import {
+  assembleProduction,
   drawProductionLooks,
   planProduction,
   preflight,
+  readAssembled,
   readProduction,
   renderKeyframes,
   renderProduction,
   steerQueue,
+  type Assembled,
   type Production,
   type ShotInfo,
 } from '../api'
@@ -44,6 +47,9 @@ const busy = ref('')
 /** The dry run's problems per chapter position, shown on the Render stage until closed. */
 const checked = ref<Record<string, string[]> | null>(null)
 const listOpen = ref(props.id === undefined)
+const assembled = ref<Assembled | null>(null)
+/** The chapter position the Assemble stage plays, -1 for the film. */
+const previewing = ref<number | null>(null)
 
 async function load() {
   if (props.id === undefined) {
@@ -56,12 +62,16 @@ async function load() {
   // An unchanged poll is not assigned: a new object redraws every stage, and a redraw writes each
   // `:value` field back over whatever is being typed into it.
   if (JSON.stringify(found) !== JSON.stringify(production.value)) production.value = found
+  const joined = found ? await readAssembled(found.id).catch(() => null) : null
+  if (JSON.stringify(joined) !== JSON.stringify(assembled.value)) assembled.value = joined
   if (found && chapter.value !== null && chapter.value >= found.chapters.length) chapter.value = null
 }
 watch(
   () => props.id,
   () => {
     production.value = null
+    assembled.value = null
+    previewing.value = null
     checked.value = null
     listOpen.value = props.id === undefined
     load()
@@ -206,8 +216,8 @@ const DEFS: StageDef[] = [
   {
     id: 'assemble',
     name: 'Assemble',
-    artifact: 'Chapter video',
-    desc: 'The chapter joined at its handoff frames with a short crossfade, written under output/videos/.',
+    artifact: 'Chapter videos · full film',
+    desc: 'Clips joined per scene with their own audio, loudness levelled, subtitles, crossfades, chapter markers.',
   },
 ]
 
@@ -228,7 +238,6 @@ const stages = computed<StageRow[]>(() => {
   const conflicts = members.value.reduce((sum, m) => sum + m.conflicts.filter((c) => !c.resolution).length, 0) + (p?.unmatched?.length ?? 0)
   const photos = Array.isArray(p?.manifest.photos) ? (p!.manifest.photos as unknown[]).length : 0
   const references = Array.isArray(p?.manifest.references) ? (p!.manifest.references as unknown[]).length : 0
-  const lastRun = chapterRuns.value[0]
 
   const row = (def: StageDef, phase: Phase, progress: string, review = 0): StageRow => ({
     ...def,
@@ -256,8 +265,8 @@ const stages = computed<StageRow[]>(() => {
     row(DEFS[3], rendered(phaseOfAll(list.map((s) => s.clip))), `${made((s) => s.clip)} / ${n} clips`, flagged((s) => s.clip)),
     row(
       DEFS[4],
-      rendering ? 'running' : lastRun?.state === 'done' && n && made((s) => s.clip) === n ? 'done' : 'pending',
-      lastRun ? `last run ${lastRun.state} · ${ago(lastRun.created)} ago` : 'not yet',
+      assembling.value || rendering ? 'running' : mastered.value === inView.value.length && n ? 'done' : 'pending',
+      `${mastered.value} / ${inView.value.length} chapter${inView.value.length === 1 ? '' : 's'}${assembled.value?.film ? ' · film' : ''}`,
     ),
   ]
 })
@@ -292,8 +301,29 @@ const crumb = computed(() => {
   const where = index.value >= 3 ? 'render' : 'plan'
   return `${where} · stage ${index.value + 1} of ${stages.value.length}`
 })
-const rendersSide = computed(() => ['render', 'assemble'].includes(stage.value))
-const watchable = computed(() => (rendersSide.value ? renderRun.value : planRun.value))
+const rendersSide = computed(() => stage.value === 'render')
+const planSide = computed(() => !['render', 'assemble'].includes(stage.value))
+/** Chapters in view with a master made from their clips as they are now. */
+const mastered = computed(
+  () =>
+    (assembled.value?.chapters ?? []).filter(
+      (c) => (chapter.value === null || c.position === chapter.value) && (c.finished?.current || c.native?.current),
+    ).length,
+)
+const assemblyRun = computed(() =>
+  production.value?.runs.find((r) => [`assemble:${production.value!.id}`, `film:${production.value!.id}`].includes(r.scope) && runLive(r.state)),
+)
+const assembling = computed(() => !!assemblyRun.value || !!assembled.value?.busy)
+const watchable = computed(() =>
+  stage.value === 'assemble' ? (assemblyRun.value ?? renderRun.value) : rendersSide.value ? renderRun.value : planRun.value,
+)
+const target = computed(() => chapter.value ?? (production.value?.chapters.length === 1 ? 0 : null))
+const assemble = () => act('assemble', () => assembleProduction(props.id!, chapter.value))
+const canPreview = computed(() => {
+  const at = target.value
+  const found = at === null ? null : assembled.value?.chapters.find((c) => c.position === at)
+  return at === null ? !!assembled.value?.film : !!(found?.finished || found?.native)
+})
 
 const budget = computed(() => {
   const n = shots.value.length || 1
@@ -430,6 +460,19 @@ function pick(id: number) {
           <button v-if="stage === 'render'" :disabled="!!busy || !shots.length" title="what would stop each chapter rendering, checked on the CPU; nothing is queued" @click="check">
             {{ busy === 'check' ? 'checking…' : 'Dry run · CPU preflight' }}
           </button>
+          <template v-if="stage === 'assemble'">
+            <button :disabled="!canPreview" :title="target === null ? 'the full film, with its subtitles' : 'the chapter, with its subtitles'" @click="previewing = target ?? -1">
+              {{ target === null ? 'Preview film' : 'Preview chapter' }}
+            </button>
+            <button
+              class="primary"
+              :disabled="!!busy || !shots.length || assembling"
+              title="joined, levelled and subtitled from the clips there are; nothing is rendered"
+              @click="assemble"
+            >
+              {{ busy === 'assemble' ? 'queueing…' : assembling ? 'Assembling…' : target === null ? 'Assemble film' : `Assemble chapter ${String(target + 1).padStart(2, '0')}` }}
+            </button>
+          </template>
           <button v-if="renderPaused && rendersSide" class="primary" :disabled="!!busy" @click="resume">
             {{ busy === 'render' ? 'resuming…' : 'Resume queue' }}
           </button>
@@ -437,14 +480,14 @@ function pick(id: number) {
             {{ busy === 'render' ? 'queueing…' : renderRun ? 'Rendering…' : `Render ${scope}` }}
           </button>
           <button
-            v-if="!rendersSide && shots.length"
+            v-if="planSide && shots.length"
             :disabled="!!busy || !canPlan || !!planRun"
             title="Ask the director for new shots even though nothing they are planned from changed. The cast stays; pinned shots and prompts stay."
             @click="plan(true)"
           >
             {{ busy === 'fresh' ? 'queueing…' : 'Re-plan fresh' }}
           </button>
-          <button v-if="!rendersSide" :class="{ primary: stage !== 'shots' }" :disabled="!!busy || !canPlan || !!planRun" @click="plan()">
+          <button v-if="planSide" :class="{ primary: stage !== 'shots' }" :disabled="!!busy || !canPlan || !!planRun" @click="plan()">
             {{ busy === 'plan' ? 'queueing…' : planRun ? 'Planning…' : `${shots.length ? 'Re-plan' : 'Plan'} ${scope}` }}
           </button>
           <button
@@ -495,7 +538,17 @@ function pick(id: number) {
           @go="go"
           @uncheck="checked = null"
         />
-        <AssembleStage v-else-if="stage === 'assemble'" :production="production" :runs="chapterRuns" />
+        <AssembleStage
+          v-else-if="stage === 'assemble'"
+          :production="production"
+          :shots="shots"
+          :chapter="chapter"
+          :runs="chapterRuns"
+          :assembled="assembled"
+          :preview="previewing"
+          :act="act"
+          @preview="(at) => (previewing = at)"
+        />
       </template>
     </main>
   </div>

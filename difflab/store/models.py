@@ -129,7 +129,15 @@ class Job:
 
     def depends_on(self) -> set[int]:
         """The jobs whose outputs this one's inputs name."""
-        return {int(v["from_job"]) for v in self.inputs.values() if isinstance(v, dict) and "from_job" in v}
+        found: set[int] = set()
+        values = list(self.inputs.values())
+        while values:
+            value = values.pop()
+            if isinstance(value, dict) and "from_job" in value:
+                found.add(int(value["from_job"]))
+            elif isinstance(value, list):
+                values += value
+        return found
 
     @classmethod
     def of(cls, row: sqlite3.Row) -> Job:

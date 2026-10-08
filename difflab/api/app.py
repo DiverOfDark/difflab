@@ -26,6 +26,7 @@ from difflab.core import hub
 from difflab.core.settings import Continuity, IngestSettings
 from difflab.models.minimax_h3.settings import VideoSettings
 from difflab.screenplay import (
+    assembling,
     drawn,
     ideas,
     ingest,
@@ -626,6 +627,22 @@ def plan_production(production_id: int, chapter: int | None = None, fresh: bool 
 def render_production(production_id: int, chapter: int | None = None) -> dict[str, Any]:
     """Chapter `chapter` (from 0), or every one, a run each, queued in chapter order."""
     return _runs(lambda: planner.render_production(production_id, chapter_position=chapter))
+
+
+@app.post("/api/productions/{production_id}/assemble")
+def assemble_production(production_id: int, chapter: int | None = None) -> dict[str, Any]:
+    """Chapter `chapter` (from 0), or every one and the film, joined, levelled and subtitled from the clips it
+    has; nothing renders."""
+    return _runs(lambda: assembling.queue(production_id, chapter))
+
+
+@app.get("/api/productions/{production_id}/assembled")
+def read_assembled(production_id: int) -> dict[str, Any]:
+    """The Assemble page: each chapter's joins, dialogue and newest masters, and the film."""
+    found = assembling.status(production_id)
+    if found is None:
+        raise HTTPException(404, "no such production")
+    return found
 
 
 @app.get("/api/productions/{production_id}/queue")
