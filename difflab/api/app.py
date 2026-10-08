@@ -545,12 +545,15 @@ async def ingest_video(request: Request) -> dict[str, Any]:
     try:
         video = VideoSettings(**body["video"]) if body.get("video") else None
         continuity = Continuity(**body["continuity"]) if body.get("continuity") else None
+        title = " ".join(str(body.get("title", "")).split())
+        if not title:
+            raise ValueError("a title, in words")
         made = ingest.from_video(
-            str(body.get("slug", "")).strip(),
+            str(body.get("slug") or "").strip() or ingest.slug_for(title),
             str(body.get("source", "")),
             str(body.get("instruction", "")),
             [str(p) for p in body.get("photos") or []],
-            title=str(body.get("title", "")).strip(),
+            title=title,
             clip_scale=float(body.get("clip_scale") or 1.0),
             video=video,
             continuity=continuity,

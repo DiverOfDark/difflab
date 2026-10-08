@@ -10,6 +10,7 @@ and are handed that stretch of it to re-create.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import math
 import os
@@ -23,7 +24,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from difflab import config, store
+from difflab import store
 from difflab.core import media
 from difflab.core.cache import cache
 from difflab.core.imaging import load_image, load_video_frames, video_length
@@ -38,6 +39,7 @@ WORDS_PER_CHAPTER = 600  # a text with no headings: about one chapter of five 12
 HEADING = re.compile(r"^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$", re.M)
 REFERENCE_KINDS = (*KINDS_OF, "style", "video")
 VIDEOS = {".mp4", ".mov", ".mkv", ".webm"}
+FRAMES_AT_MOST = int(next(f for f in dataclasses.fields(IngestSettings) if f.name == "frames").metadata["high"])
 SHARPNESS_WIDTH = 512  # px: frames are measured at one width, so a 4K clip and a 720p one share a threshold
 
 
@@ -83,9 +85,10 @@ def sharpness(image: Image.Image) -> float:
 def frames_of(video: str | Path, count: int, least: float) -> dict[str, Any]:
     """`count` frames spread evenly over the video, each with its sharpness, kept when at least `least`;
     the sharpest is kept whatever it measures, so every video gives a picture."""
-    path = _under_output(video)
+    path = store.under_output(video)
     if not path.is_file() or path.suffix.lower() not in VIDEOS:
         raise ValueError(f"no such video: {video}")
+    count = min(max(count, 1), FRAMES_AT_MOST)
     seconds, _ = video_length(path)
     stat = path.stat()
     out: list[dict[str, Any]] = []
@@ -123,11 +126,11 @@ class Reference:
 def references_of(given: list[dict[str, Any]]) -> list[Reference]:
     out: dict[str, Reference] = {}
     for row in given:
-        path = store.relative(_under_output(str(row.get("path", ""))))
+        path = store.relative(store.under_output(str(row.get("path", ""))))
         kind = str(row.get("kind") or "")
         if kind not in REFERENCE_KINDS:
             raise ValueError(f"{path}: a reference is one of {', '.join(REFERENCE_KINDS)}, not {kind!r}")
-        if not _under_output(path).is_file():
+        if not store.under_output(path).is_file():
             raise ValueError(f"no such file: {path}")
         if (kind == "video") != (Path(path).suffix.lower() in VIDEOS):
             raise ValueError(f"{path}: a video is a motion reference, and a motion reference is a video")
@@ -141,8 +144,8 @@ def references_of(given: list[dict[str, Any]]) -> list[Reference]:
 
 def guess(paths: list[str], asked_by: str = "person") -> str:
     """What each upload shows, as a run of its own: the references table's guesses before any story is read."""
-    found = [store.relative(_under_output(p)) for p in paths]
-    if not found or not all(_under_output(p).is_file() for p in found):
+    found = [store.relative(store.under_output(p)) for p in paths]
+    if not found or not all(store.under_output(p).is_file() for p in found):
         raise ValueError("pictures under output/ to describe")
     with store.connect() as connection, store.transaction(connection):
         run_id = store.next_run_id(connection, datetime.now().strftime("%Y-%m-%d-%H%M%S"))
@@ -250,12 +253,7 @@ def _styles(connection: Any, production_id: int, styles: list[Reference]) -> Non
         member = store.put_member(connection, production_id, slug, "style", slug.replace("_", " "), "its", "")
         if reference.guess and not member.appearance:
             store.update_member(connection, member.id, appearance=reference.guess)
-        with Image.open(_under_output(reference.path)) as picture:
-            size = list(picture.size)
-        store.add_ref(
-            connection, member.id, "style", reference.path, [0, 0, *size], size, 0, [slug], 1.0,
-            artifact=reference.path, provided=reference.path,
-        )  # fmt: skip
+        production.add_style_picture(connection, member, reference.path)
 
 
 # --- a production that redoes a video ---------------------------------------------------------------
@@ -272,14 +270,14 @@ def from_video(
     """The video cut into shots of the render length - a remainder under half a shot is left alone -
     each opening on the source's frame at that moment, handed that stretch of it as <Video 1>, and
     captioned with `instruction` as the one difference. The photographs ride along as references."""
-    path = _under_output(source)
+    path = store.under_output(source)
     if not path.is_file():
         raise ValueError(f"no such video: {source}")
     if not instruction.strip():
         raise ValueError("what should be different about it, in one line")
     if not 0.1 <= clip_scale <= 1.0:
         raise ValueError(f"clip_scale={clip_scale:g}: the source is shown between 0.1 and 1.0 of the canvas")
-    kept = [store.relative(_under_output(p)) for p in photos or []]
+    kept = [store.relative(store.under_output(p)) for p in photos or []]
     made = production.create(slug, title, video, continuity)
     chosen, _ = settings.effective("render_chunk", made.id)
     carried, _ = settings.effective("handoff", made.id)
@@ -328,11 +326,6 @@ def _begun(production_id: int, kind: str, story: str, manifest: dict[str, Any]) 
         updated = store.production(connection, production_id)
     assert updated is not None
     return updated
-
-
-def _under_output(path: str | Path) -> Path:
-    given = Path(path)
-    return given if given.is_absolute() else config.OUTPUT_DIR / given
 
 
 def _dump(value: Any) -> str:

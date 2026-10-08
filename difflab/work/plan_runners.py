@@ -21,7 +21,7 @@ from difflab.core.cache import cache
 from difflab.core.keys import Key, key
 from difflab.core.types import Frame
 from difflab.models.minimax_h3.settings import VideoSettings
-from difflab.screenplay import checks, compiler, crops, words
+from difflab.screenplay import checks, compiler, crops, looks, words
 from difflab.screenplay import config as knobs
 from difflab.screenplay import production as production_module
 from difflab.screenplay import settings as chosen
@@ -570,6 +570,9 @@ def _castings(inputs: dict[str, Any], outputs: dict[str, Any]) -> None:
         chapter = store.chapter(connection, chapter_id)
         assert chapter is not None
         members = {m.slug: m.id for m in store.members_of(connection, production_id)}
+        production = store.production(connection, production_id)
+        assert production is not None
+        before = looks.resolve(connection, production)
         shots = store.shots_of(connection, chapter_id)
         said: dict[str, str] = {}
         for shot, plan, changed in zip(shots, outputs["chunks"], outputs["looks"], strict=False):
@@ -595,7 +598,9 @@ def _castings(inputs: dict[str, Any], outputs: dict[str, Any]) -> None:
                     connection, found.id, position=position, origin=origin, label=label if amend else ""
                 )
             for gone in existing.values():
+                production_module.restale_looks(connection, gone.id)
                 store.delete_casting(connection, gone.id)
+        production_module.restage(connection, production, before, set(), skip=chapter_id)
 
 
 def _voices(production_id: int, voices: dict[str, str]) -> None:

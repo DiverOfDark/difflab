@@ -12,6 +12,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from PIL import Image
+
 from difflab import config, store
 from difflab.core import media
 from difflab.core.keys import key
@@ -83,7 +85,7 @@ def add_shot(
         shot = store.add_shot(connection, chapters[chapter].id, seconds, action=action, chained=chained)
         store.set_prompt(connection, shot.id, prompt.strip())
         if keyframe is not None:
-            store.provide_keyframe(connection, shot.id, store.relative(_under_output(keyframe)))
+            store.provide_keyframe(connection, shot.id, store.relative(store.under_output(keyframe)))
         video, _ = settings.effective("render_chunk", production_id)
         assert isinstance(video, VideoSettings)
         store.set_clip_seed(connection, shot.id, seed if seed is not None else video.seed + shot.position)
@@ -120,7 +122,7 @@ def update_shot(shot_id: int, **changes: Any) -> store.Shot:
                     raise ValueError("a shot opens on the first photo once a plan has cut it")
                 store.provide_keyframe(connection, shot_id, opening, note=OPENING_NOTE)
             elif given:
-                store.provide_keyframe(connection, shot_id, store.relative(_under_output(str(given))))
+                store.provide_keyframe(connection, shot_id, store.relative(store.under_output(str(given))))
             else:
                 store.chain_keyframe(connection, shot_id)
             joined = True
@@ -271,15 +273,14 @@ def _edit_plan(connection: Any, chapter: store.Chapter, shot: store.Shot, **plan
         plan["sounds"] = " ".join(str(planned["sound"] or "").split())
     move, toward = plan.get("camera_move", ""), plan.get("camera_toward", "")
     dialogue = " / ".join(f"{line['who']}: {line['line']}" for line in plan.get("dialogue", []))
+    before = looks.resolve(connection, production)
     _sync_castings(connection, shot, [str(m) for m in plan.get("cast", [])])
     store.update_shot(connection, shot.id, plan=plan, camera=f"{move} → {toward}", dialogue=dialogue, pinned=True)
     recompile(connection, production, chapter, shot.id)
     if "closing" in planned and following is not None:
         recompile(connection, production, chapter, following.id)  # it opens on this closing
-    if "closing" in planned or "cast" in planned:  # the castings may have moved what later shots carry
-        for later in shots[shot.position + 1 :]:
-            if later.plan.get("beats"):
-                recompile(connection, production, chapter, later.id)
+    if "cast" in planned:
+        restage(connection, production, before, set())
 
 
 def _sync_castings(connection: Any, shot: store.Shot, cast: list[str]) -> None:
@@ -293,6 +294,7 @@ def _sync_castings(connection: Any, shot: store.Shot, cast: list[str]) -> None:
             store.add_casting(connection, shot.id, members[slug])
     for member_id, casting in held.items():
         if member_id not in {members[slug] for slug in cast}:
+            restale_looks(connection, casting.id)
             store.delete_casting(connection, casting.id)
 
 
@@ -547,7 +549,7 @@ def update_member(member_id: int, **changes: Any) -> dict[str, int]:
         if any(field in changes for field in VOICE):
             fields = {field: " ".join(str(changes.get(field, getattr(member, field))).split()) for field in VOICE}
             if fields["reference_audio"]:
-                fields["reference_audio"] = store.relative(_under_output(fields["reference_audio"]))
+                fields["reference_audio"] = store.relative(store.under_output(fields["reference_audio"]))
             if fields != {field: getattr(member, field) for field in VOICE}:
                 store.update_member(connection, member_id, **fields)
                 moved["clips"] += _revoice(connection, production, member.slug)
@@ -718,6 +720,9 @@ def give_ref(member_id: int, path: str, role: str) -> dict[str, int]:
         production = None if member is None else store.production(connection, member.production_id)
         if member is None or production is None:
             raise LookupError(f"no member {member_id}")
+        if member.kind == "style":
+            add_style_picture(connection, member, store.relative(store.under_output(path)))
+            return _stale(connection, _shots_of(connection, production.id))
         if role not in crops.WANTS[member.kind]:
             raise ValueError(f"a {member.kind} takes a {' or '.join(crops.WANTS[member.kind])} picture, not {role}")
         given, kept, box, size = _fitted(production, path, role, f"{member.slug}_{role}")
@@ -728,12 +733,21 @@ def give_ref(member_id: int, path: str, role: str) -> dict[str, int]:
         return _stale(connection, _shots_of(connection, production.id, member.slug))
 
 
+def add_style_picture(connection: Any, member: store.Member, path: str) -> None:
+    """Kept whole, as given: a style is read for its look, never cut or fitted to the canvas."""
+    with Image.open(store.under_output(path)) as picture:
+        size = list(picture.size)
+    store.add_ref(
+        connection, member.id, "style", path, [0, 0, *size], size, 0, [member.slug], 1.0, artifact=path, provided=path,
+    )  # fmt: skip
+
+
 def _fitted(production: store.Production, path: str, role: str, name: str) -> tuple[str, str, crops.Box, list[int]]:
     """A picture from outside, fitted the way a crop is so H3 takes it as it is: (given, kept, box, size)."""
     canvas = production.manifest.get("canvas")
     if not canvas:
         raise ValueError("plan the chapter first: its canvas decides the picture's size")
-    source = Path(path) if Path(path).is_absolute() else config.OUTPUT_DIR / path
+    source = store.under_output(path)
     frame = media.frame_from_image(source)
     pixels = knobs.DIRECTOR_ENVIRONMENT_PIXELS if role == "environment" else knobs.DIRECTOR_VIEW_PIXELS
     whole = crops.Box(0, 0, frame.width, frame.height)
@@ -864,7 +878,7 @@ def add_photos(production_id: int, paths: list[str]) -> int:
     to be attached. How many were new."""
     given = []
     for path in paths:
-        found = _under_output(path)
+        found = store.under_output(path)
         if not found.is_file():
             raise ValueError(f"{path}: no such upload")
         given.append(store.relative(found))
@@ -1087,7 +1101,6 @@ def _recast(
     shot = store.shot(connection, casting.shot_id)
     assert member is not None and shot is not None
     before = looks.resolve(connection, production)
-    touched = {shot.id, *before.placed[shot.id][member.slug].carried_into}
     if changes is None:
         restale_looks(connection, casting.id)
         store.delete_casting(connection, casting.id)
@@ -1112,10 +1125,22 @@ def _recast(
         store.update_shot(connection, shot.id, plan={**shot.plan, "cast": cast}, pinned=True)
     else:
         store.touch_shot(connection, shot.id)
+    restage(connection, production, before, {shot.id})
+
+
+def restage(
+    connection: Any, production: store.Production, before: looks.Resolved, also: set[int], skip: int | None = None
+) -> None:
+    """Every shot whose looks moved since `before`, in any chapter but `skip`, stale and compiled again,
+    and every drawn look now made from another source or other words."""
     after = looks.resolve(connection, production)
-    if changes is not None:
-        touched |= set(after.placed[shot.id][member.slug].carried_into)
-    shots = [one for one in _shots_of(connection, production.id) if one.id in touched]
+    for look in after.looks.values():
+        was = before.looks.get(look.casting.id) if look.casting is not None else None
+        moved = was is None or (was.source, was.words) != (look.source, look.words)
+        if moved and look.casting is not None and look.casting.artifact and look.casting.state != store.STALE:
+            store.set_made(connection, "casting", look.casting.id, store.STALE)
+    touched = looks.moved(before, after) | also
+    shots = [one for one in _shots_of(connection, production.id) if one.id in touched and one.chapter_id != skip]
     _stale(connection, shots, prompts=False)
     for one in shots:
         chapter = store.chapter(connection, one.chapter_id)
@@ -1984,8 +2009,3 @@ def _made(made: store.Made) -> dict[str, Any]:
         "reviewed_by": made.reviewed_by,
         "reviewed_at": made.reviewed_at,
     }
-
-
-def _under_output(path: str | Path) -> Path:
-    given = Path(path)
-    return given if given.is_absolute() else config.OUTPUT_DIR / given

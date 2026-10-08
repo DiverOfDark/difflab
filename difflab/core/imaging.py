@@ -23,6 +23,8 @@ def load_video_frames(
     before `start`, so frames before it are dropped to keep the first frame the right one."""
     frames: list[Image.Image] = []
     with av.open(str(path)) as container:
+        if not container.streams.video:
+            raise ValueError(f"{Path(path).name} has no video stream")
         stream = container.streams.video[0]
         rate = float(stream.average_rate) if stream.average_rate else 24.0
         if start > 0:
@@ -44,6 +46,8 @@ def load_video_frames(
 def video_length(path: str | Path) -> tuple[float, float]:
     """`(seconds, fps)` from the container, without decoding a frame of it."""
     with av.open(str(path)) as container:
+        if not container.streams.video:
+            raise ValueError(f"{Path(path).name} has no video stream")
         stream = container.streams.video[0]
         rate = float(stream.average_rate) if stream.average_rate else 24.0
         if stream.duration is not None and stream.time_base is not None:

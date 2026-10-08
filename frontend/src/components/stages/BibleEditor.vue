@@ -180,7 +180,7 @@ const generated = computed(() => refs.value.filter((r) => r.role === GENERATED).
 const shownAs = (r: Ref) => (props.member?.plate && r.plate ? r.plate : r.artifact!)
 const refName = (r: Ref) => (r.role === GENERATED ? `drawn · seed ${r.seed ?? '—'}` : `${r.role} · ${audioName(r.photo || r.artifact!)}`)
 const drawing = computed(() => drawingRun(props.production))
-const GIVEN_ROLE: Record<string, string> = { environment: 'environment', person: 'body', animal: 'view', object: 'object' }
+const GIVEN_ROLE: Record<string, string> = { environment: 'environment', person: 'body', animal: 'view', object: 'object', style: 'style' }
 const dragging = ref(false)
 const fileInput = ref<HTMLInputElement | null>(null)
 function give(files: FileList | null | undefined) {
@@ -460,11 +460,11 @@ const remove = () => {
               @drop.prevent="((dragging = false), give($event.dataTransfer?.files))"
             >
               <span>{{ busy === `give ${member.id}` ? 'fitting it…' : 'Drop another photo' }}</span>
-              <span class="mono hint">frontal, sharp, plain background works best</span>
+              <span class="mono hint">{{ member.kind === 'style' ? 'a still or a grade with the look, kept whole' : 'frontal, sharp, plain background works best' }}</span>
               <input ref="fileInput" type="file" accept="image/*" hidden @change="give(($event.target as HTMLInputElement).files)" />
             </div>
             <div v-for="g in member.gaps ?? []" :key="g.role" class="gap note">no {{ g.role }} picture: {{ g.why }}</div>
-            <div v-if="member.kind !== 'environment'" class="plate">
+            <div v-if="member.kind !== 'environment' && member.kind !== 'style'" class="plate">
               <span class="eyebrow">PLATE</span>
               <label>
                 <input type="checkbox" :checked="member.plate" :disabled="!!busy || !plates.length" @change="togglePlate(($event.target as HTMLInputElement).checked)" />

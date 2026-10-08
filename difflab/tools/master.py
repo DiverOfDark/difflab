@@ -61,18 +61,20 @@ def master(video: Path, destination: Path, target: float, cues: Sequence[Cue], t
     """`video` at `target` LUFS into `destination`, the picture copied, `cues` muxed as a mov_text track when
     `track`. Returns the integrated loudness written, None for silence."""
     with av.open(str(video)) as container:
-        rate = container.streams.audio[0].sample_rate
+        rate = container.streams.audio[0].sample_rate if container.streams.audio else None
     with tempfile.TemporaryDirectory() as scratch:
         sound = Path(scratch) / "levelled.wav"
-        level = _level(video, sound, target, rate)
+        level = _level(video, sound, target, rate) if rate is not None else None
         subtitles = Path(scratch) / "dialogue.srt"
         subtitles.write_text(srt(cues))
         muxed = track and bool(cues)
+        heard = ["-i", str(sound)] if rate is not None else []
         _ffmpeg(
-            "-i", str(video), "-i", str(sound), *(["-i", str(subtitles)] if muxed else []),
-            "-map", "0:v:0", "-map", "1:a:0", *(["-map", "2:0", "-c:s", "mov_text",
-                                                 "-metadata:s:s:0", "handler_name=Dialogue"] if muxed else []),
-            "-c:v", "copy", "-c:a", "aac", "-b:a", AUDIO_BITRATE, "-movflags", "+faststart", str(destination),
+            "-i", str(video), *heard, *(["-i", str(subtitles)] if muxed else []),
+            "-map", "0:v:0", *(["-map", "1:a:0", "-c:a", "aac", "-b:a", AUDIO_BITRATE] if heard else []),
+            *(["-map", f"{1 + bool(heard)}:0", "-c:s", "mov_text", "-metadata:s:s:0", "handler_name=Dialogue"]
+              if muxed else []),
+            "-c:v", "copy", "-movflags", "+faststart", str(destination),
         )  # fmt: skip
     return level
 
@@ -113,6 +115,10 @@ def _level(video: Path, sound: Path, target: float, rate: int) -> float | None:
 def film(chapters: Sequence[Chapter], destination: Path, title: str, markers: bool, track: bool) -> list[Cue]:
     """The chapters end to end with their streams copied, a chapter marker at each when `markers`.
     Returns every cue at its time in the film."""
+    rates = {chapter.video.name: _frame_rate(chapter.video) for chapter in chapters}
+    if len(set(rates.values())) > 1:
+        said = ", ".join(f"{name} {rate:g} fps" for name, rate in rates.items())
+        raise ValueError(f"the chapters' streams are copied, so they share one frame rate: {said}")
     cues: list[Cue] = []
     meta = [";FFMETADATA1", f"title={_escape(title)}"]
     at = 0.0
@@ -132,13 +138,21 @@ def film(chapters: Sequence[Chapter], destination: Path, title: str, markers: bo
         _ffmpeg(
             "-f", "concat", "-safe", "0", "-i", str(listed), "-i", str(metadata),
             *(["-i", str(subtitles)] if muxed else []),
-            "-map", "0:v:0", "-map", "0:a:0", *(["-map", "2:0"] if muxed else []),
+            "-map", "0:v:0", "-map", "0:a:0?", *(["-map", "2:0"] if muxed else []),
             "-map_metadata", "1", "-map_chapters", "1" if markers else "-1",
             "-c:v", "copy", "-c:a", "copy",
             *(["-c:s", "mov_text", "-metadata:s:s:0", "handler_name=Dialogue"] if muxed else []),
             "-movflags", "+faststart", str(destination),
         )  # fmt: skip
     return cues
+
+
+def _frame_rate(video: Path) -> float:
+    with av.open(str(video)) as container:
+        if not container.streams.video:
+            raise ValueError(f"{video.name} has no video stream")
+        rate = container.streams.video[0].average_rate
+        return round(float(rate), 3) if rate else 0.0
 
 
 def seconds_of(video: Path) -> float:

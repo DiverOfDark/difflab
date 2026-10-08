@@ -140,6 +140,18 @@ def resolve(connection: Any, production: store.Production) -> Resolved:
     return Resolved(tuple(order), placed, looks, _gaps(order, placed))
 
 
+def moved(before: Resolved, after: Resolved) -> set[int]:
+    """Every shot where a member starts from or shows a different look, or one whose words changed."""
+
+    def shown(resolved: Resolved, shot: int) -> dict[str, tuple[Any, ...]]:
+        return {
+            member: tuple((look, resolved.look(member, look).words) for look in (one.source, one.look))
+            for member, one in resolved.placed.get(shot, {}).items()
+        }
+
+    return {shot for shot in {*before.placed, *after.placed} if shown(before, shot) != shown(after, shot)}
+
+
 def _gaps(order: list[int], placed: dict[int, dict[str, Placed]]) -> dict[str, tuple[tuple[int, ...], ...]]:
     seen: dict[str, list[int]] = {}
     for index, shot_id in enumerate(order):

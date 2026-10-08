@@ -313,6 +313,18 @@ def relative(path: Path | str) -> str:
     return resolved.relative_to(root).as_posix()
 
 
+def under_output(path: Path | str) -> Path:
+    """A path the page gave, relative to `config.OUTPUT_DIR` or absolute, refused when it leads outside it."""
+    given = Path(path)
+    resolved, root = (
+        (given if given.is_absolute() else config.OUTPUT_DIR / given).resolve(),
+        config.OUTPUT_DIR.resolve(),
+    )
+    if not resolved.is_relative_to(root):
+        raise ValueError(f"{path} is not under {root}")
+    return resolved
+
+
 # --- events -----------------------------------------------------------------------------------
 def add_event(
     connection: sqlite3.Connection,

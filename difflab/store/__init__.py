@@ -98,6 +98,7 @@ from difflab.store.repo import (
     take_commands,
     task,
     tasks_of,
+    under_output,
 )
 from difflab.store.screenplay import (
     MADE_TABLES,
@@ -349,6 +350,7 @@ __all__ = [
     "touch_production",
     "touch_shot",
     "transaction",
+    "under_output",
     "update_casting",
     "update_member",
     "update_production",

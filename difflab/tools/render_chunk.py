@@ -348,11 +348,14 @@ def chunk_key(
     clips: Sequence[Clip] = (),
     clip_scale: float = 1.0,
     closing: Frame | None = None,
+    canvas_from: Frame | None = None,
 ) -> Key:
     """What identifies a chunk: its opening, prompt, settings, references, tail and any reference
     clips - pictures by their pixels, never by their paths, so renaming a photo renders nothing again.
-    A part added here moves every chunk, which is what the version is for; `closing` is keyed only
-    when given, so it moved none."""
+    A part added here moves every chunk, which is what the version is for; `closing` and `canvas` are
+    keyed only when given, so they moved none. The canvas is keyed only without an opening, which
+    otherwise decides the shape itself."""
+    canvas = (canvas_from.width, canvas_from.height) if opening is None and canvas_from is not None else None
     return key(
         "render_chunk",
         1,
@@ -364,6 +367,7 @@ def chunk_key(
         clips=[clip.frames for clip in clips],
         clip_scale=clip_scale,
         **({"closing": closing.pixels} if closing is not None else {}),
+        **({"canvas": canvas} if canvas is not None else {}),
     )
 
 
@@ -387,7 +391,7 @@ def cached_latents(
     deterministic - and they are small: a 15 s chunk is about 17 MB against gigabytes once it has been
     decoded at 2 MP.
     """
-    made = chunk_key(opening, prompt, settings, references, tail, clips, clip_scale, closing)
+    made = chunk_key(opening, prompt, settings, references, tail, clips, clip_scale, closing, canvas_from)
     # Without a keyframe there is nothing to plan the canvas from, so the shape comes from a frame
     # that is only ever measured: ref2va fixes no opening, and that is the whole point of using it.
     shape = opening or canvas_from

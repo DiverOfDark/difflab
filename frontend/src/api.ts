@@ -115,7 +115,14 @@ export const staled = shallowRef<{ production: number; stale: Stale } | null>(nu
 
 async function json<T>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(url, options)
-  if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as any).detail ?? (await res.text()))
+  if (!res.ok) {
+    const text = await res.text()
+    let detail: unknown
+    try {
+      detail = JSON.parse(text)?.detail
+    } catch {}
+    throw new Error(detail == null ? text : typeof detail === 'string' ? detail : JSON.stringify(detail))
+  }
   const found = await res.json()
   if (found?.stale?.shots?.length) staled.value = { production: found.id, stale: found.stale }
   return found as T

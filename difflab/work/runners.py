@@ -136,7 +136,7 @@ def run_render_shot(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
     position = int(inputs.get("position", 0))
     clips, scale = _excerpt(inputs.get("source"), shape, video)
 
-    chunk = render_chunk.chunk_key(opening, prompt, video, references, tail, clips, scale, closing)
+    chunk = render_chunk.chunk_key(opening, prompt, video, references, tail, clips, scale, closing, shape)
     # A shot that ends on the next one's keyframe is cut on its very last frame, the one pinned to it.
     window = 1 if closing is not None else continuity.handoff_window
     hold = continuity.color_hold if opening is not None else 0.0

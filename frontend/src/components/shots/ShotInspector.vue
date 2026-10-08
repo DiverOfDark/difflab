@@ -190,10 +190,8 @@ const waiting = computed(() => props.shot.waiting.length)
 const keyframeVerdict = computed(() => verdict(props.shot.keyframe.review))
 const openingNote = computed(() => {
   const s = props.shot
-  if (s.opening === 'chain') {
-    const window = Number((props.production.manifest.continuity as { handoff_window?: number } | undefined)?.handoff_window ?? 6)
-    return `Sharpest of the last ${window} frames of ${named(before.value?.id ?? null)}. References still steer identity; a change made here has to become visible from that frame on.`
-  }
+  if (s.opening === 'chain')
+    return `The sharpest of the last frames of ${named(before.value?.id ?? null)}, within the handoff window. References still steer identity; a change made here has to become visible from that frame on.`
   if (s.opening === 'refs') return 'H3 ref2va starts from the references alone. Composition is left to the model; use for inserts and establishing shots.'
   if (s.keyframe.source === 'provided') return 'A picture given by hand, used as it is.'
   if (waiting.value) return 'Qwen-Image composes the first frame from the references as they stand here. It waits until every changed state has an approved image.'

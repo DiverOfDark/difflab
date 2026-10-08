@@ -3,11 +3,13 @@ epub and a docx are zips of XML, so those two are read here; a pdf goes through 
 
 from __future__ import annotations
 
+import html.entities
 import io
 import posixpath
 import re
 import zipfile
 from pathlib import PurePosixPath
+from urllib.parse import unquote
 from xml.etree import ElementTree
 
 import pypdf
@@ -15,6 +17,10 @@ import pypdf
 KINDS = (".epub", ".pdf", ".txt", ".md", ".docx")
 _HEADING_TAG = re.compile(r"h([1-6])")
 _DOCX = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+# A drawing's fallback repeats its textbox for readers without DrawingML.
+_FALLBACK = "{http://schemas.openxmlformats.org/markup-compatibility/2006}Fallback"
+_ENTITY = re.compile(rb"&([A-Za-z][A-Za-z0-9]*);")
+_XML_ENTITIES = {b"amp", b"lt", b"gt", b"quot", b"apos"}
 _BLOCKS = {"p", "div", "li", "blockquote", "pre", "tr"}
 
 
@@ -31,27 +37,38 @@ def read(data: bytes, filename: str) -> str:
             return pdf(data)
     except (zipfile.BadZipFile, ElementTree.ParseError, KeyError, pypdf.errors.PyPdfError) as problem:
         raise ValueError(f"{filename} could not be read: {problem}") from problem
-    return data.decode("utf-8", errors="replace").replace("\r\n", "\n")
+    return data.decode("utf-8-sig", errors="replace").replace("\r\n", "\n")
 
 
 def epub(data: bytes) -> str:
     with zipfile.ZipFile(io.BytesIO(data)) as book:
         container = ElementTree.fromstring(book.read("META-INF/container.xml"))
-        package = next(e.get("full-path", "") for e in container.iter() if _local(e.tag) == "rootfile")
+        package = next((e.get("full-path", "") for e in container.iter() if _local(e.tag) == "rootfile"), "")
+        if not package:
+            raise ValueError("an epub whose container names no package")
         opf = ElementTree.fromstring(book.read(package))
         items = {e.get("id"): e.get("href", "") for e in opf.iter() if _local(e.tag) == "item"}
         spine = [items[e.get("idref")] for e in opf.iter() if _local(e.tag) == "itemref" and e.get("idref") in items]
         folder = posixpath.dirname(package)
-        parts = [_xhtml(book.read(posixpath.normpath(posixpath.join(folder, href.split("#")[0])))) for href in spine]
+        parts = [
+            _xhtml(book.read(posixpath.normpath(posixpath.join(folder, unquote(href.split("#")[0]))))) for href in spine
+        ]
     return _tidy("\n\n".join(parts))
 
 
 def _xhtml(data: bytes) -> str:
-    root = ElementTree.fromstring(data)
+    root = ElementTree.fromstring(_ENTITY.sub(_numeric, data))
     body = next((e for e in root.iter() if _local(e.tag) == "body"), root)
     out: list[str] = []
     _walk(body, out)
     return "\n\n".join(out)
+
+
+def _numeric(found: re.Match[bytes]) -> bytes:
+    """HTML's named entities, which an XHTML file uses and an XML parser does not know, as numbers."""
+    name = found.group(1)
+    point = html.entities.name2codepoint.get(name.decode())
+    return found.group(0) if name in _XML_ENTITIES or point is None else b"&#%d;" % point
 
 
 def _walk(element: ElementTree.Element, out: list[str]) -> None:
@@ -75,12 +92,40 @@ def docx(data: bytes) -> str:
         root = ElementTree.fromstring(document.read("word/document.xml"))
         styles = _docx_styles(document)
     out = []
-    for paragraph in root.iter(f"{_DOCX}p"):
-        said = "".join(t.text or "" for t in paragraph.iter(f"{_DOCX}t"))
+    for paragraph in _docx_paragraphs(root):
+        said = _docx_text(paragraph)
         style = paragraph.find(f"{_DOCX}pPr/{_DOCX}pStyle")
         level = _docx_level(styles.get(style.get(f"{_DOCX}val", ""), "") if style is not None else "")
         out.append(("#" * level + " " if level and said.strip() else "") + said)
     return _tidy("\n\n".join(out))
+
+
+def _docx_paragraphs(element: ElementTree.Element) -> list[ElementTree.Element]:
+    """In document order, a textbox's paragraphs after the one holding it, none from a fallback."""
+    out = []
+    for child in element:
+        if child.tag == _FALLBACK:
+            continue
+        if child.tag == f"{_DOCX}p":
+            out.append(child)
+        out += _docx_paragraphs(child)
+    return out
+
+
+def _docx_text(element: ElementTree.Element) -> str:
+    said = []
+    for child in element:
+        if child.tag in (f"{_DOCX}p", f"{_DOCX}pPr", f"{_DOCX}rPr", f"{_DOCX}txbxContent", _FALLBACK):
+            continue
+        if child.tag == f"{_DOCX}t":
+            said.append(child.text or "")
+        elif child.tag in (f"{_DOCX}br", f"{_DOCX}cr"):
+            said.append("\n")
+        elif child.tag == f"{_DOCX}tab":
+            said.append("\t")
+        else:
+            said.append(_docx_text(child))
+    return "".join(said)
 
 
 def _docx_styles(document: zipfile.ZipFile) -> dict[str, str]:
