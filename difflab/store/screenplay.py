@@ -8,9 +8,11 @@ import time
 from typing import Any
 
 from difflab.store.models import (
+    APPROVED,
     CHAINED,
     COMPOSED,
     GENERATED,
+    MADE,
     MISSING,
     PINNED,
     PROVIDED,
@@ -323,11 +325,11 @@ def set_compiled(
     connection: sqlite3.Connection, shot_id: int, text: str, pictures: list[str], checks: list[dict[str, Any]], key: str
 ) -> Prompt:
     """A caption the compiler wrote from the plan, with the pictures its clip is handed. Not pinned:
-    a plan change recompiles it, and a hand edit (`set_prompt`) pins it."""
+    a plan change recompiles it, and a hand edit (`set_prompt`) pins it. An approval holds while the key does."""
     connection.execute(
         "UPDATE prompts SET text = ?, written_by = 'compiler', pictures = ?, checks = ?, wanted_key = ?, "
-        "state = 'made', pinned = 0 WHERE shot_id = ?",
-        (text, _dump(pictures), _dump(checks), key, shot_id),
+        "state = CASE WHEN state = ? AND wanted_key = ? THEN ? ELSE ? END, pinned = 0 WHERE shot_id = ?",
+        (text, _dump(pictures), _dump(checks), key, APPROVED, key, APPROVED, MADE, shot_id),
     )
     return prompt_of(connection, shot_id)
 

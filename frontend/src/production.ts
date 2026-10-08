@@ -32,7 +32,7 @@ export const PHASE_LABEL: Record<Phase, string> = {
 }
 
 export const pad = (n: number, width: number) => String(n).padStart(width, '0')
-export const shotId = (chapter: number, shot: ShotInfo) => `${pad(chapter + 1, 2)}.${pad(shot.position + 1, 3)}`
+export const shotId = (shot: ShotInfo) => `${pad(shot.chapter + 1, 2)}.${pad(shot.position + 1, 3)}`
 export const castOf = (shot: ShotInfo) => (Array.isArray(shot.plan.cast) ? (shot.plan.cast as string[]) : [])
 export const words = (text: string) => text.split(/\s+/).filter(Boolean).length
 
@@ -53,8 +53,8 @@ export function ago(t: number): string {
 export const runLive = (state: string) => state === 'live' || state === 'queued' || state === 'running' || state === 'paused'
 
 /** Plan runs are scoped `plan:<chapter id>`, chapter runs `chapter:<chapter id>`. */
-export function runsFor(production: Production, kind: 'plan' | 'chapter', chapterId: number) {
-  return production.runs.filter((r) => r.scope === `${kind}:${chapterId}`)
+export function runsFor(production: Production, kind: 'plan' | 'chapter', chapterIds: number[]) {
+  return production.runs.filter((r) => chapterIds.some((id) => r.scope === `${kind}:${id}`))
 }
 
 /** The run drawing a production's references, while it is queued or running. */

@@ -1,13 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
-import { control, deleteShot, outputUrl, rerollShot, type Production, type ShotInfo } from '../../api'
+import { approveMade, control, deleteShot, outputUrl, rerollShot, type Production, type ShotInfo } from '../../api'
 import { FINISHED, phaseOf, shotId, type StageId } from '../../production'
 import { state } from '../../store'
 
 const props = defineProps<{
   production: Production
-  chapter: number
   shots: ShotInfo[]
   focus: number | null
   run: Production['runs'][number] | undefined
@@ -30,12 +29,12 @@ const clips = computed(() => {
 })
 
 const reroll = (s: ShotInfo) => {
-  const typed = prompt(`Seed for shot ${shotId(props.chapter, s)} (blank: a random one)`, '')
+  const typed = prompt(`Seed for shot ${shotId(s)} (blank: a random one)`, '')
   if (typed === null) return
   props.act(`reroll ${s.id}`, () => rerollShot(s.id, typed.trim() === '' ? undefined : Number(typed)))
 }
 const remove = (s: ShotInfo) => {
-  if (confirm(`Delete shot ${shotId(props.chapter, s)}? Its clip stays on disk.`)) props.act(`remove ${s.id}`, () => deleteShot(s.id))
+  if (confirm(`Delete shot ${shotId(s)}? Its clip stays on disk.`)) props.act(`remove ${s.id}`, () => deleteShot(s.id))
 }
 const toggle = () => props.act('pause', () => control(props.run!.id, { cmd: paused.value ? 'resume' : 'pause' }))
 </script>
@@ -53,7 +52,7 @@ const toggle = () => props.act('pause', () => control(props.run!.id, { cmd: paus
           <i :style="{ width: `${(flagged / n) * 100}%`, background: 'var(--status-degraded)' }" />
         </div>
         <div class="facts mono">
-          <span>NOW <b>{{ now ? shotId(chapter, now) : run ? 'between jobs' : 'idle' }}</b></span>
+          <span>NOW <b>{{ now ? shotId(now) : run ? 'between jobs' : 'idle' }}</b></span>
           <span v-if="summary">JOBS <b>{{ summary.jobs_done }} / {{ summary.jobs_total }}</b></span>
           <span>RUN <b>{{ run ? `${run.id} · ${summary?.status ?? run.state}` : 'none' }}</b></span>
         </div>
@@ -69,7 +68,7 @@ const toggle = () => props.act('pause', () => control(props.run!.id, { cmd: paus
         <div class="head slim"><h5>Queue</h5><span class="mono dim small">chapter order · chained shots adjacent</span></div>
         <button v-for="s in shots" :key="s.id" class="q" :class="{ on: s.id === focus }" @click="emit('go', 'render', s.id)">
           <i class="dot" :class="phaseOf(s.clip.state)" />
-          <span class="mono">{{ shotId(chapter, s) }}</span>
+          <span class="mono">{{ shotId(s) }}</span>
           <span class="act">{{ s.chained ? '│ ' : '' }}{{ s.action }}</span>
           <span class="mono dim small">{{ s.seconds }} s</span>
           <span class="ph" :class="phaseOf(s.clip.state)">{{ s.clip.state.toUpperCase() }}</span>
@@ -81,12 +80,22 @@ const toggle = () => props.act('pause', () => control(props.run!.id, { cmd: paus
         <p v-if="!clips.length" class="note pad">Nothing rendered yet.</p>
         <div v-for="s in clips" :key="s.id" class="clip" :class="{ on: s.id === focus }">
           <video v-if="s.clip.artifact && s.clip.present" :src="outputUrl(s.clip.artifact)" controls preload="metadata" />
-          <div v-else class="frame empty mono">{{ shotId(chapter, s) }}</div>
+          <div v-else class="frame empty mono">{{ shotId(s) }}</div>
           <div class="what">
-            <span class="mono">{{ shotId(chapter, s) }} <span class="ph" :class="phaseOf(s.clip.state)">{{ s.clip.state }}</span></span>
+            <span class="mono">{{ shotId(s) }} <span class="ph" :class="phaseOf(s.clip.state)">{{ s.clip.state }}</span></span>
             <span :class="s.clip.review ? 'warn' : 'why'">{{ s.clip.review || s.action }}</span>
             <span class="mono dim tiny">seed {{ s.clip.seed }}{{ s.clip.handoff !== null ? ` · hands off at frame ${s.clip.handoff}` : '' }}</span>
             <span class="acts">
+              <button
+                v-if="s.clip.state === 'needs_review'"
+                class="link"
+                :disabled="!!busy"
+                title="Approve the clip as it is; a run paused on it goes on"
+                @click="act(`accept ${s.id}`, () => approveMade('clip', s.clip.id))"
+              >
+                accept
+              </button>
+              <span v-else-if="s.clip.state === 'approved' && s.clip.reviewed_by === 'person'" class="mono dim tiny">accepted</span>
               <button class="link" :disabled="!!busy" @click="reroll(s)">re-roll</button>
               <button class="link" @click="emit('go', 'keyframes', s.id)">back to keyframe</button>
               <button class="link" @click="emit('go', 'prompts', s.id)">prompt</button>

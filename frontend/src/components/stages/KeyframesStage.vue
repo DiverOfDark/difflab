@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { outputUrl, patchProduction, patchShot, redoKeyframe, renderKeyframes, type Production, type ShotInfo } from '../../api'
+import { approveMade, outputUrl, patchProduction, patchShot, redoKeyframe, renderKeyframes, type Production, type ShotInfo } from '../../api'
 import { castOf, phaseOf, shotId, type Phase, type StageId } from '../../production'
 import PhotoPicker from '../PhotoPicker.vue'
 
 const props = defineProps<{
   production: Production
-  chapter: number
+  chapter: number | null
   shots: ShotInfo[]
   focus: number | null
   busy: string
@@ -143,7 +143,7 @@ const impact = computed(() => {
         <button class="link big" @click="emit('go', 'keyframes')">← keyframes</button>
         <span class="steps"><button @click="step(-1)">‹</button><button @click="step(1)">›</button></span>
       </span>
-      <span class="mono muted">{{ shotId(chapter, shot) }} · {{ shot.camera || 'camera free' }} · {{ shot.seconds }} s</span>
+      <span class="mono muted">{{ shotId(shot) }} · {{ shot.camera || 'camera free' }} · {{ shot.seconds }} s</span>
     </div>
 
     <div class="split">
@@ -188,6 +188,15 @@ const impact = computed(() => {
               </ul>
               <span v-else class="why">{{ verdict ? 'Nothing to fix.' : 'Composed frames are judged as they are made.' }}</span>
             </span>
+            <span v-if="shot.keyframe.reviewed_by === 'person'" class="mono dim small">{{ shot.keyframe.state === 'approved' ? 'approved by you' : 'rejected by you' }}</span>
+            <button
+              v-else-if="['made', 'needs_review'].includes(shot.keyframe.state) && shot.keyframe.artifact"
+              class="link"
+              :disabled="!!busy"
+              @click="act(`approve ${shot.id}`, () => approveMade('keyframe', shot!.keyframe.id))"
+            >
+              approve as it is
+            </button>
           </div>
         </section>
 
@@ -246,7 +255,7 @@ const impact = computed(() => {
         <section v-if="landable(shot)" class="card">
           <div class="head slim">
             <h5>The join</h5>
-            <span class="mono dim small">{{ shotId(chapter, shots[index - 1]) }} → {{ shotId(chapter, shot) }}</span>
+            <span class="mono dim small">{{ shotId(shots[index - 1]) }} → {{ shotId(shot) }}</span>
           </div>
           <div class="body">
             <label class="land">
@@ -342,7 +351,7 @@ const impact = computed(() => {
         <button class="pic" :style="{ aspectRatio: aspect }" @click="emit('go', 'keyframes', s.id)">
           <img v-if="s.keyframe.artifact && s.keyframe.present" :src="outputUrl(s.keyframe.artifact)" alt="" />
           <span v-else class="mono dim">{{ s.keyframe.source }}</span>
-          <span class="id mono">{{ shotId(chapter, s) }}</span>
+          <span class="id mono">{{ shotId(s) }}</span>
           <span class="score mono" :class="phaseOf(s.keyframe.state)">{{ s.keyframe.state }}</span>
         </button>
         <div class="text">

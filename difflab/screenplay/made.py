@@ -24,11 +24,12 @@ def settle(connection: sqlite3.Connection, job: store.Job, outputs: dict[str, An
         return
     if job.tool == "compose_keyframe" and job.for_kind == "keyframe":
         if state in (store.DONE, store.SKIPPED):
+            keyframe = store.made_by_id(connection, "keyframe", job.for_id)
             store.set_made(
                 connection,
                 "keyframe",
                 job.for_id,
-                store.MADE,
+                _kept(keyframe, outputs, state),
                 wanted_key=outputs.get("key"),
                 artifact=outputs.get("frame"),
                 current_job=job.id,
@@ -46,7 +47,7 @@ def settle(connection: sqlite3.Connection, job: store.Job, outputs: dict[str, An
             connection,
             "clip",
             clip.id,
-            store.MADE,
+            _kept(clip, outputs, state),
             wanted_key=outputs.get("key"),
             artifact=outputs.get("chunk"),
             current_job=job.id,
@@ -57,6 +58,12 @@ def settle(connection: sqlite3.Connection, job: store.Job, outputs: dict[str, An
         store.set_made(connection, "clip", clip.id, store.FAILED, current_job=job.id)
     else:
         store.set_made(connection, "clip", clip.id, store.STALE if clip.artifact else store.MISSING)
+
+
+def _kept(thing: store.Made | None, outputs: dict[str, Any], state: str) -> str:
+    """Approved still when a person approved this very key and the job only found it again."""
+    held = thing is not None and thing.reviewed_by == store.PERSON and thing.wanted_key == outputs.get("key")
+    return store.APPROVED if state == store.SKIPPED and held else store.MADE
 
 
 def _drawn(connection: sqlite3.Connection, job: store.Job, outputs: dict[str, Any], state: str) -> None:
@@ -102,19 +109,19 @@ def _judged(connection: sqlite3.Connection, job: store.Job, outputs: dict[str, A
         return
     kind, made_id = job.for_kind, int(job.for_id or 0)
     thing = store.made_by_id(connection, kind, made_id)
-    if thing is None:
+    if thing is None or (thing.state == store.APPROVED and thing.reviewed_by == store.PERSON):
         return
     review = json.dumps({k: outputs.get(k) for k in ("score", "cast", "issues", "notes", "gate")})
     if outputs.get("unjudged"):
-        store.set_made(connection, kind, made_id, store.NEEDS_REVIEW, review=review, reviewed_by="judge")
+        store.set_made(connection, kind, made_id, store.NEEDS_REVIEW, review=review, reviewed_by=store.JUDGE)
         return
     if outputs.get("passed"):
-        store.set_made(connection, kind, made_id, store.APPROVED, review=review, reviewed_by="judge")
+        store.set_made(connection, kind, made_id, store.APPROVED, review=review, reviewed_by=store.JUDGE)
         return
     # No retries for a reference, whose new seed replaces the picture every prompt casting it hands, nor for a
     # clip: its retry is a blind re-seed that re-renders it and every shot chained after it, minutes each.
     if kind in ("reference", "clip"):
-        store.set_made(connection, kind, made_id, store.NEEDS_REVIEW, review=review, reviewed_by="judge")
+        store.set_made(connection, kind, made_id, store.NEEDS_REVIEW, review=review, reviewed_by=store.JUDGE)
         if kind == "clip" and any(
             one.tool == "render_shot" and not one.settled for one in store.jobs_of(connection, job.run_id)
         ):  # the shots still to come open on this one: they wait for a re-roll or a resume
@@ -128,9 +135,9 @@ def _judged(connection: sqlite3.Connection, job: store.Job, outputs: dict[str, A
         ).fetchone()[0]
     )
     if attempts > int(outputs.get("retries", 0)):
-        store.set_made(connection, kind, made_id, store.NEEDS_REVIEW, review=review, reviewed_by="judge")
+        store.set_made(connection, kind, made_id, store.NEEDS_REVIEW, review=review, reviewed_by=store.JUDGE)
         return
-    store.set_made(connection, kind, made_id, store.STALE, review=review, reviewed_by="judge")
+    store.set_made(connection, kind, made_id, store.STALE, review=review, reviewed_by=store.JUDGE)
     seed = random.randrange(2**32)
     if kind == "clip" and isinstance(thing, store.Clip):
         store.set_clip_seed(connection, thing.shot_id, seed)

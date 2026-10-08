@@ -93,10 +93,11 @@ def end_run(connection: sqlite3.Connection, run_id: str, ok: bool, error: str = 
 
 def next_run_id(connection: sqlite3.Connection, stamp: str) -> str:
     """`stamp` with a suffix if a run of that second already exists."""
+    # Zero-padded: the worker takes runs in id order, and every chapter of a production is queued in one second.
     candidate, suffix = stamp, 1
     while run(connection, candidate) is not None:
         suffix += 1
-        candidate = f"{stamp}-{suffix}"
+        candidate = f"{stamp}-{suffix:03d}"
     return candidate
 
 

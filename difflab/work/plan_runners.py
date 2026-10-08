@@ -444,10 +444,14 @@ def _plan_shots(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, A
     with _take(inputs):
         planned = plan_shots.plan(base, idea, total)
     chunks = [compiler.plan_of(chunk) for chunk in planned.chunks]
-    _manifest(
-        production_id, ambience=planned.ambience, story=[list(event) for event in planned.story], seconds=seconds,
-        tail=tail, budget=budget,
-    )  # fmt: skip
+    with store.connect() as connection, store.transaction(connection):
+        now = store.production(connection, production_id)
+        assert now is not None
+        # Each chapter's own: one chapter planned after another would otherwise compile with its sound.
+        own = {"ambience": planned.ambience, "story": [list(event) for event in planned.story]}
+        plans = {**now.manifest.get("chapter_plans", {}), str(chapter_id): own}
+        fields = {"chapter_plans": plans, "seconds": seconds, "tail": tail, "budget": budget}
+        store.update_production(connection, production_id, manifest={**now.manifest, **fields})
     with store.connect() as connection, store.transaction(connection):
         store.set_cast_order(connection, production_id, list(planned.members))
         existing = store.shots_of(connection, chapter_id)
@@ -462,11 +466,11 @@ def _plan_shots(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, A
                     plan = shot.plan  # the same beats: the prose written for them stays
                 store.update_shot(
                     connection, shot.id, plan=plan, action=chunk.purpose, camera=camera, dialogue=dialogue,
-                    seconds=chunk.seconds,
+                    seconds=chunk.seconds, scene=chunk.scene,
                 )  # fmt: skip
             else:
                 shot = store.add_shot(connection, chapter_id, chunk.seconds, action=chunk.purpose, camera=camera)
-                store.update_shot(connection, shot.id, plan=plan, dialogue=dialogue)
+                store.update_shot(connection, shot.id, plan=plan, dialogue=dialogue, scene=chunk.scene)
                 store.set_clip_seed(connection, shot.id, video.seed + shot.position)
             first = store.keyframe_of(connection, shot.id)
             by_hand = first.source != store.CHAINED and first.note not in (OPENING_NOTE, CUT_NOTE)

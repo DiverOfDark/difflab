@@ -28,8 +28,13 @@ def _take_from_plan(data: Any, base: compose.Take) -> compose.Take:
     Each clip's length goes onto the frame grid here and its last beat takes up the difference (under
     0.36 s), so the model never does frame arithmetic."""
     places = [m for m in base.members if base.cards[m].kind == "environment"]
-    chunks = []
+    chunks: list[compose.Chunk] = []
     for clip in data["clips"]:
+        cut = str(clip.get("cut") or "").replace("none", "")
+        # A clip that goes on, or cuts back to the opening, stays in the scene it returns to.
+        scene = " ".join(str(clip.get("scene") or "").split())
+        if not scene and chunks:
+            scene = chunks[0].scene if cut == "back" else chunks[-1].scene
         asked = float(clip["seconds"])
         seconds = on_grid(asked, base.seconds)
         beats = tuple(
@@ -58,10 +63,11 @@ def _take_from_plan(data: Any, base: compose.Take) -> compose.Take:
                 irreversible_change=str(clip["irreversible_change"]),
                 dialogue=lines,
                 seconds=seconds,
-                cut=str(clip.get("cut") or "").replace("none", ""),
+                cut=cut,
                 opening=str(clip.get("opening") or "").strip(),
                 looks={str(m): str(v).strip() for m, v in (clip.get("looks") or {}).items()},
                 ambience=str(clip.get("ambience") or "").strip(),
+                scene=scene,
             )
         )
     return dataclasses.replace(base, ambience=str(data["ambience"]).strip(), chunks=tuple(chunks))
@@ -103,6 +109,9 @@ def plan(base: compose.Take, idea: str, total: float) -> compose.Take:
             return [direct.problem('"clips" has one entry per main event of the IDEA')]
         out = []
         for number, clip in enumerate(data["clips"], 1):
+            if (number == 1 or clip.get("cut") == "new") and not str(clip.get("scene") or "").strip():
+                opens = "opens the take" if number == 1 else 'is a "new" cut'
+                out.append(direct.problem(f'clip {number}: "scene" is empty, and the clip {opens}: give its heading'))
             if not shortest - 0.05 <= float(clip["seconds"]) <= longest + 0.05:
                 out.append(direct.problem(f'clip {number}: "seconds" is {clip["seconds"]}; make it {shortest:g} to '
                                           f"{longest:g}, or merge it into a neighbour or split it"))  # fmt: skip

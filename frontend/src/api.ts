@@ -180,10 +180,15 @@ export interface MadeThing {
   job: number | null
   pinned: boolean
   review: string
+  /** Who gave the last verdict: 'judge', or 'person' when someone approved or rejected it by hand. */
+  reviewed_by: string
+  reviewed_at: number | null
 }
 
 export interface ShotInfo {
   id: number
+  /** Its chapter's position, from 0. */
+  chapter: number
   position: number
   action: string
   scene: string
@@ -279,6 +284,11 @@ export interface Production {
   /** Members with no usable picture: none cut or given, and a drawn one absent, stale or failed. */
   missing_references: string[]
   ideas: IdeaRound[]
+  /** A short digest per stage of what it holds; it moves when the stage's content does. */
+  hashes: Record<'ingest' | 'bible' | 'shots' | 'render' | 'assemble', string>
+  /** Per tool, measured on this machine: median seconds a job, and per second of clip for render_shot.
+   *  `samples` 0 means no history yet, and the numbers are the code's fallback. */
+  timings: Record<string, { seconds: number; per_second: number | null; samples: number }>
 }
 
 /** One round of the director rewriting the idea. `state` is its job's; `story` is empty until done. */
@@ -345,11 +355,21 @@ export const ingest = (form: Ingest) => {
     post({ ...common, source: form.source, instruction: form.instruction, clip_scale: form.clip_scale }),
   )
 }
+/** `chapter` null is every chapter, a run each in chapter order; `run` is the first of `runs`. */
+const chapterQuery = (chapter: number | null, more = '') => {
+  const q = [chapter === null ? '' : `chapter=${chapter}`, more].filter(Boolean).join('&')
+  return q ? `?${q}` : ''
+}
 /** `fresh` asks the director for new shots even when nothing they are planned from changed. */
-export const planProduction = (id: number, chapter = 0, fresh = false) =>
-  json<{ run: string }>(`/api/productions/${id}/plan?chapter=${chapter}${fresh ? '&fresh=true' : ''}`, post({}))
-export const renderProduction = (id: number, chapter = 0) =>
-  json<{ run: string }>(`/api/productions/${id}/render?chapter=${chapter}`, post({}))
+export const planProduction = (id: number, chapter: number | null, fresh = false) =>
+  json<{ run: string; runs: string[] }>(`/api/productions/${id}/plan${chapterQuery(chapter, fresh ? 'fresh=true' : '')}`, post({}))
+export const renderProduction = (id: number, chapter: number | null) =>
+  json<{ run: string; runs: string[] }>(`/api/productions/${id}/render${chapterQuery(chapter)}`, post({}))
+export type MadeKind = 'keyframe' | 'prompt' | 'clip' | 'reference'
+/** Approved as it is by a person: the judge no longer overrules it, and a run paused on the clip goes on. */
+export const approveMade = (kind: MadeKind, id: number) => json<Production>(`/api/made/${kind}/${id}/approve`, post({}))
+/** Made anew by the next run, on a new seed; a prompt stays stale until re-planned or written by hand. */
+export const rejectMade = (kind: MadeKind, id: number) => json<Production>(`/api/made/${kind}/${id}/reject`, post({}))
 export const addShot = (id: number, body: Record<string, unknown>) =>
   json<Production>(`/api/productions/${id}/shots`, post(body))
 export const patchShot = (shotId: number, body: Record<string, unknown>) =>
@@ -368,8 +388,8 @@ export const pickVariant = (memberId: number, seed: number) =>
   json<Production & { stale: Stale }>(`/api/members/${memberId}/variants/pick`, post({ seed }))
 /** The shot's keyframe composed again with a note for the editor; only keyframes are made, not clips. */
 export const redoKeyframe = (shotId: number, note: string) => json<{ run: string }>(`/api/shots/${shotId}/keyframe`, post({ note }))
-export const renderKeyframes = (id: number, chapter = 0) =>
-  json<{ run: string }>(`/api/productions/${id}/keyframes?chapter=${chapter}`, post({}))
+export const renderKeyframes = (id: number, chapter: number | null) =>
+  json<{ run: string; runs: string[] }>(`/api/productions/${id}/keyframes${chapterQuery(chapter)}`, post({}))
 
 export const listIdeas = (id: number) => json<IdeaRound[]>(`/api/productions/${id}/ideas`)
 /** `from_round` with `feedback` revises that round; without, a new rewrite of `idea` or of the rounds' own idea. */

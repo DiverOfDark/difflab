@@ -221,6 +221,7 @@ FIELDS
 - "clips": as many as the IDEA's main events need, their "seconds" adding up to no more than the TAKE. In each clip:
   - "seconds": how long the clip lasts, the sum of its beats, within the TAKE's range, with at most one decimal.
   - "cut": "", "back" or "new" (rule 13); "opening": the first frame of a "new" cut, else "".
+  - "scene": in clip 1 and in a "new" cut, the scene heading: INT or EXT, the place in two to four plain words, " · ", the time of day ("INT lantern room · dusk", "EXT mountain road · night"); "" in any other clip, which stays in its scene.
   - "purpose": one sentence of at most 25 words.
   - "cast": the id of every member on screen at any moment of the clip, with exactly one place: the one this clip happens in.
   - "beats": 3 to 5 beats. The first starts at 0, each next one starts where the one before ended, and the last ends exactly at the clip's "seconds"; seconds with at most two decimals. "phase" is one of airlock, carry, build, primary, handoff, reaction, settle. "who" lists the ids that move in the beat. "action" is one or two plain sentences, at most 35 words, of visible motion: who moves which body part, where the prop goes, what the smoke does.
@@ -235,7 +236,7 @@ FIELDS
 - In "action" and "closing", write members as their id in braces: {{man}}, {{woman}}, {{cat}}. Never put a possessive after the braces: write "the hand of {{woman}}" or "her hand", never "{{woman}}'s hand".
 
 Answer only JSON, in this shape (one clip and two of its beats shown; write every clip and every beat):
-{{"ambience":"...","story":[{{"event":"...","clip":1}}],"clips":[{{"seconds":9,"cut":"","opening":"","purpose":"...","cast":["man","hookah","lounge"],"beats":[{{"start":0,"end":2,"phase":"build","who":["man"],"action":"..."}},{{"start":2,"end":6.5,"phase":"primary","who":["man"],"action":"..."}}],"camera":{{"move":"hold","toward":"man"}},"mouths":["his slow exhale"],"closing":"...","faces_at_close":["man"],"irreversible_change":"...","looks":{{}},"ambience":"","dialogue":[]}}]}}"""
+{{"ambience":"...","story":[{{"event":"...","clip":1}}],"clips":[{{"seconds":9,"cut":"","opening":"","scene":"INT hookah lounge · night","purpose":"...","cast":["man","hookah","lounge"],"beats":[{{"start":0,"end":2,"phase":"build","who":["man"],"action":"..."}},{{"start":2,"end":6.5,"phase":"primary","who":["man"],"action":"..."}}],"camera":{{"move":"hold","toward":"man"}},"mouths":["his slow exhale"],"closing":"...","faces_at_close":["man"],"irreversible_change":"...","looks":{{}},"ambience":"","dialogue":[]}}]}}"""
 
 PLAN_USER = """\
 IDEA:

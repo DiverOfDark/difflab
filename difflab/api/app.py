@@ -20,7 +20,7 @@ from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from difflab import config, store
+from difflab import config
 from difflab.api import assets, runs
 from difflab.core import hub
 from difflab.core.settings import Continuity
@@ -248,16 +248,9 @@ async def redo_keyframe(shot_id: int, request: Request) -> dict[str, Any]:
 
 
 @app.post("/api/productions/{production_id}/keyframes")
-def render_keyframes(production_id: int, chapter: int = 0) -> dict[str, Any]:
-    """The chapter's composed keyframes and their verdicts, without its clips."""
-    with store.connect() as connection:
-        chapters = store.chapters_of(connection, production_id)
-    if not chapters or chapter >= len(chapters):
-        raise HTTPException(404, "no such chapter")
-    try:
-        return {"run": planner.render_chapter(chapters[chapter].id, keyframes_only=True)}
-    except ValueError as problem:
-        raise HTTPException(400, str(problem)) from problem
+def render_keyframes(production_id: int, chapter: int | None = None) -> dict[str, Any]:
+    """The composed keyframes and their verdicts, without clips: of chapter `chapter` (from 0), or of every one."""
+    return _runs(lambda: planner.render_production(production_id, chapter_position=chapter, keyframes_only=True))
 
 
 @app.post("/api/members/{member_id}/given")
@@ -342,8 +335,31 @@ async def reroll_shot(shot_id: int, request: Request) -> dict[str, Any]:
     owner = production.production_of_shot(shot_id)
     if owner is None:
         raise HTTPException(404, "no such shot")
-    seed = production.reroll(shot_id, None if body.get("seed") in (None, "") else int(body["seed"]))
-    return {"seed": seed, "run": _render(owner)}  # a run the judge paused for this shot is let go first
+    seed, chapter = production.reroll(shot_id, None if body.get("seed") in (None, "") else int(body["seed"]))
+    # A run the judge paused for this shot is let go first.
+    return {"seed": seed, "run": _runs(lambda: [planner.render_chapter(chapter)])["run"]}
+
+
+@app.post("/api/made/{kind}/{made_id}/approve")
+def approve(kind: str, made_id: int) -> dict[str, Any]:
+    """A person's approval: the judge no longer overrules it, and a run paused on the clip goes on."""
+    return _review(kind, made_id, True)
+
+
+@app.post("/api/made/{kind}/{made_id}/reject")
+def reject(kind: str, made_id: int) -> dict[str, Any]:
+    """Made anew by the next run on a new seed; a prompt stays stale until re-planned or written by hand."""
+    return _review(kind, made_id, False)
+
+
+def _review(kind: str, made_id: int, approved: bool) -> dict[str, Any]:
+    try:
+        owner = production.review(kind, made_id, approved)
+    except LookupError as problem:
+        raise HTTPException(404, str(problem)) from problem
+    except ValueError as problem:
+        raise HTTPException(400, str(problem)) from problem
+    return _production(owner)
 
 
 @app.post("/api/ingest/idea")
@@ -415,33 +431,28 @@ async def ingest_video(request: Request) -> dict[str, Any]:
 
 
 @app.post("/api/productions/{production_id}/plan")
-def plan_production(production_id: int, chapter: int = 0, fresh: bool = False) -> dict[str, Any]:
-    """The director over one chapter's story and the production's photographs: its cast, shots and
-    prompts, as a run. `fresh` asks for new shots even when nothing they are planned from changed."""
-    try:
-        return {"run": planner.plan_production(production_id, chapter_position=chapter, fresh=fresh)}
-    except LookupError as problem:
-        raise HTTPException(404, str(problem)) from problem
-    except ValueError as problem:
-        raise HTTPException(400, str(problem)) from problem
-    except (sqlite3.Error, OSError) as problem:
-        raise HTTPException(500, f"the run could not be queued ({problem})") from problem
+def plan_production(production_id: int, chapter: int | None = None, fresh: bool = False) -> dict[str, Any]:
+    """Chapter `chapter` (from 0) or every one, a plan run each; `fresh` asks for new shots though nothing changed."""
+    return _runs(lambda: planner.plan_production(production_id, chapter_position=chapter, fresh=fresh))
 
 
 @app.post("/api/productions/{production_id}/render")
-def render_production(production_id: int, chapter: int = 0) -> dict[str, Any]:
-    return {"run": _render(production_id, chapter)}
+def render_production(production_id: int, chapter: int | None = None) -> dict[str, Any]:
+    """Chapter `chapter` (from 0), or every one, a run each, queued in chapter order."""
+    return _runs(lambda: planner.render_production(production_id, chapter_position=chapter))
 
 
-def _render(production_id: int, chapter: int = 0) -> str:
+def _runs(queue_them: Callable[[], list[str]]) -> dict[str, Any]:
+    """`run` is the first one queued, the one the worker reaches first."""
     try:
-        return planner.render_production(production_id, chapter_position=chapter)
+        runs = queue_them()
     except LookupError as problem:
         raise HTTPException(404, str(problem)) from problem
     except ValueError as problem:
         raise HTTPException(400, str(problem)) from problem
     except (sqlite3.Error, OSError) as problem:
         raise HTTPException(500, f"the run could not be queued ({problem})") from problem
+    return {"run": runs[0] if runs else None, "runs": runs}
 
 
 def _production(production_id: int) -> dict[str, Any]:

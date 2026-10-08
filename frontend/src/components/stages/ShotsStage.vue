@@ -6,7 +6,6 @@ import { castOf, phaseOf, shotId, type Phase, type StageId } from '../../product
 
 const props = defineProps<{
   production: Production
-  chapter: number
   shots: ShotInfo[]
   busy: string
   act: (name: string, what: () => Promise<unknown>) => Promise<void>
@@ -94,7 +93,7 @@ const saveClosing = (s: ShotInfo, value: string) => {
 const unpin = (s: ShotInfo) => props.act(`unpin ${s.id}`, () => patchShot(s.id, { pinned: false }))
 
 const remove = (s: ShotInfo) => {
-  if (confirm(`Delete shot ${shotId(props.chapter, s)}? Its clip stays on disk.`)) props.act(`remove ${s.id}`, () => deleteShot(s.id))
+  if (confirm(`Delete shot ${shotId(s)}? Its clip stays on disk.`)) props.act(`remove ${s.id}`, () => deleteShot(s.id))
 }
 </script>
 
@@ -116,7 +115,7 @@ const remove = (s: ShotInfo) => {
       <div v-if="!rows.length" class="tr empty note">No shots. Plan the chapter, or add shots by hand through the API.</div>
       <div v-for="s in rows" :key="s.id" class="tr">
         <span class="id">
-          <button class="link" @click="emit('go', 'keyframes', s.id)">{{ shotId(chapter, s) }}</button>
+          <button class="link" @click="emit('go', 'keyframes', s.id)">{{ shotId(s) }}</button>
           <span class="mono dim">{{ s.scene }}</span>
           <button v-if="s.pinned" class="link hand mono" title="edited by hand: a re-plan leaves its plan alone · click to give it back" @click="unpin(s)">BY HAND</button>
         </span>

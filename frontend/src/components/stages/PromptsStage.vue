@@ -5,7 +5,6 @@ import { outputUrl, patchShot, type ShotInfo } from '../../api'
 import { FINISHED, phaseOf, shotId, words, type StageId } from '../../production'
 
 const props = defineProps<{
-  chapter: number
   shots: ShotInfo[]
   focus: number | null
   busy: string
@@ -84,7 +83,7 @@ const save = () => props.act(`prompt ${shot.value!.id}`, () => patchShot(shot.va
         <button v-for="s in rows" :key="s.id" class="row" :class="{ on: s.id === shot?.id }" @click="emit('go', 'prompts', s.id)">
           <img v-if="s.keyframe.artifact && s.keyframe.present" class="frame thumb" :src="outputUrl(s.keyframe.artifact)" alt="" />
           <span v-else class="frame thumb" />
-          <span class="what"><span class="mono">{{ shotId(chapter, s) }}</span><span class="sum">{{ s.action }}</span></span>
+          <span class="what"><span class="mono">{{ shotId(s) }}</span><span class="sum">{{ s.action }}</span></span>
           <span class="ph" :class="label(s)[1]">{{ label(s)[0] }}</span>
         </button>
       </div>
@@ -93,7 +92,7 @@ const save = () => props.act(`prompt ${shot.value!.id}`, () => patchShot(shot.va
     <div v-if="shot" class="main">
       <section class="card">
         <div class="head slim">
-          <span class="mono small">{{ shotId(chapter, shot) }} <span class="dim">· {{ shot.camera || 'camera free' }} · {{ shot.seconds }} s</span></span>
+          <span class="mono small">{{ shotId(shot) }} <span class="dim">· {{ shot.camera || 'camera free' }} · {{ shot.seconds }} s</span></span>
           <span class="mono dim small">{{ words(draft) }} words · by {{ shot.prompt.written_by || '—' }}</span>
         </div>
         <div class="body">

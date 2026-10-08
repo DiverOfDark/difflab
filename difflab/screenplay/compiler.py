@@ -144,6 +144,7 @@ class Chunk:
     opening: str = ""  # a "new" cut's first frame, {id} placeholders
     looks: dict[str, str] = dataclasses.field(default_factory=dict)  # member -> its look from this chunk's end on
     ambience: str = ""  # the sound of a place other than the take's first; "" is `Take.ambience`
+    scene: str = ""  # the slug line the chunk plays under, "INT lantern room · dusk"
 
 
 @dataclass(frozen=True)
@@ -677,6 +678,7 @@ def chunk_of(plan: dict[str, Any]) -> Chunk:
         opening=str(plan.get("opening", "")),
         looks={str(m): str(v) for m, v in (plan.get("looks") or {}).items()},
         ambience=str(plan.get("ambience", "")),
+        scene=str(plan.get("scene", "")),
     )
 
 
@@ -734,6 +736,7 @@ def take_of(connection: sqlite3.Connection, production: store.Production, chapte
     members = store.members_of(connection, production.id)
     references = store.refs_of_production(connection, production.id)
     manifest = production.manifest
+    planned = {**manifest, **manifest.get("chapter_plans", {}).get(str(chapter.id), {})}
     shots = store.shots_of(connection, chapter.id)
     tail = bool(manifest.get("tail", True))
     keyframes = [store.keyframe_of(connection, shot.id) for shot in shots]
@@ -751,12 +754,12 @@ def take_of(connection: sqlite3.Connection, production: store.Production, chapte
         cards={member.slug: card_of(member) for member in members},
         refs=refs_of(references, members, [str(p) for p in manifest.get("photos", [])]),
         opening=str(manifest.get("opening_arrangement", "")),
-        ambience=str(manifest.get("ambience", "")),
+        ambience=str(planned.get("ambience", "")),
         seconds=float(manifest.get("seconds", 0.0)),
         tail=tail,
         budget=int(manifest.get("budget", config.DIRECTOR_REFERENCE_ROWS)),
         chunks=tuple(chunks),
-        story=tuple((str(event), int(clip)) for event, clip in manifest.get("story", [])),
+        story=tuple((str(event), int(clip)) for event, clip in planned.get("story", [])),
         tails=tails,
         lands=landed,
     )

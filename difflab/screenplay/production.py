@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import random
 import re
@@ -15,7 +16,7 @@ from difflab.core.keys import key
 from difflab.core.settings import Continuity, EditSettings, Settings
 from difflab.models.minimax_h3 import pipeline
 from difflab.models.minimax_h3.settings import VideoSettings
-from difflab.screenplay import compiler, crops, drawn, settings, words
+from difflab.screenplay import compiler, crops, drawn, settings, timings, words
 from difflab.screenplay import config as knobs
 
 _SLUG = re.compile(r"[a-z0-9][a-z0-9_-]*")
@@ -668,20 +669,115 @@ def remove_shot(shot_id: int) -> None:
         store.delete_shot(connection, shot_id)
 
 
-def reroll(shot_id: int, seed: int | None = None) -> int:
+def reroll(shot_id: int, seed: int | None = None) -> tuple[int, int]:
     """One more attempt at a shot's clip: a new seed, and the clip goes stale. The shots chained after
-    it go stale by key when the next run reaches them. Returns the seed."""
+    it go stale by key when the next run reaches them. Returns the seed and the shot's chapter."""
     chosen = seed if seed is not None else random.randrange(2**32)
     with store.connect() as connection, store.transaction(connection):
-        clip = store.set_clip_seed(connection, shot_id, chosen)
-        store.set_made(connection, "clip", clip.id, store.STALE if clip.artifact else store.MISSING)
         shot = store.shot(connection, shot_id)
-        assert shot is not None
-        # A run the judge paused on this chapter would build its later shots on the clip being replaced.
-        for run in store.runs(connection):
-            if run.scope == f"chapter:{shot.chapter_id}" and run.state == store.PAUSED:
-                store.add_command(connection, "run", run.id, {"cmd": "cancel"})
-    return chosen
+        if shot is None:
+            raise LookupError(f"no shot {shot_id}")
+        _reroll(connection, shot, chosen)
+    return chosen, shot.chapter_id
+
+
+def _reroll(connection: Any, shot: store.Shot, seed: int, by: str | None = None) -> None:
+    clip = store.set_clip_seed(connection, shot.id, seed)
+    state = store.STALE if clip.artifact else store.MISSING
+    store.set_made(connection, "clip", clip.id, state, review=clip.review if by else None, reviewed_by=by)
+    # A run the judge paused on this chapter would build its later shots on the clip being replaced.
+    _tell_paused(connection, shot.chapter_id, "cancel")
+
+
+def _tell_paused(connection: Any, chapter_id: int, cmd: str) -> None:
+    for run in store.runs(connection):
+        if run.scope == f"chapter:{chapter_id}" and run.state == store.PAUSED:
+            store.add_command(connection, "run", run.id, {"cmd": cmd})
+
+
+# --- a person's verdict ------------------------------------------------------------------------
+def review(kind: str, made_id: int, approved: bool) -> int:
+    """Approved as it is, or rejected so the next run makes it anew. Returns the production."""
+    if kind not in _REJECT:
+        raise LookupError(f"{kind!r} is not something a person approves (one of {', '.join(_REJECT)})")
+    with store.connect() as connection, store.transaction(connection):
+        thing = store.made_by_id(connection, kind, made_id)
+        if thing is None:
+            raise LookupError(f"no {kind} {made_id}")
+        owner = _OWNER[kind](connection, thing)
+        if not approved:
+            _REJECT[kind](connection, thing)
+            return owner
+        made = thing.artifact or (isinstance(thing, store.Prompt) and thing.text.strip())
+        if not made or thing.state not in (store.MADE, store.NEEDS_REVIEW, store.APPROVED, store.PINNED):
+            raise ValueError(f"the {kind} is {thing.state.replace('_', ' ')}: approve it once it is made")
+        store.set_made(connection, kind, made_id, store.APPROVED, review=thing.review, reviewed_by=store.PERSON)
+        if isinstance(thing, store.Clip):
+            shot = store.shot(connection, thing.shot_id)
+            assert shot is not None
+            _tell_paused(connection, shot.chapter_id, "resume")
+        return owner
+
+
+def _shot_owner(connection: Any, thing: store.Made) -> int:
+    assert isinstance(thing, store.Keyframe | store.Prompt | store.Clip)
+    shot = store.shot(connection, thing.shot_id)
+    chapter = None if shot is None else store.chapter(connection, shot.chapter_id)
+    assert chapter is not None
+    return chapter.production_id
+
+
+def _reference_owner(connection: Any, thing: store.Made) -> int:
+    assert isinstance(thing, store.Reference)
+    member = store.member(connection, thing.member_id)
+    assert member is not None
+    return member.production_id
+
+
+def _reject_keyframe(connection: Any, thing: store.Made) -> None:
+    assert isinstance(thing, store.Keyframe)
+    if thing.source != store.COMPOSED:
+        raise ValueError(
+            "only a composed keyframe is made again: give another picture, or compose this one"
+            if thing.source == store.PROVIDED
+            else "a chained keyframe is the last frame of the shot before: reject that clip"
+        )
+    store.compose_keyframe(connection, thing.shot_id, seed=random.randrange(2**32), note=thing.note)
+    store.set_made(connection, "keyframe", thing.id, store.MISSING, review=thing.review, reviewed_by=store.PERSON)
+    shot = store.shot(connection, thing.shot_id)
+    assert shot is not None
+    _stale(connection, [shot], prompts=False)
+
+
+def _reject_prompt(connection: Any, thing: store.Made) -> None:
+    store.set_made(connection, "prompt", thing.id, store.STALE, review=thing.review, reviewed_by=store.PERSON)
+
+
+def _reject_clip(connection: Any, thing: store.Made) -> None:
+    assert isinstance(thing, store.Clip)
+    shot = store.shot(connection, thing.shot_id)
+    assert shot is not None
+    _reroll(connection, shot, random.randrange(2**32), by=store.PERSON)
+
+
+def _reject_reference(connection: Any, thing: store.Made) -> None:
+    assert isinstance(thing, store.Reference)
+    if not thing.generated:
+        raise ValueError("a picture cut from a photograph is detached, not drawn again")
+    store.set_made(
+        connection, "reference", thing.id, store.STALE, review=thing.review, reviewed_by=store.PERSON,
+        seed=random.randrange(2**32),
+    )  # fmt: skip
+
+
+# Per kind a person can judge: the production it belongs to, and what rejecting it does.
+_OWNER = {"keyframe": _shot_owner, "prompt": _shot_owner, "clip": _shot_owner, "reference": _reference_owner}
+_REJECT = {
+    "keyframe": _reject_keyframe,
+    "prompt": _reject_prompt,
+    "clip": _reject_clip,
+    "reference": _reject_reference,
+}
 
 
 def production_of_shot(shot_id: int) -> int | None:
@@ -717,7 +813,7 @@ def describe(production_id: int) -> dict[str, Any] | None:
             return None
         chapters = []
         for chapter in store.chapters_of(connection, production.id):
-            shots = [_shot(connection, shot) for shot in store.shots_of(connection, chapter.id)]
+            shots = [_shot(connection, chapter, shot) for shot in store.shots_of(connection, chapter.id)]
             chapters.append({"id": chapter.id, "position": chapter.position, "title": chapter.title, "shots": shots})
         runs = [
             {"id": run.id, "title": run.title, "state": run.state, "scope": run.scope, "created": run.created_at}
@@ -737,7 +833,44 @@ def describe(production_id: int) -> dict[str, Any] | None:
             "runs": runs,
             "camera_moves": list(words.CAMERA_MOVES),
             "trait_parts": list(knobs.DIRECTOR_TRAIT_ORDER),
+            "hashes": _hashes(connection, production, chapters, members),
+            "timings": timings.measured(connection),
         }
+
+
+def _hashes(
+    connection: Any, production: store.Production, chapters: list[dict[str, Any]], members: list[dict[str, Any]]
+) -> dict[str, str]:
+    """A short digest per stage of what it holds: it moves when the stage does."""
+    # An upload's name begins with its content hash, so the photos' paths stand for their pixels.
+    shots = [shot for chapter in chapters for shot in chapter["shots"]]
+    stories = [chapter.story for chapter in store.chapters_of(connection, production.id)]
+    newest = {
+        (scope, tool): video
+        for scope, tool, video in connection.execute(
+            "SELECT runs.scope, jobs.tool, json_extract(jobs.outputs, '$.video') FROM jobs "
+            "JOIN runs ON runs.id = jobs.run_id WHERE runs.production_id = ? AND runs.scope LIKE 'chapter:%' "
+            "AND jobs.tool IN ('assemble', 'finish') AND jobs.state IN (?, ?) ORDER BY jobs.id",
+            (production.id, store.DONE, store.SKIPPED),
+        )
+    }
+    return {
+        "ingest": _digest(production.story_kind, production.story, stories, production.manifest.get("photos", [])),
+        "bible": _digest(
+            [[{k: m[k] for k in _BIBLE}, [r["key"] or r["artifact"] for r in m["references"]]] for m in members]
+        ),
+        "shots": _digest([[s[k] for k in _SHOTS] + [s["prompt"]["text"], s["keyframe"]["key"]] for s in shots]),
+        "render": _digest([s["clip"]["key"] for s in shots]),
+        "assemble": _digest(sorted(newest.items())),
+    }
+
+
+_BIBLE = ("slug", "kind", "noun", "possessive", "find", "identity")
+_SHOTS = ("scene", "seconds", "plan")
+
+
+def _digest(*parts: Any) -> str:
+    return hashlib.sha256(json.dumps(parts, sort_keys=True, default=str).encode()).hexdigest()[:7]
 
 
 def _production(production: store.Production) -> dict[str, Any]:
@@ -788,12 +921,13 @@ def _member(
     }
 
 
-def _shot(connection: Any, shot: store.Shot) -> dict[str, Any]:
+def _shot(connection: Any, chapter: store.Chapter, shot: store.Shot) -> dict[str, Any]:
     keyframe = store.keyframe_of(connection, shot.id)
     prompt = store.prompt_of(connection, shot.id)
     clip = store.clip_of(connection, shot.id)
     return {
         "id": shot.id,
+        "chapter": chapter.position,
         "position": shot.position,
         "action": shot.action,
         "scene": shot.scene,
@@ -844,6 +978,8 @@ def _made(made: store.Made) -> dict[str, Any]:
         "job": made.current_job,
         "pinned": made.pinned,
         "review": made.review,
+        "reviewed_by": made.reviewed_by,
+        "reviewed_at": made.reviewed_at,
     }
 
 

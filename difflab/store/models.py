@@ -42,6 +42,10 @@ STALE = "stale"
 PINNED = "pinned"
 MADE_STATES = (MISSING, QUEUED, RUNNING, MADE, FAILED, NEEDS_REVIEW, APPROVED, STALE, PINNED)
 MADE_KINDS = ("keyframe", "prompt", "clip", "reference")
+# Who gave a made thing's last verdict (`reviewed_by`). A person's approval of an artifact outlives a re-render
+# that lands the same key, and the judge does not overrule it.
+JUDGE = "judge"
+PERSON = "person"
 
 PROVIDED = "provided"  # a keyframe someone gave: a file under output/
 CHAINED = "chained"  # a keyframe that is the previous shot's handoff frame

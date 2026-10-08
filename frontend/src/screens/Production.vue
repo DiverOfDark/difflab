@@ -31,7 +31,8 @@ const router = useRouter()
 
 const production = ref<Production | null>(null)
 const missing = ref(false)
-const chapter = ref(0)
+/** The chapter in view by position, or null for every chapter. */
+const chapter = ref<number | null>(null)
 const failure = ref('')
 const busy = ref('')
 const listOpen = ref(props.id === undefined)
@@ -47,7 +48,7 @@ async function load() {
   // An unchanged poll is not assigned: a new object redraws every stage, and a redraw writes each
   // `:value` field back over whatever is being typed into it.
   if (JSON.stringify(found) !== JSON.stringify(production.value)) production.value = found
-  if (found && chapter.value >= found.chapters.length) chapter.value = 0
+  if (found && chapter.value !== null && chapter.value >= found.chapters.length) chapter.value = null
 }
 watch(
   () => props.id,
@@ -73,16 +74,18 @@ function go(to: StageId, shot: number | null = null) {
   router.replace({ query: { stage: to, ...(shot === null ? {} : { shot: String(shot) }) } })
 }
 
-const current = computed(() => production.value?.chapters[chapter.value] ?? null)
-const shots = computed<ShotInfo[]>(() => current.value?.shots ?? [])
+const inView = computed(() => {
+  const all = production.value?.chapters ?? []
+  return chapter.value === null ? all : all.filter((c) => c.position === chapter.value)
+})
+const shots = computed<ShotInfo[]>(() => inView.value.flatMap((c) => c.shots))
+const whole = computed(() => chapter.value === null && (production.value?.chapters.length ?? 0) > 1)
+const scope = computed(() => (whole.value ? 'all chapters' : 'chapter'))
 const members = computed(() => production.value?.members ?? [])
 const refs = computed(() => members.value.flatMap((m) => m.references))
-const planRun = computed(() =>
-  production.value && current.value ? runsFor(production.value, 'plan', current.value.id).find((r) => runLive(r.state)) : undefined,
-)
-const chapterRuns = computed(() =>
-  production.value && current.value ? runsFor(production.value, 'chapter', current.value.id) : [],
-)
+const ids = computed(() => inView.value.map((c) => c.id))
+const planRun = computed(() => (production.value ? runsFor(production.value, 'plan', ids.value).find((r) => runLive(r.state)) : undefined))
+const chapterRuns = computed(() => (production.value ? runsFor(production.value, 'chapter', ids.value) : []))
 const renderRun = computed(() => chapterRuns.value.find((r) => runLive(r.state)))
 
 /** Everything the page asks of the server goes through here, so a refusal lands on the page. */
@@ -110,8 +113,9 @@ const plan = (fresh = false) =>
   act(fresh ? 'fresh' : 'plan', async () => {
     notice.value = null
     const before = snapshot()
-    const { run } = await planProduction(props.id!, chapter.value, fresh)
-    replanned.value = { run, before, started: Date.now() }
+    // The last chapter's run ends last: the notice waits for it.
+    const { runs } = await planProduction(props.id!, chapter.value, fresh)
+    replanned.value = { run: runs[runs.length - 1], before, started: Date.now() }
   })
 const settle = window.setInterval(() => {
   if (replanned.value && !production.value?.runs.find((r) => r.id === replanned.value!.run && !runLive(r.state))) load()
@@ -279,6 +283,25 @@ const budget = computed(() => {
   }
 })
 
+const HASHED: Record<StageId, keyof Production['hashes']> = {
+  ingest: 'ingest',
+  bible: 'bible',
+  assets: 'bible',
+  shots: 'shots',
+  keyframes: 'shots',
+  prompts: 'shots',
+  render: 'render',
+  assemble: 'assemble',
+}
+const hash = computed(() => production.value?.hashes?.[HASHED[stage.value]] ?? '')
+const perClip = computed(() => {
+  const t = production.value?.timings?.render_shot
+  if (!t) return ''
+  const n = shots.value.length
+  const each = t.per_second && n ? (t.per_second * shots.value.reduce((s, x) => s + x.seconds, 0)) / n : t.seconds
+  return `~${Math.round(each)} s/clip`
+})
+
 const meta = computed(() => {
   const p = production.value
   if (!p) return fresh.value ? 'a story and photographs, then plan' : ''
@@ -325,7 +348,8 @@ function pick(id: number) {
 
       <label v-if="production && production.chapters.length > 1" class="chapter">
         <span class="eyebrow">chapter</span>
-        <select v-model.number="chapter">
+        <select v-model="chapter">
+          <option :value="null">all · {{ production.chapters.reduce((n, c) => n + c.shots.length, 0) }} shots</option>
           <option v-for="c in production.chapters" :key="c.id" :value="c.position">
             {{ String(c.position + 1).padStart(2, '0') }}{{ c.title ? ` · ${c.title}` : '' }} · {{ c.shots.length }} shots
           </option>
@@ -335,7 +359,7 @@ function pick(id: number) {
       <div class="stages">
         <template v-for="(s, i) in stages" :key="s.id">
           <div v-if="s.divider" class="divider">
-            <span>{{ s.divider }}</span><i />
+            <span>{{ s.divider }}</span><i /><span v-if="perClip">{{ perClip }}</span>
           </div>
           <button class="stage" :class="{ on: s.id === stage }" :disabled="fresh && s.id !== 'ingest'" @click="go(s.id)">
             <span class="track"><i class="dot" :class="s.phase" /><i v-if="i < stages.length - 1" class="wire" /></span>
@@ -353,7 +377,7 @@ function pick(id: number) {
       </div>
 
       <div v-if="production" class="budget">
-        <span class="eyebrow">chapter · clips</span>
+        <span class="eyebrow">{{ scope }} · clips</span>
         <div class="bar3">
           <i :style="{ width: budget.done, background: 'var(--status-ready)' }" />
           <i :style="{ width: budget.review, background: 'var(--status-degraded)' }" />
@@ -371,15 +395,15 @@ function pick(id: number) {
     <main class="work">
       <div class="heading">
         <div class="named">
-          <span class="eyebrow">{{ crumb }}</span>
-          <h3>{{ stage === 'keyframes' && focusedShot ? `Shot ${shotId(chapter, focusedShot)}` : cur.name }}</h3>
+          <span class="eyebrow">{{ crumb }}<template v-if="hash"> · <span class="mono">{{ hash }}</span></template></span>
+          <h3>{{ stage === 'keyframes' && focusedShot ? `Shot ${shotId(focusedShot)}` : cur.name }}</h3>
           <span class="desc">{{ cur.desc }}</span>
         </div>
         <div v-if="production" class="buttons">
           <RouterLink v-if="watchable" class="button" :to="`/runs/${watchable.id}`">Watch run</RouterLink>
           <RouterLink v-else class="button" :to="`/settings?production=${production.id}`">Settings</RouterLink>
           <button v-if="rendersSide" class="primary" :disabled="!!busy || !shots.length || !!renderRun" @click="render">
-            {{ busy === 'render' ? 'queueing…' : renderRun ? 'Rendering…' : 'Render chapter' }}
+            {{ busy === 'render' ? 'queueing…' : renderRun ? 'Rendering…' : `Render ${scope}` }}
           </button>
           <button
             v-if="!rendersSide && shots.length"
@@ -390,7 +414,7 @@ function pick(id: number) {
             {{ busy === 'fresh' ? 'queueing…' : 'Re-plan fresh' }}
           </button>
           <button v-if="!rendersSide" class="primary" :disabled="!!busy || !canPlan || !!planRun" @click="plan()">
-            {{ busy === 'plan' ? 'queueing…' : planRun ? 'Planning…' : shots.length ? 'Re-plan chapter' : 'Plan chapter' }}
+            {{ busy === 'plan' ? 'queueing…' : planRun ? 'Planning…' : `${shots.length ? 'Re-plan' : 'Plan'} ${scope}` }}
           </button>
         </div>
       </div>
@@ -404,15 +428,15 @@ function pick(id: number) {
       </p>
       <p v-if="stalePrompts && !planRun" class="band stale">
         {{ stalePrompts }} of {{ shots.length }} prompts were compiled before the story, the cast or a plan changed. A render refuses them
-        until the chapter is re-planned.
-        <button class="link" :disabled="!!busy || !canPlan" @click="plan()">Re-plan chapter</button>
+        until the {{ scope }} {{ whole ? 'are' : 'is' }} re-planned.
+        <button class="link" :disabled="!!busy || !canPlan" @click="plan()">Re-plan {{ scope }}</button>
       </p>
 
       <IngestStage v-if="stage === 'ingest'" :production="production" :busy="busy" :act="act" />
       <template v-else-if="production">
         <BibleStage v-if="stage === 'bible'" :production="production" :shots="shots" :busy="busy" :act="act" @go="go" />
         <AssetsStage v-else-if="stage === 'assets'" :production="production" :busy="busy" :act="act" />
-        <ShotsStage v-else-if="stage === 'shots'" :production="production" :chapter="chapter" :shots="shots" :busy="busy" :act="act" @go="go" />
+        <ShotsStage v-else-if="stage === 'shots'" :production="production" :shots="shots" :busy="busy" :act="act" @go="go" />
         <KeyframesStage
           v-else-if="stage === 'keyframes'"
           :production="production"
@@ -423,8 +447,8 @@ function pick(id: number) {
           :act="act"
           @go="go"
         />
-        <PromptsStage v-else-if="stage === 'prompts'" :chapter="chapter" :shots="shots" :focus="focus" :busy="busy" :act="act" @go="go" />
-        <RenderStage v-else-if="stage === 'render'" :production="production" :chapter="chapter" :shots="shots" :focus="focus" :run="renderRun" :busy="busy" :act="act" @go="go" />
+        <PromptsStage v-else-if="stage === 'prompts'" :shots="shots" :focus="focus" :busy="busy" :act="act" @go="go" />
+        <RenderStage v-else-if="stage === 'render'" :production="production" :shots="shots" :focus="focus" :run="renderRun" :busy="busy" :act="act" @go="go" />
         <AssembleStage v-else-if="stage === 'assemble'" :production="production" :runs="chapterRuns" />
       </template>
     </main>
@@ -610,8 +634,18 @@ function pick(id: number) {
 
 .divider i {
   flex: 1;
+  min-width: 8px;
   height: 1px;
   background: var(--border);
+}
+
+.divider span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.divider span:last-child {
+  flex-shrink: 0;
 }
 
 .stage {

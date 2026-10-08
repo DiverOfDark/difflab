@@ -89,7 +89,7 @@ const begin = () =>
   props.act('begin', async () => {
     const made = await ingest(form.value)
     const planning = autoPlan.value && form.value.kind !== 'video'
-    if (planning) await planProduction(made.id, 0)
+    if (planning) await planProduction(made.id, null)
     // Begun without a plan, an idea opens where the director can improve it first.
     router.push(planning || form.value.kind !== 'idea' ? `/productions/${made.id}` : `/productions/${made.id}?stage=ingest`)
   })
