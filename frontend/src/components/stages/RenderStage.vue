@@ -97,9 +97,8 @@ const toggle = () => props.act('pause', () => control(props.run!.id, { cmd: paus
               </button>
               <span v-else-if="s.clip.state === 'approved' && s.clip.reviewed_by === 'person'" class="mono dim tiny">accepted</span>
               <button class="link" :disabled="!!busy" @click="reroll(s)">re-roll</button>
-              <button class="link" @click="emit('go', 'keyframes', s.id)">back to keyframe</button>
-              <button class="link" @click="emit('go', 'prompts', s.id)">prompt</button>
-              <button class="link" @click="emit('go', 'shots')">edit shot</button>
+              <button class="link" @click="emit('go', 'shots', s.id)">back to keyframe</button>
+              <button class="link" @click="emit('go', 'shots', s.id)">edit shot</button>
               <button class="link del" :disabled="!!busy" @click="remove(s)">delete</button>
             </span>
           </div>

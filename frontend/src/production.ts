@@ -1,7 +1,7 @@
 /** What the stage rail and the stage screens derive from one production, so they cannot disagree. */
 import type { MadeThing, Production, ShotInfo } from './api'
 
-export type StageId = 'ingest' | 'bible' | 'assets' | 'shots' | 'keyframes' | 'prompts' | 'render' | 'assemble'
+export type StageId = 'ingest' | 'bible' | 'shots' | 'render' | 'assemble'
 export type Phase = 'done' | 'review' | 'running' | 'stale' | 'pending'
 
 export const FINISHED = new Set(['made', 'approved', 'pinned'])
@@ -35,6 +35,11 @@ export const pad = (n: number, width: number) => String(n).padStart(width, '0')
 export const shotId = (shot: ShotInfo) => `${pad(shot.chapter + 1, 2)}.${pad(shot.position + 1, 3)}`
 export const castOf = (shot: ShotInfo) => (Array.isArray(shot.plan.cast) ? (shot.plan.cast as string[]) : [])
 export const words = (text: string) => text.split(/\s+/).filter(Boolean).length
+
+/** `mm:ss`, and `mm:ss:ff` with frames at 24 fps. */
+export const mmss = (t: number) =>
+  t >= 3600 ? `${Math.floor(t / 3600)}:${pad(Math.floor(t / 60) % 60, 2)}:${pad(Math.floor(t % 60), 2)}` : `${pad(Math.floor(t / 60), 2)}:${pad(Math.floor(t % 60), 2)}`
+export const timecode = (t: number) => `${mmss(t)}:${pad(Math.floor((t % 1) * 24), 2)}`
 
 export function seconds(total: number): string {
   if (total < 60) return `${total.toFixed(1)} s`

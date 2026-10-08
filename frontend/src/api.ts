@@ -379,6 +379,46 @@ export interface Ingest {
   continuity: { tail_seconds: number; handoff_window: number; crossfade: number }
 }
 
+export type Dot = 'done' | 'review' | 'stale' | 'pending'
+type Image = LookRef['image']
+
+/** A shot as the timeline draws it; `clip` and `still` are paths under output/ when the file is there. */
+export interface TimelineShot {
+  id: number
+  chapter: number
+  position: number
+  scene: string
+  seconds: number
+  opening: ShotInfo['opening']
+  /** Keyframe, prompt, clip. */
+  pipe: [Dot, Dot, Dot]
+  /** Looks it shows whose picture is not approved yet. */
+  waiting: number
+  clip: string | null
+  still: string | null
+  action: string
+}
+
+/** `a` and `b` index the timeline's shots, both ends in; a gap is a stretch off screen between two. */
+export type TimelineRun =
+  | { a: number; b: number; gap: true }
+  | { a: number; b: number; gap: false; look: number | null; label: string; image: Image; revert: boolean; mark: boolean }
+
+export interface TimelineTrack {
+  member: string
+  kind: string
+  runs: TimelineRun[]
+  /** Where a shot amends it. */
+  marks: { at: number; look: number | null; label: string; image: Image; words: string }[]
+}
+
+export interface Timeline {
+  shots: TimelineShot[]
+  tracks: TimelineTrack[]
+}
+
+export const readTimeline = (id: number, chapter: number | null) =>
+  json<Timeline>(`/api/productions/${id}/timeline${chapter === null ? '' : `?chapter=${chapter}`}`)
 export const listProductions = () => json<ProductionSummary[]>('/api/productions')
 export const readProduction = (id: number) => json<Production>(`/api/productions/${id}`)
 export const deleteProduction = (id: number) => json<unknown>(`/api/productions/${id}`, { method: 'DELETE' })
@@ -441,6 +481,9 @@ export const drawLook = (castingId: number) => json<{ run: string; runs: string[
 export const drawShotLooks = (shotId: number) => json<{ run: string; runs: string[] }>(`/api/shots/${shotId}/looks`, post({}))
 /** An uploaded picture as the look's own instead of a drawn one, approved. */
 export const uploadLook = (castingId: number, path: string) => json<Production>(`/api/castings/${castingId}/upload`, post({ path }))
+/** Every look of the chapter, or of every one, with no picture yet, drawn as one run. */
+export const drawProductionLooks = (id: number, chapter: number | null) =>
+  json<{ run: string; runs: string[] }>(`/api/productions/${id}/looks${chapterQuery(chapter)}`, post({}))
 export const preflight = (id: number) => json<{ problems: Record<string, string[]> }>(`/api/productions/${id}/preflight`)
 export const rerollShot = (shotId: number, seed?: number) =>
   json<{ seed: number; run: string }>(`/api/shots/${shotId}/reroll`, post(seed === undefined ? {} : { seed }))

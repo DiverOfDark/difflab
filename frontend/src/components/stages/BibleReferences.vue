@@ -1,13 +1,15 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { detachRef, drawReference, drawVariants, giveReference, outputUrl, pickVariant, upload, type MemberInfo, type Production } from '../../api'
-import { GENERATED, PHASE_LABEL, drawingRun, phaseOf, phaseOfAll, type Phase } from '../../production'
+import { GENERATED, PHASE_LABEL, drawingRun, phaseOf, phaseOfAll } from '../../production'
 
 const props = defineProps<{
   production: Production
+  member: MemberInfo
   busy: string
   act: (name: string, what: () => Promise<unknown>) => Promise<void>
 }>()
+const emit = defineEmits<{ close: [] }>()
 const detach = (refId: number) => props.act(`ref ${refId}`, () => detachRef(refId))
 const drawing = computed(() => drawingRun(props.production))
 const photographic = (m: MemberInfo) => m.references.some((r) => r.role !== GENERATED && r.artifact && r.present)
@@ -33,21 +35,6 @@ const keyframesOf = (m: MemberInfo) =>
   props.production.chapters
     .flatMap((c) => c.shots)
     .filter((s) => ((s.plan.cast as string[] | undefined) ?? []).includes(m.slug) && s.keyframe.artifact && s.keyframe.present)
-
-const filter = ref<'all' | Phase>('all')
-const filters = computed(() => {
-  const members = props.production.members
-  const of = (p: Phase) => members.filter((m) => m.references.some((r) => phaseOf(r.state) === p)).length
-  return [
-    { id: 'all' as const, label: 'all', count: members.length },
-    { id: 'review' as const, label: 'needs review', count: of('review') },
-    { id: 'stale' as const, label: 'stale', count: of('stale') },
-    { id: 'pending' as const, label: 'missing', count: of('pending') },
-  ]
-})
-const rows = computed(() =>
-  props.production.members.filter((m) => filter.value === 'all' || m.references.some((r) => phaseOf(r.state) === filter.value)),
-)
 const phase = (m: MemberInfo) => phaseOfAll(m.references)
 /** The judge's verdict as a line: its score against the gate, then what it saw. */
 function verdict(review: string): string {
@@ -64,39 +51,28 @@ const name = (path: string) => path.split('/').at(-1)!.replace(/^[0-9a-f]{16}-/,
 
 <template>
   <div class="assets">
-    <div class="bar-row">
-      <div class="chips">
-        <button v-for="f in filters" :key="f.id" class="chip" :class="{ on: filter === f.id }" @click="filter = f.id">
-          {{ f.label }} <span class="n">{{ f.count }}</span>
-        </button>
-      </div>
-      <span class="note">cut by the plan run's cut_crops · a re-plan re-cuts only what moved · GEN: drawn by the editor, which a re-plan leaves alone</span>
-    </div>
-
-    <p v-if="!rows.length" class="band hint">Nothing here.</p>
-
-    <article v-for="m in rows" :key="m.id" class="card" :class="phase(m)">
+    <article class="card" :class="phase(member)">
       <div class="top">
-        <span class="named"><i class="dot" :class="phase(m)" /><span class="mono">{{ m.slug }}</span><span class="eyebrow">{{ m.kind }}</span></span>
+        <span class="named"><i class="dot" :class="phase(member)" /><span class="mono">{{ member.slug }}</span><span class="eyebrow">{{ member.kind }}</span></span>
         <span class="mono small">
           <button
-            v-if="!photographic(m)"
+            v-if="!photographic(member)"
             class="link"
             :disabled="!!busy || !!drawing"
-            :title="drawn(m)?.artifact ? 'draw it again with a new seed; the new picture replaces this one' : 'draw it from its words with the editor'"
-            @click="drawOne(m)"
+            :title="drawn(member)?.artifact ? 'draw it again with a new seed; the new picture replaces this one' : 'draw it from its words with the editor'"
+            @click="drawOne(member)"
           >
-            {{ drawn(m)?.artifact ? 'regenerate' : 'generate reference' }}
+            {{ drawn(member)?.artifact ? 'regenerate' : 'generate reference' }}
           </button>
-          <button v-if="m.kind === 'environment'" class="link" :disabled="!!busy || !!drawing" title="the 27B writes its look from the story's words, then the editor draws it: over its own words, even edited ones" @click="describeAndDraw(m)">describe from the story &amp; draw</button>
-          <button v-if="!photographic(m)" class="link" :disabled="!!busy || !!drawing" title="three drawings on new seeds; pick one as its reference" @click="drawThree(m)">draw 3 to choose</button>
-          <label class="link upload" :class="{ off: !!busy }" title="a picture of it of your own, fitted to the canvas like a crop">upload one<input type="file" accept="image/*" hidden @change="give(m, $event)" /></label>
-          <span class="dim">{{ m.references.length }} references</span><span class="ph" :class="phase(m)">{{ PHASE_LABEL[phase(m)] }}</span>
+          <button v-if="member.kind === 'environment'" class="link" :disabled="!!busy || !!drawing" title="the 27B writes its look from the story's words, then the editor draws it: over its own words, even edited ones" @click="describeAndDraw(member)">describe from the story &amp; draw</button>
+          <button v-if="!photographic(member)" class="link" :disabled="!!busy || !!drawing" title="three drawings on new seeds; pick one as its reference" @click="drawThree(member)">draw 3 to choose</button>
+          <label class="link upload" :class="{ off: !!busy }" title="a picture of it of your own, fitted to the canvas like a crop">upload one<input type="file" accept="image/*" hidden @change="give(member, $event)" /></label>
+          <span class="dim">{{ member.references.length }} references</span><button class="link" @click="emit('close')">close</button><span class="ph" :class="phase(member)">{{ PHASE_LABEL[phase(member)] }}</span>
         </span>
       </div>
       <div class="inside">
         <div class="tiles">
-          <a v-for="r in m.references" :key="r.id" class="tile" :href="r.artifact ? outputUrl(r.artifact) : undefined" target="_blank">
+          <a v-for="r in member.references" :key="r.id" class="tile" :href="r.artifact ? outputUrl(r.artifact) : undefined" target="_blank">
             <span class="pic">
               <img v-if="r.artifact && r.present" class="frame" :src="outputUrl(r.artifact)" :alt="r.role" />
               <span v-else class="frame placeholder mono">{{ r.state }}</span>
@@ -108,36 +84,36 @@ const name = (path: string) => path.split('/').at(-1)!.replace(/^[0-9a-f]{16}-/,
         </div>
         <div class="side">
           <span class="eyebrow">shows · from which photograph</span>
-          <div v-for="r in m.references" :key="r.id" class="fact">
-            <span class="k">{{ r.role === 'generated' ? `generated · ${m.slug}` : `${r.role} · ${r.shows.join(', ')}` }}</span>
+          <div v-for="r in member.references" :key="r.id" class="fact">
+            <span class="k">{{ r.role === 'generated' ? `generated · ${member.slug}` : `${r.role} · ${r.shows.join(', ')}` }}</span>
             <span class="v">
               <span v-if="r.role === 'generated'" class="mono">drawn from its words · seed {{ r.seed }}</span>
               <a v-else class="mono" :href="outputUrl(r.photo)" target="_blank" :title="r.photo">{{ name(r.photo) }}</a>
               <button class="link" :disabled="!!busy" title="it does not show this member: let go of it, for good" @click="detach(r.id)">detach</button>
             </span>
           </div>
-          <div v-for="r in m.references.filter((x) => x.review)" :key="`review-${r.id}`" class="fact" :class="{ warn: phaseOf(r.state) === 'review' }">
+          <div v-for="r in member.references.filter((x) => x.review)" :key="`review-${r.id}`" class="fact" :class="{ warn: phaseOf(r.state) === 'review' }">
             <span class="k">{{ verdict(r.review) }}</span>
           </div>
-          <img v-if="m.references[0]?.photo" class="source frame" :src="outputUrl(m.references[0].photo)" alt="" />
+          <img v-if="member.references[0]?.photo" class="source frame" :src="outputUrl(member.references[0].photo)" alt="" />
         </div>
       </div>
-      <div v-if="m.variants?.length" class="strip">
+      <div v-if="member.variants?.length" class="strip">
         <span class="eyebrow">drawings to choose from · the reference is the one you use</span>
         <div class="row-pics">
-          <span v-for="v in m.variants" :key="v.seed" class="choice">
+          <span v-for="v in member.variants" :key="v.seed" class="choice">
             <img v-if="v.frame" class="frame" :src="outputUrl(v.frame)" alt="" />
             <span v-else class="frame placeholder mono">{{ v.state }}</span>
-            <button class="link" :disabled="!!busy || !v.frame || drawn(m)?.seed === v.seed" @click="pick(m, v.seed)">
-              {{ drawn(m)?.seed === v.seed ? 'in use' : 'use this' }}
+            <button class="link" :disabled="!!busy || !v.frame || drawn(member)?.seed === v.seed" @click="pick(member, v.seed)">
+              {{ drawn(member)?.seed === v.seed ? 'in use' : 'use this' }}
             </button>
           </span>
         </div>
       </div>
-      <div v-if="keyframesOf(m).length" class="strip">
+      <div v-if="keyframesOf(member).length" class="strip">
         <span class="eyebrow">in keyframes · compare with its pictures above</span>
         <div class="row-pics">
-          <a v-for="s in keyframesOf(m)" :key="s.id" class="choice" :href="outputUrl(s.keyframe.artifact!)" target="_blank">
+          <a v-for="s in keyframesOf(member)" :key="s.id" class="choice" :href="outputUrl(s.keyframe.artifact!)" target="_blank">
             <img class="frame" :src="outputUrl(s.keyframe.artifact!)" alt="" />
             <span class="mono small">shot {{ s.position + 1 }}</span>
           </a>
@@ -152,14 +128,6 @@ const name = (path: string) => path.split('/').at(-1)!.replace(/^[0-9a-f]{16}-/,
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-}
-
-.bar-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: var(--space-2);
-  flex-wrap: wrap;
 }
 
 .card.review {

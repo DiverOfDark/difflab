@@ -331,6 +331,20 @@ def made_by_shot(connection: sqlite3.Connection, kind: str, shot_id: int) -> Key
     raise ValueError(f"{kind!r} is not a made thing (one of {', '.join(MADE_TABLES)})")
 
 
+def made_of_production(
+    connection: sqlite3.Connection, kind: str, production_id: int
+) -> dict[int, Keyframe | Prompt | Clip]:
+    """Every shot's made thing of `kind`, by shot id, in one query."""
+    readers: dict[str, Any] = {"keyframe": Keyframe.of, "prompt": Prompt.of, "clip": Clip.of}
+    table = MADE_TABLES[kind]
+    rows = connection.execute(
+        f"SELECT {table}.* FROM {table} JOIN shots ON shots.id = {table}.shot_id "
+        "JOIN chapters ON chapters.id = shots.chapter_id WHERE chapters.production_id = ?",
+        (production_id,),
+    ).fetchall()
+    return {row["shot_id"]: readers[kind](row) for row in rows}
+
+
 def made_by_id(
     connection: sqlite3.Connection, kind: str, made_id: int
 ) -> Keyframe | Prompt | Clip | Reference | Casting | None:

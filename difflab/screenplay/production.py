@@ -1095,9 +1095,25 @@ def production_of_casting(casting_id: int) -> int | None:
 
 def undrawn_looks(shot_id: int) -> list[int]:
     """The shot's own looks with no picture to show: never drawn, failed, or stale."""
-    wanted = (store.MISSING, store.FAILED, store.STALE)
     with store.connect() as connection:
-        return [c.id for c in store.castings_of(connection, shot_id) if c.amended and c.state in wanted]
+        return _undrawn(connection, shot_id)
+
+
+def undrawn_looks_of(production_id: int, chapter_position: int | None = None) -> list[int]:
+    """Every such look of the production, or of the chapter at `chapter_position`."""
+    with store.connect() as connection:
+        chapters = [c for c in store.chapters_of(connection, production_id) if chapter_position in (None, c.position)]
+        return [
+            c
+            for chapter in chapters
+            for s in store.shots_of(connection, chapter.id)
+            for c in _undrawn(connection, s.id)
+        ]
+
+
+def _undrawn(connection: Any, shot_id: int) -> list[int]:
+    wanted = (store.MISSING, store.FAILED, store.STALE)
+    return [c.id for c in store.castings_of(connection, shot_id) if c.amended and c.state in wanted]
 
 
 def production_of_shot(shot_id: int) -> int | None:
@@ -1160,6 +1176,88 @@ def describe(production_id: int) -> dict[str, Any] | None:
             "hashes": _hashes(connection, production, chapters, members),
             "timings": timings.measured(connection),
         }
+
+
+def timeline(production_id: int, chapter_position: int | None = None) -> dict[str, Any] | None:
+    """Every shot of one chapter or all, light, and each member's looks across them as runs, marks and gaps."""
+    with store.connect() as connection:
+        production = store.production(connection, production_id)
+        if production is None:
+            return None
+        resolved = looks.resolve(connection, production)
+        members = store.members_of(connection, production.id)
+        made = {
+            kind: store.made_of_production(connection, kind, production.id) for kind in ("keyframe", "prompt", "clip")
+        }
+        shots: list[dict[str, Any]] = []
+        for chapter in store.chapters_of(connection, production.id):
+            if chapter_position is not None and chapter.position != chapter_position:
+                continue
+            for shot in store.shots_of(connection, chapter.id):
+                keyframe, prompt, clip = (made[kind][shot.id] for kind in ("keyframe", "prompt", "clip"))
+                assert isinstance(keyframe, store.Keyframe)
+                shots.append(
+                    {
+                        "id": shot.id,
+                        "chapter": chapter.position,
+                        "position": shot.position,
+                        "scene": shot.scene,
+                        "seconds": shot.seconds,
+                        "opening": opening_of(keyframe),
+                        "pipe": [_dot(keyframe), _dot(prompt), _dot(clip)],
+                        "waiting": len(resolved.waiting(shot.id)),
+                        "clip": clip.artifact if clip.present else None,
+                        "still": keyframe.artifact if keyframe.present else None,
+                        "action": shot.action[:TIMELINE_ACTION],
+                    }
+                )
+        ids = [s["id"] for s in shots]
+        tracks = [track for member in members if (track := _track(resolved, member, ids))]
+        return {"shots": shots, "tracks": tracks}
+
+
+TIMELINE_ACTION = 160  # characters of a shot's action a timeline block's tooltip carries
+
+
+def _dot(made: store.Made) -> str:
+    """done | review | stale | pending: a pipe dot under a shot block."""
+    if made.state in (store.MADE, store.APPROVED, store.PINNED):
+        return "done"
+    if made.state in (store.NEEDS_REVIEW, store.FAILED):
+        return "review"
+    return "stale" if made.state == store.STALE else "pending"
+
+
+def _track(resolved: looks.Resolved, member: store.Member, ids: list[int]) -> dict[str, Any] | None:
+    """A member's runs by index into `ids`, split where its look changes, reverts or goes off screen."""
+    placed = [resolved.placed[shot_id].get(member.slug) for shot_id in ids]
+    at = [i for i, one in enumerate(placed) if one is not None]
+    if not at:
+        return None
+    runs: list[dict[str, Any]] = []
+    marks: list[dict[str, Any]] = []
+    for i in range(at[0], at[-1] + 1):
+        one = placed[i]
+        if one is None:
+            if runs and runs[-1]["gap"]:
+                runs[-1]["b"] = i
+            else:
+                runs.append({"a": i, "b": i, "gap": True})
+            continue
+        look = resolved.look(member.slug, one.look)
+        if one.casting.amended:
+            marks.append(
+                {"at": i, "look": look.id, "label": look.label, "image": _image(look), "words": one.casting.amend}
+            )
+        last = runs[-1] if runs else None
+        if last is None or last["gap"] or last["look"] != look.id or one.casting.amended or one.revert:
+            runs.append(
+                {"a": i, "b": i, "gap": False, "look": look.id, "label": look.label, "image": _image(look),
+                 "revert": one.revert, "mark": one.casting.amended}
+            )  # fmt: skip
+        else:
+            last["b"] = i
+    return {"member": member.slug, "kind": member.kind, "runs": runs, "marks": marks}
 
 
 def _hashes(

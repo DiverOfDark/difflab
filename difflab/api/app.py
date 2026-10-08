@@ -79,6 +79,15 @@ def read_production(production_id: int) -> dict[str, Any]:
     return _production(production_id)
 
 
+@app.get("/api/productions/{production_id}/timeline")
+def read_timeline(production_id: int, chapter: int | None = None) -> dict[str, Any]:
+    """Chapter `chapter` (from 0) or every one: each shot light, and each member's looks as runs, marks, gaps."""
+    found = production.timeline(production_id, chapter)
+    if found is None:
+        raise HTTPException(404, "no such production")
+    return found
+
+
 @app.patch("/api/productions/{production_id}")
 async def patch_production(production_id: int, request: Request) -> dict[str, Any]:
     """`title`, `story`, `opening` (the first frame in words). A changed story or opening says how
@@ -399,6 +408,12 @@ def draw_shot_looks(shot_id: int) -> dict[str, Any]:
     if owner is None:
         raise HTTPException(404, "no such shot")
     return _runs(lambda: [looks.draw(owner, production.undrawn_looks(shot_id))])
+
+
+@app.post("/api/productions/{production_id}/looks")
+def draw_production_looks(production_id: int, chapter: int | None = None) -> dict[str, Any]:
+    """Every look of chapter `chapter` (from 0), or of every one, with no picture yet, drawn as one run."""
+    return _runs(lambda: [looks.draw(production_id, production.undrawn_looks_of(production_id, chapter))])
 
 
 def _casting(change: Callable[[], int]) -> dict[str, Any]:

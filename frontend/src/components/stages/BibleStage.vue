@@ -17,7 +17,8 @@ import {
   type Production,
   type ShotInfo,
 } from '../../api'
-import { GENERATED, castOf, drawingRun, type StageId } from '../../production'
+import { GENERATED, castOf, drawingRun } from '../../production'
+import BibleReferences from './BibleReferences.vue'
 import { state } from '../../store'
 
 const props = defineProps<{
@@ -26,7 +27,6 @@ const props = defineProps<{
   busy: string
   act: (name: string, what: () => Promise<unknown>) => Promise<void>
 }>()
-defineEmits<{ go: [to: StageId, shot?: number | null] }>()
 
 const tab = ref('all')
 const tabs = computed(() => {
@@ -37,6 +37,8 @@ const tabs = computed(() => {
   ]
 })
 const shown = computed(() => props.production.members.filter((m) => tab.value === 'all' || m.kind === tab.value))
+const refsOf = ref<number | null>(null)
+const refsMember = computed(() => props.production.members.find((m) => m.id === refsOf.value))
 
 const inShots = (slug: string) => props.shots.filter((s) => castOf(s).includes(slug)).length
 const traits = (m: MemberInfo) => m.identity.traits ?? []
@@ -348,6 +350,8 @@ const detach = (refId: number) => props.act(`ref ${refId}`, async () => said((aw
     <p v-if="note" class="band hint">{{ note }}</p>
     <p v-if="!production.members.length" class="band hint">No cast yet. Plan the chapter: the survey names who the story needs from the photographs.</p>
 
+    <BibleReferences v-if="refsMember" :production="production" :member="refsMember" :busy="busy" :act="act" @close="refsOf = null" />
+
     <div class="cards">
       <article v-for="m in shown" :key="m.id" class="card" :class="{ conflicted: open(m).length }">
         <div class="top">
@@ -419,7 +423,7 @@ const detach = (refId: number) => props.act(`ref ${refId}`, async () => said((aw
             >
               {{ inDrawing(m) ? 'drawing…' : drawn(m)?.artifact ? 'regenerate' : 'generate reference' }}
             </button>
-            <button class="link" @click="$emit('go', 'assets')">references</button>
+            <button class="link" :class="{ on: refsOf === m.id }" @click="refsOf = refsOf === m.id ? null : m.id">references</button>
             <button class="link" @click="edit(m)">edit →</button>
           </span>
         </div>

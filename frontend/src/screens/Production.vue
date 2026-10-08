@@ -1,13 +1,10 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import { planProduction, readProduction, renderProduction, type Production, type ShotInfo } from '../api'
+import { drawProductionLooks, planProduction, readProduction, renderKeyframes, renderProduction, type Production, type ShotInfo } from '../api'
 import AssembleStage from '../components/stages/AssembleStage.vue'
-import AssetsStage from '../components/stages/AssetsStage.vue'
 import BibleStage from '../components/stages/BibleStage.vue'
 import IngestStage from '../components/stages/IngestStage.vue'
-import KeyframesStage from '../components/stages/KeyframesStage.vue'
-import PromptsStage from '../components/stages/PromptsStage.vue'
 import RenderStage from '../components/stages/RenderStage.vue'
 import ShotsStage from '../components/stages/ShotsStage.vue'
 import {
@@ -19,7 +16,6 @@ import {
   runLive,
   runsFor,
   seconds,
-  shotId,
   type Phase,
   type StageId,
 } from '../production'
@@ -65,7 +61,8 @@ onUnmounted(() => clearInterval(timer))
 const fresh = computed(() => props.id === undefined)
 const stage = computed<StageId>(() => {
   if (fresh.value) return 'ingest'
-  if (route.query.stage) return route.query.stage as StageId
+  const asked = DEFS.find((d) => d.id === route.query.stage)
+  if (asked) return asked.id
   return stages.value.find((s) => s.phase !== 'done')?.id ?? 'assemble'
 })
 const focus = computed(() => (route.query.shot ? Number(route.query.shot) : null))
@@ -82,8 +79,11 @@ const shots = computed<ShotInfo[]>(() => inView.value.flatMap((c) => c.shots))
 const whole = computed(() => chapter.value === null && (production.value?.chapters.length ?? 0) > 1)
 const scope = computed(() => (whole.value ? 'all chapters' : 'chapter'))
 const members = computed(() => production.value?.members ?? [])
-const refs = computed(() => members.value.flatMap((m) => m.references))
 const ids = computed(() => inView.value.map((c) => c.id))
+/** The shots' own looks, the amended castings: each has a picture to draw and judge. */
+const looks = computed(() => shots.value.flatMap((s) => s.castings.filter((c) => c.amended)))
+const toDraw = computed(() => looks.value.filter((c) => ['missing', 'failed', 'stale'].includes(c.state)).length)
+const composed = computed(() => shots.value.filter((s) => s.keyframe.source === 'composed').length)
 const planRun = computed(() => (production.value ? runsFor(production.value, 'plan', ids.value).find((r) => runLive(r.state)) : undefined))
 const chapterRuns = computed(() => (production.value ? runsFor(production.value, 'chapter', ids.value) : []))
 const renderRun = computed(() => chapterRuns.value.find((r) => runLive(r.state)))
@@ -166,28 +166,10 @@ const DEFS: StageDef[] = [
     desc: 'Who and what persists across the chapter: one identity per member, merged over its photographs. Where a photograph and the words disagree, the photograph wins and the conflict is said.',
   },
   {
-    id: 'assets',
-    name: 'Assets',
-    artifact: 'Reference crops',
-    desc: 'The pictures each clip is handed: a face, a body, a room, cut from the photographs where the survey found them, or drawn by the editor from the words of a member no photograph shows.',
-  },
-  {
     id: 'shots',
-    name: 'Shot list',
-    artifact: 'Shots per chapter',
-    desc: 'The chapter as ordered shots: action, cast, camera, dialogue, duration. Every later stage reads only this list. Edit the spec, not the output.',
-  },
-  {
-    id: 'keyframes',
-    name: 'Keyframes',
-    artifact: 'First frame per shot',
-    desc: "The frame every shot opens on: the chapter's opening, the previous shot's handoff, a composed frame or one you give. A rejected image costs seconds, not minutes.",
-  },
-  {
-    id: 'prompts',
-    name: 'Prompts',
-    artifact: 'H3 prompt per shot',
-    desc: 'The six-section caption each clip is rendered from, compiled from the plan and checked. A prompt you edit is pinned: a re-plan leaves it alone.',
+    name: 'Shots',
+    artifact: 'References, opening, prompt per shot',
+    desc: 'The film as a timeline of 5–15 s shots. Each shot lists its own references: a bible entity as it stands, or its version from an earlier shot plus what is different now. Opening frame and H3 prompt are written from those.',
   },
   {
     id: 'render',
@@ -239,18 +221,15 @@ const stages = computed<StageRow[]>(() => {
       `${members.value.length} members${conflicts ? ` · ${conflicts} conflicts` : ''}`,
       conflicts,
     ),
-    row(DEFS[2], planned(phaseOfAll(refs.value)), `${refs.value.filter((r) => FINISHED.has(r.state)).length} / ${refs.value.length} references`),
-    row(DEFS[3], planned(n ? 'done' : 'pending'), `${n} shots · ${seconds(list.reduce((s, x) => s + x.seconds, 0))}`),
-    row(DEFS[4], rendered(phaseOfAll(list.map((s) => s.keyframe))), `${made((s) => s.keyframe)} / ${n}`, flagged((s) => s.keyframe)),
     row(
-      DEFS[5],
-      planned(phaseOfAll(list.map((s) => s.prompt))),
-      `${made((s) => s.prompt)} / ${n}`,
-      list.filter((s) => s.prompt.checks.length).length,
+      DEFS[2],
+      planned(n ? phaseOfAll([...list.flatMap((s) => [s.keyframe, s.prompt]), ...looks.value]) : 'pending'),
+      `${n} shots · ${seconds(list.reduce((s, x) => s + x.seconds, 0))} · ${toDraw.value ? `${toDraw.value} to draw` : 'all drawn'}`,
+      list.filter((s) => phaseOf(s.keyframe.state) === 'review' || s.prompt.checks.length).length + looks.value.filter((c) => phaseOf(c.state) === 'review').length,
     ),
-    row(DEFS[6], rendered(phaseOfAll(list.map((s) => s.clip))), `${made((s) => s.clip)} / ${n} clips`, flagged((s) => s.clip)),
+    row(DEFS[3], rendered(phaseOfAll(list.map((s) => s.clip))), `${made((s) => s.clip)} / ${n} clips`, flagged((s) => s.clip)),
     row(
-      DEFS[7],
+      DEFS[4],
       rendering ? 'running' : lastRun?.state === 'done' && n && made((s) => s.clip) === n ? 'done' : 'pending',
       lastRun ? `last run ${lastRun.state} · ${ago(lastRun.created)} ago` : 'not yet',
     ),
@@ -260,12 +239,10 @@ const stages = computed<StageRow[]>(() => {
 const cur = computed(() => stages.value.find((s) => s.id === stage.value) ?? stages.value[0])
 const index = computed(() => stages.value.indexOf(cur.value))
 const crumb = computed(() => {
-  const where = index.value >= 6 ? 'render' : 'plan'
-  if (stage.value === 'keyframes' && focus.value !== null) return 'plan · keyframes · edit frame'
+  const where = index.value >= 3 ? 'render' : 'plan'
   return `${where} · stage ${index.value + 1} of ${stages.value.length}`
 })
-const focusedShot = computed(() => shots.value.find((s) => s.id === focus.value))
-const rendersSide = computed(() => ['keyframes', 'render', 'assemble'].includes(stage.value))
+const rendersSide = computed(() => ['render', 'assemble'].includes(stage.value))
 const watchable = computed(() => (rendersSide.value ? renderRun.value : planRun.value))
 
 const budget = computed(() => {
@@ -286,14 +263,12 @@ const budget = computed(() => {
 const HASHED: Record<StageId, keyof Production['hashes']> = {
   ingest: 'ingest',
   bible: 'bible',
-  assets: 'bible',
   shots: 'shots',
-  keyframes: 'shots',
-  prompts: 'shots',
   render: 'render',
   assemble: 'assemble',
 }
 const hash = computed(() => production.value?.hashes?.[HASHED[stage.value]] ?? '')
+const drawEach = computed(() => Math.round((production.value?.timings?.draw_look?.seconds ?? 0) + (production.value?.timings?.judge?.seconds ?? 0)))
 const perClip = computed(() => {
   const t = production.value?.timings?.render_shot
   if (!t) return ''
@@ -396,7 +371,7 @@ function pick(id: number) {
       <div class="heading">
         <div class="named">
           <span class="eyebrow">{{ crumb }}<template v-if="hash"> · <span class="mono">{{ hash }}</span></template></span>
-          <h3>{{ stage === 'keyframes' && focusedShot ? `Shot ${shotId(focusedShot)}` : cur.name }}</h3>
+          <h3>{{ cur.name }}</h3>
           <span class="desc">{{ cur.desc }}</span>
         </div>
         <div v-if="production" class="buttons">
@@ -413,8 +388,25 @@ function pick(id: number) {
           >
             {{ busy === 'fresh' ? 'queueing…' : 'Re-plan fresh' }}
           </button>
-          <button v-if="!rendersSide" class="primary" :disabled="!!busy || !canPlan || !!planRun" @click="plan()">
+          <button v-if="!rendersSide" :class="{ primary: stage !== 'shots' }" :disabled="!!busy || !canPlan || !!planRun" @click="plan()">
             {{ busy === 'plan' ? 'queueing…' : planRun ? 'Planning…' : `${shots.length ? 'Re-plan' : 'Plan'} ${scope}` }}
+          </button>
+          <button
+            v-if="stage === 'shots' && composed"
+            :disabled="!!busy"
+            title="compose and judge every composed keyframe, without rendering clips"
+            @click="act('keyframes', () => renderKeyframes(production!.id, chapter))"
+          >
+            {{ busy === 'keyframes' ? 'queueing…' : `Make ${composed} keyframe${composed === 1 ? '' : 's'}` }}
+          </button>
+          <button
+            v-if="stage === 'shots'"
+            class="primary"
+            :disabled="!!busy || !toDraw"
+            :title="`every changed state with no picture yet, drawn from its source and judged, ~${drawEach} s each`"
+            @click="act('looks', () => drawProductionLooks(production!.id, chapter))"
+          >
+            {{ busy === 'looks' ? 'queueing…' : toDraw ? `Generate ${toDraw} pending image${toDraw === 1 ? '' : 's'}` : 'No image pending' }}
           </button>
         </div>
       </div>
@@ -434,20 +426,8 @@ function pick(id: number) {
 
       <IngestStage v-if="stage === 'ingest'" :production="production" :busy="busy" :act="act" />
       <template v-else-if="production">
-        <BibleStage v-if="stage === 'bible'" :production="production" :shots="shots" :busy="busy" :act="act" @go="go" />
-        <AssetsStage v-else-if="stage === 'assets'" :production="production" :busy="busy" :act="act" />
-        <ShotsStage v-else-if="stage === 'shots'" :production="production" :shots="shots" :busy="busy" :act="act" @go="go" />
-        <KeyframesStage
-          v-else-if="stage === 'keyframes'"
-          :production="production"
-          :chapter="chapter"
-          :shots="shots"
-          :focus="focus"
-          :busy="busy"
-          :act="act"
-          @go="go"
-        />
-        <PromptsStage v-else-if="stage === 'prompts'" :shots="shots" :focus="focus" :busy="busy" :act="act" @go="go" />
+        <BibleStage v-if="stage === 'bible'" :production="production" :shots="shots" :busy="busy" :act="act" />
+        <ShotsStage v-else-if="stage === 'shots'" :production="production" :chapter="chapter" :focus="focus" :busy="busy" :act="act" @go="go" />
         <RenderStage v-else-if="stage === 'render'" :production="production" :shots="shots" :focus="focus" :run="renderRun" :busy="busy" :act="act" @go="go" />
         <AssembleStage v-else-if="stage === 'assemble'" :production="production" :runs="chapterRuns" />
       </template>
