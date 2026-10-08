@@ -41,7 +41,7 @@ APPROVED = "approved"
 STALE = "stale"
 PINNED = "pinned"
 MADE_STATES = (MISSING, QUEUED, RUNNING, MADE, FAILED, NEEDS_REVIEW, APPROVED, STALE, PINNED)
-MADE_KINDS = ("keyframe", "prompt", "clip", "reference")
+MADE_KINDS = ("keyframe", "prompt", "clip", "reference", "casting")
 # Who gave a made thing's last verdict (`reviewed_by`). A person's approval of an artifact outlives a re-render
 # that lands the same key, and the judge does not overrule it.
 JUDGE = "judge"
@@ -51,6 +51,8 @@ PROVIDED = "provided"  # a keyframe someone gave: a file under output/
 CHAINED = "chained"  # a keyframe that is the previous shot's handoff frame
 COMPOSED = "composed"  # a keyframe the editor makes from the plan's words over a reference of the room
 GENERATED = "generated"  # a reference's role when the editor drew it from its member's words
+REFS = "refs"  # a keyframe that is no picture: the clip opens wherever its references take it
+BASE = "base"  # a casting's parent when it starts from the bible's look, whatever came since
 
 
 @dataclass(frozen=True)
@@ -369,6 +371,8 @@ class Prompt(Made):
     written_by: str
     pictures: list[str]  # the references the clip is handed, in presentation order, relative to output/
     checks: list[dict[str, Any]]  # the gate's findings on the compiled caption
+    written_at: float | None = None
+    written_for: str = ""  # "looks" when the looks of its shot moved under it, "" otherwise
 
     @classmethod
     def of(cls, row: sqlite3.Row) -> Prompt:
@@ -380,6 +384,8 @@ class Prompt(Made):
             written_by=_text(row["written_by"]),
             pictures=[str(p) for p in _list(row["pictures"])] if "pictures" in keys else [],
             checks=[dict(c) for c in _list(row["checks"])] if "checks" in keys else [],
+            written_at=_maybe_number(row["written_at"]) if "written_at" in keys else None,
+            written_for=_text(row["written_for"]) if "written_for" in keys else "",
         )
 
 
@@ -461,6 +467,40 @@ class Reference(Made):
             quality=_number(row["quality"]),
             provided=None if row["provided"] is None else _text(row["provided"]),
             seed=_whole(row["seed"]) if "seed" in row.keys() else None,  # noqa: SIM118 - a Row is not a dict
+        )
+
+
+@dataclass(frozen=True, kw_only=True)
+class Casting(Made):
+    """A member in a shot; with `amend`, a look of its own whose picture the made columns are."""
+
+    shot_id: int
+    member_id: int
+    position: int
+    parent: str | None
+    amend: str
+    label: str
+    origin: str
+    size: list[int]
+    seed: int | None
+
+    @property
+    def amended(self) -> bool:
+        return bool(self.amend.strip())
+
+    @classmethod
+    def of(cls, row: sqlite3.Row) -> Casting:
+        return cls(
+            **_made(row),
+            shot_id=int(row["shot_id"]),
+            member_id=int(row["member_id"]),
+            position=int(row["position"]),
+            parent=None if row["parent"] is None else _text(row["parent"]),
+            amend=_text(row["amend"]),
+            label=_text(row["label"]),
+            origin=_text(row["origin"]),
+            size=[int(v) for v in _list(row["size"])],
+            seed=_whole(row["seed"]),
         )
 
 

@@ -14,12 +14,13 @@ from typing import Any
 
 import numpy as np
 import torch
+from PIL import Image
 
 from difflab import config, store
 from difflab.core import events, media, models, protocol, record, ui, video_io
 from difflab.core.cache import cache
 from difflab.core.hub import HubFile
-from difflab.core.imaging import video_length
+from difflab.core.imaging import megapixel_size, video_length
 from difflab.core.keys import key
 from difflab.core.settings import (
     Continuity,
@@ -34,7 +35,7 @@ from difflab.core.types import Clip, Frame
 from difflab.models.minimax_h3 import config as h3_config
 from difflab.models.minimax_h3 import pipeline, vae
 from difflab.models.minimax_h3.settings import VideoPromptSettings, VideoSettings
-from difflab.screenplay import compiler, drawn
+from difflab.screenplay import compiler, drawn, words
 from difflab.screenplay import production as production_module
 from difflab.tools import (
     assemble,
@@ -121,19 +122,22 @@ def run_render_shot(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
     video = VideoSettings(**settings["video"]).with_(seed=int(inputs["seed"]), duration=float(inputs["seconds"]))
     continuity, _ = Continuity.resolve(settings["continuity"])
     prompt = str(inputs["prompt"])
-    opening = _frame(inputs["opening"])
+    # A shot opened from its references alone has no first frame: the canvas comes from the production's,
+    # and there is no picture to hold its colour to.
+    opening = _frame(inputs["opening"]) if inputs.get("opening") else None
+    shape = opening if opening is not None else _canvas(inputs.get("canvas"))
     closing = _frame(inputs["closing"]) if inputs.get("closing") else None
     tail = handoff.load_tail(_path(inputs["tail"])) if inputs.get("tail") else None
     strength = continuity.color_anchor
     anchor = _frame(inputs["anchor"]) if inputs.get("anchor") and strength else None
     references = [_frame(p) for p in inputs.get("references", [])]
     position = int(inputs.get("position", 0))
-    clips, scale = _excerpt(inputs.get("source"), opening, video)
+    clips, scale = _excerpt(inputs.get("source"), shape, video)
 
     chunk = render_chunk.chunk_key(opening, prompt, video, references, tail, clips, scale, closing)
     # A shot that ends on the next one's keyframe is cut on its very last frame, the one pinned to it.
     window = 1 if closing is not None else continuity.handoff_window
-    hold = continuity.color_hold
+    hold = continuity.color_hold if opening is not None else 0.0
     at = handoff.handoff_key(chunk, window, continuity.tail_frames, anchor, strength, hold)
     finished = key("held", 1, chunk=str(chunk), hold=hold) if hold else chunk
     latents_file, mp4, soundtrack = (
@@ -156,7 +160,7 @@ def run_render_shot(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
             version=1,
             prompt=prompt,
             seed=video.seed,
-            opening=_thumbnail(opening, f"thumbs/shot{position + 1}_opening.jpg"),
+            opening=_thumbnail(opening, f"thumbs/shot{position + 1}_opening.jpg") if opening is not None else "",
             references=[_thumbnail(ref, f"thumbs/shot{position + 1}_ref{n}.jpg") for n, ref in enumerate(references)],
         )
     )
@@ -178,13 +182,13 @@ def run_render_shot(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
             tail,
             clips=clips,
             clip_scale=scale,
-            canvas_from=opening,
+            canvas_from=shape,
             closing=closing,
         )
     finally:
         previews.target(None, "clip")
     clip = render_chunk.decode(latents)
-    if hold:
+    if hold and opening is not None:
         with ui.step("Holding colour"):
             clip = media.hold_colour(clip, opening, hold)
     with ui.step("Handoff") as detail:
@@ -201,6 +205,13 @@ def run_render_shot(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
     events.emit(shown)
     events.emit(protocol.ItemEnd(index=position, seconds=round(time.perf_counter() - started, 1), activity="done"))
     return {**outputs, "cut": made.cut}
+
+
+def _canvas(size: Any) -> Frame:
+    """A blank of the production's canvas: only ever measured, for the shape of a shot with no first frame."""
+    if not size:
+        raise ValueError("a shot opened from its references alone needs the production's canvas: plan it first")
+    return Frame.from_pil(Image.new("RGB", (int(size[0]), int(size[1]))), origin="canvas")
 
 
 def _excerpt(source: Any, opening: Frame, video: VideoSettings) -> tuple[list[Clip], float]:
@@ -243,7 +254,7 @@ def run_enlarge_shot(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[s
     video = VideoSettings(**settings["video"])
     continuity, _ = Continuity.resolve(settings["continuity"])
     restoring, _ = RestoreSettings.resolve(settings["enlarge"])
-    hold = continuity.color_hold
+    hold = continuity.color_hold if inputs.get("opening") else 0.0
     megapixels = float(inputs["megapixels"])
     at = key("enlarged", 3, chunk=str(inputs["key"]), settings=restoring, megapixels=megapixels, hold=hold)
     mp4 = cache.path(at, ".mp4")
@@ -323,6 +334,36 @@ def run_compose_keyframe(inputs: dict[str, Any], settings: dict[str, Any]) -> di
     frame.pil().save(target)
     record.artifact_made(target, store.IMAGE, chosen.seed, key=str(made))
     return {"frame": store.relative(target), "key": str(made)}
+
+
+def run_draw_look(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
+    """A look: its source picture changed by the amendment alone, a person's base face handed over beside it."""
+    chosen = EditSettings(**settings).with_(seed=int(inputs["seed"]))
+    source = _frame(inputs["source"])
+    face = _frame(inputs["face"]) if inputs.get("face") else None
+    size = (int(inputs["size"][0]), int(inputs["size"][1]))
+    kind, amend = str(inputs["kind"]), str(inputs["amend"])
+    said = words.COMPOSE_LOOK.format(
+        noun=inputs["noun"], kept=words.COMPOSE_LOOK_KEEP[kind], amendment=amend.rstrip(".")
+    )
+    if face is not None:
+        said = f"{said} {words.COMPOSE_LOOK_FACE}"
+    # By both pictures' pixels: a source drawn again moves every look drawn from it.
+    made = key(
+        "draw_look", 1, source=source.pixels, amend=amend, said=said, settings=chosen, size=list(size),
+        face=face.pixels if face is not None else None,
+    )  # fmt: skip
+    target = cache.path(made, ".png")
+    outputs = {"frame": store.relative(target), "key": str(made), "size": list(size)}
+    if target.is_file():
+        ui.note(f"look already drawn as {made}")
+        return Skipped(outputs)
+    width, height = megapixel_size(*size, chosen.megapixels)
+    work = (max(16, width // 16 * 16), max(16, height // 16 * 16))  # the editor floors its output to /16
+    edited = edit_image.edit(source, said, chosen, size=work, donors=[face] if face is not None else [])
+    edited.resized(*size).pil().save(target)
+    record.artifact_made(target, store.IMAGE, chosen.seed, key=str(made))
+    return outputs
 
 
 def run_draw_reference(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
@@ -457,6 +498,7 @@ RUNNERS: dict[str, Runner] = {
     "finish": run_finish,
     "compose_keyframe": run_compose_keyframe,
     "draw_reference": run_draw_reference,
+    "draw_look": run_draw_look,
     "judge": run_judge,
     **PLAN_RUNNERS,
 }

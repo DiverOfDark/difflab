@@ -414,6 +414,51 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         "ALTER TABLE runs DROP COLUMN dir_present",
     ),
     ("ALTER TABLE jobs DROP COLUMN progress",),
+    # Who is in each shot, one row a member, and how they look there. `parent` is the look it starts from:
+    # NULL the one it last had, 'base' the bible's, or a casting id. `amend` set makes the casting a look
+    # of its own, drawn by the editor from its parent's picture; the made columns are that drawing, `size`
+    # its pixels and `seed` the editor's. Backfilled from each plan's `cast` and `looks`, which then goes.
+    # `prompts.written_at` and `written_for` say when and why a prompt was last written.
+    (
+        """
+        CREATE TABLE castings (
+            id          INTEGER PRIMARY KEY,
+            shot_id     INTEGER NOT NULL REFERENCES shots(id) ON DELETE CASCADE,
+            member_id   INTEGER NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+            position    INTEGER NOT NULL,
+            parent      TEXT,
+            amend       TEXT    NOT NULL DEFAULT '',
+            label       TEXT    NOT NULL DEFAULT '',
+            origin      TEXT    NOT NULL DEFAULT '',
+            size        TEXT    NOT NULL DEFAULT '[]',
+            seed        INTEGER,
+            state       TEXT    NOT NULL DEFAULT 'missing',
+            wanted_key  TEXT,
+            artifact    TEXT,
+            current_job INTEGER,
+            review      TEXT    NOT NULL DEFAULT '',
+            reviewed_by TEXT    NOT NULL DEFAULT '',
+            reviewed_at REAL,
+            pinned      INTEGER NOT NULL DEFAULT 0,
+            UNIQUE (shot_id, member_id)
+        )
+        """,
+        "CREATE INDEX castings_by_shot ON castings(shot_id, position)",
+        """
+        INSERT INTO castings (shot_id, member_id, position, amend, origin)
+        SELECT shots.id, members.id, listed.key,
+               coalesce(json_extract(shots.plan, '$.looks."' || listed.value || '"'), ''),
+               CASE WHEN coalesce(json_extract(shots.plan, '$.looks."' || listed.value || '"'), '') != ''
+                    THEN 'from text · ch ' || (chapters.position + 1) ELSE '' END
+        FROM shots
+        JOIN chapters ON chapters.id = shots.chapter_id
+        JOIN json_each(shots.plan, '$.cast') AS listed
+        JOIN members ON members.production_id = chapters.production_id AND members.slug = listed.value
+        """,
+        "UPDATE shots SET plan = json_remove(plan, '$.looks') WHERE json_type(plan, '$.looks') IS NOT NULL",
+        "ALTER TABLE prompts ADD COLUMN written_at REAL",
+        "ALTER TABLE prompts ADD COLUMN written_for TEXT NOT NULL DEFAULT ''",
+    ),
 )
 
 SCHEMA_VERSION = len(MIGRATIONS)

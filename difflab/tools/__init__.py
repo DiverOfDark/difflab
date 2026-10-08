@@ -57,6 +57,7 @@ TOOLS: tuple[Tool, ...] = (
     Tool("judge", 1, ("load VLM", "judge"), JudgeSettings, "does it show the shot, with the cast looking right"),
     Tool("compose_keyframe", 1, ("load editor", "compose"), EditSettings, "a first frame from the plan's words"),
     Tool("draw_reference", 1, ("load editor", "draw"), None, "a member no photo shows, drawn from its words"),
+    Tool("draw_look", 1, ("load editor", "draw"), None, "a member's look: its source picture with one amendment"),
     Tool(
         "refine_idea",
         1,

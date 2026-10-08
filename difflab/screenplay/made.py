@@ -22,6 +22,9 @@ def settle(connection: sqlite3.Connection, job: store.Job, outputs: dict[str, An
     if job.tool == "draw_reference" and job.for_kind == "reference":
         _drawn(connection, job, outputs, state)
         return
+    if job.tool == "draw_look" and job.for_kind == "casting":
+        _look_drawn(connection, job, outputs, state)
+        return
     if job.tool == "compose_keyframe" and job.for_kind == "keyframe":
         if state in (store.DONE, store.SKIPPED):
             keyframe = store.made_by_id(connection, "keyframe", job.for_id)
@@ -89,6 +92,26 @@ def _drawn(connection: sqlite3.Connection, job: store.Job, outputs: dict[str, An
         store.set_made(connection, "reference", made_id, store.STALE if reference.artifact else store.MISSING)
 
 
+def _look_drawn(connection: sqlite3.Connection, job: store.Job, outputs: dict[str, Any], state: str) -> None:
+    """A look's picture. A new one makes every look drawn from it stale: their pixels came from the old."""
+    made_id = int(job.for_id or 0)
+    casting = store.made_by_id(connection, "casting", made_id)
+    if not isinstance(casting, store.Casting):
+        return
+    if state in (store.DONE, store.SKIPPED):
+        store.set_made(
+            connection, "casting", made_id, _kept(casting, outputs, state), wanted_key=outputs.get("key"),
+            artifact=outputs.get("frame"), current_job=job.id, size=json.dumps(outputs.get("size") or []),
+        )  # fmt: skip
+        if casting.artifact != outputs.get("frame"):
+            production.restale_looks(connection, made_id)
+        production.recompile_look(connection, made_id)
+    elif state == store.FAILED:
+        store.set_made(connection, "casting", made_id, store.FAILED, current_job=job.id)
+    else:
+        store.set_made(connection, "casting", made_id, store.STALE if casting.artifact else store.MISSING)
+
+
 def _chain_forward(connection: sqlite3.Connection, shot_id: int, frame: str | None, job_id: int) -> None:
     shot = store.shot(connection, shot_id)
     if shot is None or frame is None:
@@ -105,7 +128,7 @@ def _judged(connection: sqlite3.Connection, job: store.Job, outputs: dict[str, A
     """A verdict on a keyframe, a clip or a drawn reference. A keyframe below the gate is composed again
     on a new seed, told the judge's fixes, until the retries are spent; anything else below it, and a
     keyframe out of retries, goes to review."""
-    if state != store.DONE or job.for_kind not in ("keyframe", "clip", "reference"):
+    if state != store.DONE or job.for_kind not in ("keyframe", "clip", "reference", "casting"):
         return
     kind, made_id = job.for_kind, int(job.for_id or 0)
     thing = store.made_by_id(connection, kind, made_id)
@@ -117,9 +140,16 @@ def _judged(connection: sqlite3.Connection, job: store.Job, outputs: dict[str, A
         return
     if outputs.get("passed"):
         store.set_made(connection, kind, made_id, store.APPROVED, review=review, reviewed_by=store.JUDGE)
+        if kind == "casting":
+            production.recompile_look(connection, made_id)
         return
     # No retries for a reference, whose new seed replaces the picture every prompt casting it hands, nor for a
-    # clip: its retry is a blind re-seed that re-renders it and every shot chained after it, minutes each.
+    # clip: its retry is a blind re-seed that re-renders it and every shot chained after it, minutes each. A
+    # look below the gate is flagged for a person, who sees the judge's issues beside it.
+    if kind == "casting":
+        store.set_made(connection, kind, made_id, store.NEEDS_REVIEW, review=review, reviewed_by=store.JUDGE)
+        production.recompile_look(connection, made_id)
+        return
     if kind in ("reference", "clip"):
         store.set_made(connection, kind, made_id, store.NEEDS_REVIEW, review=review, reviewed_by=store.JUDGE)
         if kind == "clip" and any(

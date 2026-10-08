@@ -25,7 +25,7 @@ from difflab.api import assets, runs
 from difflab.core import hub
 from difflab.core.settings import Continuity
 from difflab.models.minimax_h3.settings import VideoSettings
-from difflab.screenplay import drawn, ideas, ingest, planner, production, settings
+from difflab.screenplay import drawn, ideas, ingest, looks, planner, production, settings
 from difflab.work import queue
 from difflab.work.quick import Job
 
@@ -340,6 +340,77 @@ async def reroll_shot(shot_id: int, request: Request) -> dict[str, Any]:
     return {"seed": seed, "run": _runs(lambda: [planner.render_chapter(chapter)])["run"]}
 
 
+@app.post("/api/shots/{shot_id}/rewrite")
+def rewrite_shot(shot_id: int) -> dict[str, Any]:
+    """The shot's prose and prompt written again as a run; a prompt written by hand is let go."""
+    return _runs(lambda: [production.rewrite(shot_id)])
+
+
+@app.post("/api/shots/{shot_id}/approve")
+def approve_shot(shot_id: int) -> dict[str, Any]:
+    """The shot's prompt, keyframe and looks approved, each that is made; `left` says what was not."""
+    try:
+        owner, left = production.approve_shot(shot_id)
+    except LookupError as problem:
+        raise HTTPException(404, str(problem)) from problem
+    return {**_production(owner), "left": left}
+
+
+# --- castings: who is in a shot, and how they look there --------------------------------------------
+@app.post("/api/shots/{shot_id}/castings")
+async def add_casting(shot_id: int, request: Request) -> dict[str, Any]:
+    """`member` (its slug) into the shot, as it stands unless `parent`, `amend` or `label` say otherwise."""
+    body = dict(await request.json())
+    return _casting(lambda: production.add_casting(shot_id, str(body.pop("member", "")), **body))
+
+
+@app.patch("/api/castings/{casting_id}")
+async def patch_casting(casting_id: int, request: Request) -> dict[str, Any]:
+    """`parent` (null its last look, "base", or an earlier look's casting id), `amend`, `label`; restales its shots."""
+    body = dict(await request.json())
+    return _casting(lambda: production.edit_casting(casting_id, **body))
+
+
+@app.delete("/api/castings/{casting_id}")
+def delete_casting(casting_id: int) -> dict[str, Any]:
+    return _casting(lambda: production.remove_casting(casting_id))
+
+
+@app.post("/api/castings/{casting_id}/upload")
+async def upload_look(casting_id: int, request: Request) -> dict[str, Any]:
+    """`path`, an uploaded picture, as the look's own instead of a drawn one, approved."""
+    body = await request.json()
+    return _casting(lambda: production.upload_look(casting_id, str(body.get("path", ""))))
+
+
+@app.post("/api/castings/{casting_id}/draw")
+def draw_look(casting_id: int) -> dict[str, Any]:
+    """The look drawn by the editor from its source's picture and judged, as a run; drawn again, a new seed."""
+    owner = production.production_of_casting(casting_id)
+    if owner is None:
+        raise HTTPException(404, "no such casting")
+    return _runs(lambda: [looks.draw(owner, [casting_id])])
+
+
+@app.post("/api/shots/{shot_id}/looks")
+def draw_shot_looks(shot_id: int) -> dict[str, Any]:
+    """Every look of the shot with no picture yet, or a failed or stale one, drawn as one run."""
+    owner = production.production_of_shot(shot_id)
+    if owner is None:
+        raise HTTPException(404, "no such shot")
+    return _runs(lambda: [looks.draw(owner, production.undrawn_looks(shot_id))])
+
+
+def _casting(change: Callable[[], int]) -> dict[str, Any]:
+    try:
+        owner = change()
+    except LookupError as problem:
+        raise HTTPException(404, str(problem)) from problem
+    except (TypeError, ValueError, OSError) as problem:
+        raise HTTPException(400, str(problem)) from problem
+    return _production(owner)
+
+
 @app.post("/api/made/{kind}/{made_id}/approve")
 def approve(kind: str, made_id: int) -> dict[str, Any]:
     """A person's approval: the judge no longer overrules it, and a run paused on the clip goes on."""
@@ -440,6 +511,15 @@ def plan_production(production_id: int, chapter: int | None = None, fresh: bool 
 def render_production(production_id: int, chapter: int | None = None) -> dict[str, Any]:
     """Chapter `chapter` (from 0), or every one, a run each, queued in chapter order."""
     return _runs(lambda: planner.render_production(production_id, chapter_position=chapter))
+
+
+@app.get("/api/productions/{production_id}/preflight")
+def preflight(production_id: int) -> dict[str, Any]:
+    """Per chapter position, what would stop it rendering; nothing is queued."""
+    try:
+        return {"problems": planner.preflight(production_id)}
+    except LookupError as problem:
+        raise HTTPException(404, str(problem)) from problem
 
 
 def _runs(queue_them: Callable[[], list[str]]) -> dict[str, Any]:

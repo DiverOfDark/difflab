@@ -77,6 +77,7 @@ DIRECTOR_BEAT_MIN = 1.0  # s
 # The plan chooses how many clips and how long each; the longest is the render settings' duration.
 # 6 s holds a 2 s airlock, a main beat and a 2 s settle.
 DIRECTOR_CLIP_MIN = 6.0
+SHOT_SECONDS = (5.0, 15.0)  # what a shot's length may be set to by hand (s)
 DIRECTOR_TAKE_SLACK = 0.1  # the take's length is a ceiling; the clips may run over it by this fraction
 # The main beat starts mid-chunk, because a chunk's last beat gets squeezed; it may start right after a
 # 2 s airlock (0.16 of a 12.25 s chunk).

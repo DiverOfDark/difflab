@@ -213,7 +213,7 @@ HOW A CHAINED TAKE BREAKS, AND THE RULES THAT PREVENT IT
 13. Cuts. A clip continues from the clip before ("cut": ""), except where the IDEA jumps: "cut": "back" returns to the OPENING photograph exactly as it was, the way waking returns to the bed a dream started in; "cut": "new" jumps to a new framing or another place, and its "opening" is a snapshot of its own first frame, written like a closing. A cut clip begins with an airlock. Never cut inside one continuous action.
 14. Travel and chases. A chase, a flight or a run covers distance: the one chased starts far ahead, small in the frame, the gap changes over the clip, and the camera moves with them ("follow"). Nothing travelling stops to pose: a clip whose action runs on into the next ends with a "carry" beat instead of a settle, its closing a snapshot of the motion under way (who is where in the frame, which way each moves, the background passing), and the next clip begins with a "carry" beat, at most {quiet_max:g} seconds, in which that motion goes on and nothing new starts. A carry is never the main event: the leap or the swipe is the clip's primary beat, and the carry only keeps that motion going for at most {quiet_max:g} seconds after it. Faces still show at a carry's close, but need not turn to the camera.
 16. Leaving. A member that flies, runs or walks off goes away from the camera: it grows smaller in the frame while the camera stays behind ("stay"), and the closing says how small it has become and where (a small dark shape high in the upper right of the sky). It shows its back as it goes, so it is not in "faces_at_close". The camera follows it only in a later clip.
-15. Changes that last. When a member's look changes and stays changed (wings grow, a shirt gets soaked), the clip where it happens gives "looks": {{"cat": "two large grey-and-white feathered wings on its back"}}, the member's look from the end of that clip on, in at most {look_words} words. The program says it in every later clip, so a later clip does not repeat it; a "back" cut ends every change.
+15. Changes that last. When a member's look changes and stays changed (wings grow, a shirt gets soaked), the clip where it happens gives "looks": {{"cat": "two large grey-and-white feathered wings on its back"}}, the member's look from the end of that clip on, in at most {look_words} words. The program says it in every later clip, so a later clip does not repeat it; a "back" cut returns each member to the look it had in the opening scene.
 
 FIELDS
 - "ambience": one noun phrase, starting in lowercase, of the room sound heard through the whole take ("quiet lounge room tone with a low ventilation hum and a faint clink of glassware from the bar").
@@ -328,6 +328,9 @@ SENTENCES = {
     # A lasting change the plan made to a member's look: no reference picture shows it, so it is said outright.
     "look": "In this shot {subject} also has {look}, which no reference picture shows.",
     "look_change": "During this shot {subject} changes: by its end it has {look}, which no reference picture shows.",
+    # Once the look has a picture of its own, approved: it is cited instead.
+    "look_pictured": "In this shot {subject} also has {look}, as {pictures} shows.",
+    "look_change_pictured": "During this shot {subject} changes: by its end it has {look}, as {pictures} shows.",
     "environment": "{subject} is the {noun} and its photographic look from {pictures}: {traits}, and the photo's natural color balance, contrast and skin tones.",
     "first_frame": "<Picture 1> is the first frame of [Shot 1]: {arrangement}.",
     "last_frame": "<Picture 2> is the last frame of [Shot 1]: {arrangement}.",
@@ -335,6 +338,9 @@ SENTENCES = {
     "audio": "<Audio 1> is the synchronized audio track of <Video 1>, whose room tone continues into the target video.",
     "lead": "The target video is one unbroken handheld shot that begins from <Picture 1> in {room}.",
     "lead_continued": "The target video continues <Video 1> in one unbroken handheld shot that begins from <Picture 1> in {room}.",
+    # A shot opened from its references alone: no picture is its first frame.
+    "lead_refs": "The target video is one unbroken handheld shot in {room}.",
+    "begin_refs": "[Shot 1] The shot begins: {arrangement}.",
     "lead_lands": "It ends exactly on <Picture 2>.",
     "audio_role": "The room tone of <Audio 1> carries on throughout.",
     "retain": "{subject} (appears in [Shot 1]): fully_preserved - {traits} are retained.",
@@ -558,6 +564,17 @@ Keep this room exactly as it is: its walls, furniture, lighting and colour. Chan
 COMPOSE_LIKENESS = "Everyone taken from a picture looks exactly as in that picture: the same face, hair and build, and the same clothes in every colour, pattern and fold, except what is said to be different now."
 COMPOSE_ALONE = "Nobody else is in the frame: no other people and no other animals."
 COMPOSE_NOTE = "Also: {note}."
+# A look of a member drawn from the picture it starts from, changed only by the amendment; a person's base
+# face rides along as Picture 2, so a chain of edits does not drift from the face it began with.
+COMPOSE_LOOK = """\
+Keep the {noun} in this picture exactly as it is: {kept}, and the same pose, framing, backdrop and light. Change only this, and nothing else: {amendment}. An unretouched real photograph, not a render or an illustration."""
+COMPOSE_LOOK_KEEP = {
+    "person": "the same face, hair and build, and every piece of clothing the change does not name, in every colour, pattern and fold",
+    "animal": "the same face, coat, markings and build",
+    "object": "the same shape, size, colours and material",
+    "environment": "the same walls, ground, furniture, colours and light",
+}
+COMPOSE_LOOK_FACE = "The face is exactly the face in Picture 2: the same features, skin and hair."
 # Told in words, a robe's colour and embroidery overrode the picture it came with: production 13's retry
 # (2026-10-04), noted "the dark green one with gold floral embroidery", came back with gold flowers a
 # hand wide. A redo is pointed back at the picture instead.

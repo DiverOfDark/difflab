@@ -16,6 +16,9 @@ from difflab.store.models import (
     MISSING,
     PINNED,
     PROVIDED,
+    REFS,
+    STALE,
+    Casting,
     Chapter,
     Clip,
     Conflict,
@@ -34,6 +37,7 @@ MADE_TABLES = {
     "prompt": "prompts",
     "clip": "clips",
     "reference": "refs",
+    "casting": "castings",
 }
 
 
@@ -179,6 +183,10 @@ def update_shot(connection: sqlite3.Connection, shot_id: int, **fields: Any) -> 
     return shot(connection, shot_id)
 
 
+def touch_shot(connection: sqlite3.Connection, shot_id: int) -> None:
+    connection.execute("UPDATE shots SET updated_at = ? WHERE id = ?", (time.time(), shot_id))
+
+
 def delete_shot(connection: sqlite3.Connection, shot_id: int) -> None:
     """The row and its made things; the shots after it close the gap."""
     gone = shot(connection, shot_id)
@@ -243,6 +251,16 @@ def compose_keyframe(connection: sqlite3.Connection, shot_id: int, seed: int | N
     return keyframe_of(connection, shot_id)
 
 
+def refs_keyframe(connection: sqlite3.Connection, shot_id: int) -> Keyframe:
+    """No first frame at all: the clip opens wherever its references take it."""
+    connection.execute(
+        "UPDATE keyframes SET source = ?, provided = NULL, artifact = NULL, note = '', state = ?, pinned = 0, "
+        "wanted_key = NULL, current_job = NULL WHERE shot_id = ?",
+        (REFS, PINNED, shot_id),
+    )
+    return keyframe_of(connection, shot_id)
+
+
 def set_keyframe_note(connection: sqlite3.Connection, keyframe_id: int, note: str) -> None:
     connection.execute("UPDATE keyframes SET note = ? WHERE id = ?", (note, keyframe_id))
 
@@ -256,9 +274,16 @@ def set_prompt(connection: sqlite3.Connection, shot_id: int, text: str, written_
     """Text written by hand is pinned: no tool rewrites it."""
     pinned = written_by == "hand"
     connection.execute(
-        "UPDATE prompts SET text = ?, written_by = ?, state = ?, pinned = ? WHERE shot_id = ?",
-        (text, written_by, PINNED if pinned else MISSING, int(pinned), shot_id),
+        "UPDATE prompts SET text = ?, written_by = ?, state = ?, pinned = ?, written_at = ?, written_for = '' "
+        "WHERE shot_id = ?",
+        (text, written_by, PINNED if pinned else MISSING, int(pinned), time.time(), shot_id),
     )
+    return prompt_of(connection, shot_id)
+
+
+def release_prompt(connection: sqlite3.Connection, shot_id: int) -> Prompt:
+    """A prompt written by hand given back to the compiler, stale until it is written again."""
+    connection.execute("UPDATE prompts SET pinned = 0, state = ? WHERE shot_id = ?", (STALE, shot_id))
     return prompt_of(connection, shot_id)
 
 
@@ -306,7 +331,9 @@ def made_by_shot(connection: sqlite3.Connection, kind: str, shot_id: int) -> Key
     raise ValueError(f"{kind!r} is not a made thing (one of {', '.join(MADE_TABLES)})")
 
 
-def made_by_id(connection: sqlite3.Connection, kind: str, made_id: int) -> Keyframe | Prompt | Clip | Reference | None:
+def made_by_id(
+    connection: sqlite3.Connection, kind: str, made_id: int
+) -> Keyframe | Prompt | Clip | Reference | Casting | None:
     table = MADE_TABLES[kind]
     row = connection.execute(f"SELECT * FROM {table} WHERE id = ?", (made_id,)).fetchone()
     if row is None:
@@ -316,22 +343,91 @@ def made_by_id(connection: sqlite3.Connection, kind: str, made_id: int) -> Keyfr
         "prompt": Prompt.of,
         "clip": Clip.of,
         "reference": Reference.of,
+        "casting": Casting.of,
     }
-    made: Keyframe | Prompt | Clip | Reference = readers[kind](row)
+    made: Keyframe | Prompt | Clip | Reference | Casting = readers[kind](row)
     return made
 
 
 def set_compiled(
-    connection: sqlite3.Connection, shot_id: int, text: str, pictures: list[str], checks: list[dict[str, Any]], key: str
+    connection: sqlite3.Connection,
+    shot_id: int,
+    text: str,
+    pictures: list[str],
+    checks: list[dict[str, Any]],
+    key: str,
+    written_for: str = "",
 ) -> Prompt:
     """A caption the compiler wrote from the plan, with the pictures its clip is handed. Not pinned:
     a plan change recompiles it, and a hand edit (`set_prompt`) pins it. An approval holds while the key does."""
     connection.execute(
         "UPDATE prompts SET text = ?, written_by = 'compiler', pictures = ?, checks = ?, wanted_key = ?, "
-        "state = CASE WHEN state = ? AND wanted_key = ? THEN ? ELSE ? END, pinned = 0 WHERE shot_id = ?",
-        (text, _dump(pictures), _dump(checks), key, APPROVED, key, APPROVED, MADE, shot_id),
+        "state = CASE WHEN state = ? AND wanted_key = ? THEN ? ELSE ? END, pinned = 0, written_at = ?, "
+        "written_for = ? WHERE shot_id = ?",
+        (text, _dump(pictures), _dump(checks), key, APPROVED, key, APPROVED, MADE, time.time(), written_for, shot_id),
     )
     return prompt_of(connection, shot_id)
+
+
+# --- who is in each shot, and how they look there ------------------------------------------------
+def castings_of(connection: sqlite3.Connection, shot_id: int) -> list[Casting]:
+    rows = connection.execute("SELECT * FROM castings WHERE shot_id = ? ORDER BY position", (shot_id,)).fetchall()
+    return [Casting.of(row) for row in rows]
+
+
+def castings_of_production(connection: sqlite3.Connection, production_id: int) -> list[Casting]:
+    """In film order: chapter, shot, then the casting's own position."""
+    rows = connection.execute(
+        "SELECT castings.* FROM castings JOIN shots ON shots.id = castings.shot_id "
+        "JOIN chapters ON chapters.id = shots.chapter_id WHERE chapters.production_id = ? "
+        "ORDER BY chapters.position, shots.position, castings.position",
+        (production_id,),
+    ).fetchall()
+    return [Casting.of(row) for row in rows]
+
+
+def casting(connection: sqlite3.Connection, casting_id: int) -> Casting | None:
+    row = connection.execute("SELECT * FROM castings WHERE id = ?", (casting_id,)).fetchone()
+    return None if row is None else Casting.of(row)
+
+
+def add_casting(
+    connection: sqlite3.Connection,
+    shot_id: int,
+    member_id: int,
+    parent: str | None = None,
+    amend: str = "",
+    label: str = "",
+    origin: str = "",
+) -> Casting:
+    row = connection.execute(
+        "SELECT coalesce(max(position), -1) + 1 FROM castings WHERE shot_id = ?", (shot_id,)
+    ).fetchone()
+    cursor = connection.execute(
+        "INSERT INTO castings (shot_id, member_id, position, parent, amend, label, origin) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (shot_id, member_id, int(row[0]), parent, amend, label, origin),
+    )
+    made = casting(connection, int(cursor.lastrowid or 0))
+    assert made is not None
+    return made
+
+
+def update_casting(connection: sqlite3.Connection, casting_id: int, **fields: Any) -> Casting | None:
+    """`parent`, `amend`, `label`, `origin`, `position`, `size`, `seed`; a `parent` of None is written as NULL."""
+    allowed = {"parent", "amend", "label", "origin", "position", "size", "seed"}
+    unknown = set(fields) - allowed
+    if unknown:
+        raise ValueError(f"a casting has no {', '.join(sorted(unknown))}")
+    values = {name: (_dump(value) if name == "size" else value) for name, value in fields.items()}
+    if values:
+        assignments = ", ".join(f"{name} = ?" for name in values)
+        connection.execute(f"UPDATE castings SET {assignments} WHERE id = ?", (*values.values(), casting_id))
+    return casting(connection, casting_id)
+
+
+def delete_casting(connection: sqlite3.Connection, casting_id: int) -> None:
+    connection.execute("DELETE FROM castings WHERE id = ?", (casting_id,))
 
 
 # --- the cast ---------------------------------------------------------------------------------

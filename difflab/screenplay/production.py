@@ -6,7 +6,9 @@ import hashlib
 import json
 import random
 import re
+import time
 from collections.abc import Iterable
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +18,7 @@ from difflab.core.keys import key
 from difflab.core.settings import Continuity, EditSettings, Settings
 from difflab.models.minimax_h3 import pipeline
 from difflab.models.minimax_h3.settings import VideoSettings
-from difflab.screenplay import compiler, crops, drawn, settings, timings, words
+from difflab.screenplay import compiler, crops, drawn, looks, settings, timings, words
 from difflab.screenplay import config as knobs
 
 _SLUG = re.compile(r"[a-z0-9][a-z0-9_-]*")
@@ -88,11 +90,13 @@ def add_shot(
 def update_shot(shot_id: int, **changes: Any) -> store.Shot:
     """`prompt`, `keyframe` (a path, `composed`, `opening` for the planner's cut of the first photo - on a
     later shot, a cut back to it that opens on the opening arrangement - or
-    "" to chain again), `landed` (whether the shot before ends on that keyframe), `seed`, the plan's
-    `closing`, `cast`, `camera_move`, `camera_toward` and `dialogue`, and the shot's own columns. A plan
-    edit pins the shot and recompiles its prompt at once, and a closing the next shot's too, since it
-    opens on it; a keyframe change recompiles the shot and the one before, since whether that one lands
-    on it and whether a tail crosses are both in their words."""
+    "" to chain again), `opening` (`keyframe`, `chain` or `refs`: a keyframe kept as it is when it has one
+    and composed when not, the shot before's last frame, or no first frame at all), `landed` (whether the
+    shot before ends on that keyframe), `seed`, the plan's `closing`, `cast`, `camera_move`,
+    `camera_toward`, `dialogue` and `sound`, `seconds` (held to `SHOT_SECONDS`), and the shot's own
+    columns. A plan edit pins the shot and recompiles its prompt at once, and a closing the next shot's
+    too, since it opens on it; a keyframe change recompiles the shot and the one before, since whether that
+    one lands on it and whether a tail crosses are both in their words."""
     with store.connect() as connection, store.transaction(connection):
         shot = store.shot(connection, shot_id)
         if shot is None:
@@ -116,6 +120,16 @@ def update_shot(shot_id: int, **changes: Any) -> store.Shot:
             else:
                 store.chain_keyframe(connection, shot_id)
             joined = True
+        if "opening" in changes:
+            _open(connection, shot, str(changes.pop("opening")))
+            joined = True
+        if "seconds" in changes:
+            low, high = knobs.SHOT_SECONDS
+            seconds = min(max(float(changes.pop("seconds")), low), high)
+            if seconds != shot.seconds:
+                store.update_shot(connection, shot_id, seconds=seconds)
+                _stale(connection, [shot], prompts=False)
+                joined = True
         if "landed" in changes:
             store.land_keyframe(connection, shot_id, bool(changes.pop("landed")))
             joined = True
@@ -139,7 +153,27 @@ def update_shot(shot_id: int, **changes: Any) -> store.Shot:
         return updated
 
 
-PLAN_FIELDS = ("actions", "closing", "cast", "camera_move", "camera_toward", "dialogue", "looks")
+PLAN_FIELDS = ("actions", "closing", "cast", "camera_move", "camera_toward", "dialogue", "sound")
+OPENINGS = ("keyframe", "chain", "refs")
+
+
+def _open(connection: Any, shot: store.Shot, opening: str) -> None:
+    keyframe = store.keyframe_of(connection, shot.id)
+    if opening == "refs":
+        store.refs_keyframe(connection, shot.id)
+    elif opening == "chain":
+        if shot.position == 0:
+            raise ValueError("the chapter's first shot has no shot before it to open on")
+        store.chain_keyframe(connection, shot.id)
+    elif opening == "keyframe":
+        if keyframe.source not in (store.COMPOSED, store.PROVIDED):
+            store.compose_keyframe(connection, shot.id)
+    else:
+        raise ValueError(f"a shot opens on one of {', '.join(OPENINGS)}")
+
+
+def opening_of(keyframe: store.Keyframe) -> str:
+    return {store.CHAINED: "chain", store.REFS: "refs"}.get(keyframe.source, "keyframe")
 
 
 def _edit_plan(connection: Any, chapter: store.Chapter, shot: store.Shot, **planned: Any) -> None:
@@ -230,22 +264,33 @@ def _edit_plan(connection: Any, chapter: store.Chapter, shot: store.Shot, **plan
         spoken = [f"{{{who}}}'s spoken line" for who in dict.fromkeys(line["who"] for line in lines)]
         kept = [m for m in plan.get("mouths", []) if not str(m).endswith("'s spoken line")]
         plan["mouths"] = [*kept, *spoken]
-    if "looks" in planned:  # how a member looks from the end of this shot on, until a cut back
-        looks = {str(m): " ".join(str(v).split()) for m, v in (planned["looks"] or {}).items()}
-        unknown = sorted(m for m in looks if m not in plan.get("cast", []))
-        if unknown:
-            raise ValueError(f"{', '.join(unknown)} is not in this shot's cast")
-        plan["looks"] = {m: v for m, v in looks.items() if v}
+    if "sound" in planned:  # the shot's own sounds, after the place's
+        plan["sounds"] = " ".join(str(planned["sound"] or "").split())
     move, toward = plan.get("camera_move", ""), plan.get("camera_toward", "")
     dialogue = " / ".join(f"{line['who']}: {line['line']}" for line in plan.get("dialogue", []))
+    _sync_castings(connection, shot, [str(m) for m in plan.get("cast", [])])
     store.update_shot(connection, shot.id, plan=plan, camera=f"{move} → {toward}", dialogue=dialogue, pinned=True)
     recompile(connection, production, chapter, shot.id)
     if "closing" in planned and following is not None:
         recompile(connection, production, chapter, following.id)  # it opens on this closing
-    if "looks" in planned:  # every later shot says the look it carries
+    if "closing" in planned or "cast" in planned:  # the castings may have moved what later shots carry
         for later in shots[shot.position + 1 :]:
             if later.plan.get("beats"):
                 recompile(connection, production, chapter, later.id)
+
+
+def _sync_castings(connection: Any, shot: store.Shot, cast: list[str]) -> None:
+    """The shot's castings to its plan's cast: a member added comes as it stands, one dropped goes."""
+    chapter = store.chapter(connection, shot.chapter_id)
+    assert chapter is not None
+    members = {m.slug: m.id for m in store.members_of(connection, chapter.production_id)}
+    held = {c.member_id: c for c in store.castings_of(connection, shot.id)}
+    for slug in cast:
+        if members[slug] not in held:
+            store.add_casting(connection, shot.id, members[slug])
+    for member_id, casting in held.items():
+        if member_id not in {members[slug] for slug in cast}:
+            store.delete_casting(connection, casting.id)
 
 
 def _said(plan: dict[str, Any]) -> str:
@@ -255,9 +300,12 @@ def _said(plan: dict[str, Any]) -> str:
     return " ".join([*parts, *(str(plan.get(k, "")) for k in ("closing", "summary", "sounds"))])
 
 
-def recompile(connection: Any, production: store.Production, chapter: store.Chapter, shot_id: int) -> None:
+def recompile(
+    connection: Any, production: store.Production, chapter: store.Chapter, shot_id: int, written_for: str = ""
+) -> None:
     """The prompt compiled again from the shot's plan as it now stands - code, no model - as
-    `compile_shot` would; a plan it cannot compile leaves the prompt stale for a re-plan to write."""
+    `compile_shot` would; a plan it cannot compile leaves the prompt stale for a re-plan to write.
+    `written_for` says why, when a page should know: "looks" when its looks moved under it."""
     shots = store.shots_of(connection, chapter.id)
     position = next(one.position for one in shots if one.id == shot_id)
     prompt = store.prompt_of(connection, shot_id)
@@ -276,7 +324,7 @@ def recompile(connection: Any, production: store.Production, chapter: store.Chap
         "compile_shot", 1, production=production.id, shot=shot_id, prompt=compiled.prompt, pictures=compiled.references
     )
     if compiled.prompt != prompt.text or handed != prompt.pictures:
-        store.set_compiled(connection, shot_id, compiled.prompt, handed, prompt.checks, str(made))
+        store.set_compiled(connection, shot_id, compiled.prompt, handed, prompt.checks, str(made), written_for)
         _stale(connection, [shots[position]], prompts=prompt.state == store.STALE)
 
 
@@ -562,27 +610,32 @@ def give_ref(member_id: int, path: str, role: str) -> dict[str, int]:
             raise LookupError(f"no member {member_id}")
         if role not in crops.WANTS[member.kind]:
             raise ValueError(f"a {member.kind} takes a {' or '.join(crops.WANTS[member.kind])} picture, not {role}")
-        canvas = production.manifest.get("canvas")
-        if not canvas:
-            raise ValueError("plan the chapter first: its canvas decides the picture's size")
-        source = Path(path) if Path(path).is_absolute() else config.OUTPUT_DIR / path
-        frame = media.frame_from_image(source)
-        pixels = knobs.DIRECTOR_ENVIRONMENT_PIXELS if role == "environment" else knobs.DIRECTOR_VIEW_PIXELS
-        whole = crops.Box(0, 0, frame.width, frame.height)
-        box, size = crops.fitted(whole, pixels, (frame.width, frame.height), canvas["width"] * canvas["height"])
-        geometry = pipeline.Geometry(int(canvas["width"]), int(canvas["height"]), int(canvas["frame_count"]))
-        if pipeline.reference_size(*size, geometry, "match") != size:
-            raise ValueError(f"a {size[0]}×{size[1]} picture would be resampled by H3's reference sizing")
-        folder = config.OUTPUT_DIR / "blobs" / "given"
-        folder.mkdir(parents=True, exist_ok=True)
-        kept = folder / f"{source.stem}_{member.slug}_{role}.png"
-        frame.crop(box.pixels()).resized(*size).pil().save(kept)
-        given = store.relative(source)
+        given, kept, box, size = _fitted(production, path, role, f"{member.slug}_{role}")
         store.add_ref(
             connection, member.id, role, given, list(box.pixels()), list(size), (size[0] // 32) * (size[1] // 32),
-            [member.slug], box.area, artifact=store.relative(kept), provided=given,
+            [member.slug], box.area, artifact=kept, provided=given,
         )  # fmt: skip
         return _stale(connection, _shots_of(connection, production.id, member.slug))
+
+
+def _fitted(production: store.Production, path: str, role: str, name: str) -> tuple[str, str, crops.Box, list[int]]:
+    """A picture from outside, fitted the way a crop is so H3 takes it as it is: (given, kept, box, size)."""
+    canvas = production.manifest.get("canvas")
+    if not canvas:
+        raise ValueError("plan the chapter first: its canvas decides the picture's size")
+    source = Path(path) if Path(path).is_absolute() else config.OUTPUT_DIR / path
+    frame = media.frame_from_image(source)
+    pixels = knobs.DIRECTOR_ENVIRONMENT_PIXELS if role == "environment" else knobs.DIRECTOR_VIEW_PIXELS
+    whole = crops.Box(0, 0, frame.width, frame.height)
+    box, size = crops.fitted(whole, pixels, (frame.width, frame.height), canvas["width"] * canvas["height"])
+    geometry = pipeline.Geometry(int(canvas["width"]), int(canvas["height"]), int(canvas["frame_count"]))
+    if pipeline.reference_size(*size, geometry, "match") != size:
+        raise ValueError(f"a {size[0]}×{size[1]} picture would be resampled by H3's reference sizing")
+    folder = config.OUTPUT_DIR / "blobs" / "given"
+    folder.mkdir(parents=True, exist_ok=True)
+    kept = folder / f"{source.stem}_{name}.png"
+    frame.crop(box.pixels()).resized(*size).pil().save(kept)
+    return store.relative(source), store.relative(kept), box, list(size)
 
 
 def detach_ref(ref_id: int) -> dict[str, int]:
@@ -695,6 +748,204 @@ def _tell_paused(connection: Any, chapter_id: int, cmd: str) -> None:
             store.add_command(connection, "run", run.id, {"cmd": cmd})
 
 
+# --- castings: who is in a shot, and how they look there --------------------------------------------
+def add_casting(shot_id: int, member: str, **changes: Any) -> int:
+    """A member into the shot, as it stands unless `parent`, `amend` or `label` say otherwise."""
+    with store.connect() as connection, store.transaction(connection):
+        _, production = _shot_and_production(connection, shot_id)
+        found = store.member_by_slug(connection, production.id, member)
+        if found is None:
+            raise ValueError(f"no member called {member}")
+        held = {c.member_id: c for c in store.castings_of(connection, shot_id)}
+        if found.id in held:
+            raise ValueError(f"{member} is in this shot already")
+        kinds = {m.id: m.kind for m in store.members_of(connection, production.id)}
+        if found.kind == "environment" and any(kinds[m] == "environment" for m in held):
+            raise ValueError("a shot happens in one place: change the place's look instead")
+        casting = store.add_casting(connection, shot_id, found.id)
+        _recast(connection, production, casting, changes)
+        return production.id
+
+
+def edit_casting(casting_id: int, **changes: Any) -> int:
+    """`parent` (None its last look, "base", or an earlier look's id), `amend`, `label`; restales its shots."""
+    unknown = set(changes) - {"parent", "amend", "label"}
+    if unknown:
+        raise ValueError(f"a casting has no {', '.join(sorted(unknown))} to edit")
+    with store.connect() as connection, store.transaction(connection):
+        casting = store.casting(connection, casting_id)
+        if casting is None:
+            raise LookupError(f"no casting {casting_id}")
+        _, production = _shot_and_production(connection, casting.shot_id)
+        _recast(connection, production, casting, changes)
+        return production.id
+
+
+def remove_casting(casting_id: int) -> int:
+    """The member out of the shot, unless its words name it."""
+    with store.connect() as connection, store.transaction(connection):
+        casting = store.casting(connection, casting_id)
+        if casting is None:
+            raise LookupError(f"no casting {casting_id}")
+        shot, production = _shot_and_production(connection, casting.shot_id)
+        member = store.member(connection, casting.member_id)
+        assert member is not None
+        if member.kind == "environment":
+            raise ValueError("every shot happens somewhere: change the place's look instead")
+        chapter = store.chapter(connection, shot.chapter_id)
+        assert chapter is not None
+        said = _said(shot.plan)
+        if shot.plan.get("beats"):
+            said += " " + compiler.opening(compiler.take_of(connection, production, chapter), shot.position)
+        if member.slug in compiler.PLACEHOLDER.findall(said):
+            raise ValueError(f"{member.slug} is named in this shot's beats, its closing or its opening: it stays")
+        _recast(connection, production, casting, None)
+        return production.id
+
+
+def upload_look(casting_id: int, path: str) -> int:
+    """A given picture as the look's own instead of a drawn one, approved by whoever gave it."""
+    with store.connect() as connection, store.transaction(connection):
+        casting = store.casting(connection, casting_id)
+        if casting is None:
+            raise LookupError(f"no casting {casting_id}")
+        if not casting.amended:
+            raise ValueError("a member as it stands shows its last look: give it an amendment first")
+        _, production = _shot_and_production(connection, casting.shot_id)
+        member = store.member(connection, casting.member_id)
+        assert member is not None
+        role = compiler.DRAWN_ROLE[member.kind]
+        _, kept, _, size = _fitted(production, path, role, f"{member.slug}_look{casting.id}")
+        store.set_made(
+            connection, "casting", casting.id, store.APPROVED, artifact=kept, review="", reviewed_by=store.PERSON,
+            size=json.dumps(size), pinned=1, wanted_key=None,
+        )  # fmt: skip
+        restale_looks(connection, casting.id)
+        recompile_look(connection, casting.id)
+        return production.id
+
+
+def _shot_and_production(connection: Any, shot_id: int) -> tuple[store.Shot, store.Production]:
+    shot = store.shot(connection, shot_id)
+    chapter = None if shot is None else store.chapter(connection, shot.chapter_id)
+    production = None if chapter is None else store.production(connection, chapter.production_id)
+    if shot is None or production is None:
+        raise LookupError(f"no shot {shot_id}")
+    return shot, production
+
+
+def _recast(
+    connection: Any, production: store.Production, casting: store.Casting, changes: dict[str, Any] | None
+) -> None:
+    """One casting changed, or removed (`changes` None); every shot it showed in or shows in goes stale."""
+    member = store.member(connection, casting.member_id)
+    shot = store.shot(connection, casting.shot_id)
+    assert member is not None and shot is not None
+    before = looks.resolve(connection, production)
+    touched = {shot.id, *before.placed[shot.id][member.slug].carried_into}
+    if changes is None:
+        restale_looks(connection, casting.id)
+        store.delete_casting(connection, casting.id)
+        cast = [m for m in shot.plan.get("cast", []) if m != member.slug]
+    else:
+        fields: dict[str, Any] = {}
+        if "parent" in changes:
+            fields["parent"] = _parent(before, shot, member.slug, changes["parent"])
+        if "amend" in changes:
+            fields["amend"] = " ".join(str(changes["amend"] or "").split())
+        if "label" in changes:
+            fields["label"] = " ".join(str(changes["label"] or "").split())
+        if "amend" in fields and fields["amend"] and casting.amend != fields["amend"] and not casting.origin:
+            fields["origin"] = "by hand"
+        store.update_casting(connection, casting.id, **fields)
+        redrawn = any(name in fields and fields[name] != getattr(casting, name) for name in ("amend", "parent"))
+        if redrawn:
+            store.set_made(connection, "casting", casting.id, store.STALE if casting.artifact else store.MISSING)
+            restale_looks(connection, casting.id)
+        cast = list(dict.fromkeys([*shot.plan.get("cast", []), member.slug]))
+    if shot.plan:
+        store.update_shot(connection, shot.id, plan={**shot.plan, "cast": cast}, pinned=True)
+    else:
+        store.touch_shot(connection, shot.id)
+    after = looks.resolve(connection, production)
+    if changes is not None:
+        touched |= set(after.placed[shot.id][member.slug].carried_into)
+    shots = [one for one in _shots_of(connection, production.id) if one.id in touched]
+    _stale(connection, shots, prompts=False)
+    for one in shots:
+        chapter = store.chapter(connection, one.chapter_id)
+        if chapter is not None and one.plan.get("beats"):
+            recompile(connection, production, chapter, one.id, written_for="looks")
+
+
+def _parent(resolved: looks.Resolved, shot: store.Shot, member: str, given: Any) -> str | None:
+    if given in (None, ""):
+        return None
+    if str(given) == store.BASE:
+        return store.BASE
+    look = resolved.looks.get(int(given)) if str(given).isdigit() else None
+    if look is None or look.member != member or look.casting is None:
+        raise ValueError(f"{given} is not a look of {member}")
+    if resolved.order.index(look.casting.shot_id) >= resolved.order.index(shot.id):
+        raise ValueError(f"“{look.label}” comes after this shot: a look starts from one before it")
+    return str(look.casting.id)
+
+
+def restale_looks(connection: Any, casting_id: int) -> None:
+    """Every look drawn, at any remove, from this one's picture."""
+    casting = store.casting(connection, casting_id)
+    if casting is None:
+        return
+    _, production = _shot_and_production(connection, casting.shot_id)
+    resolved = looks.resolve(connection, production)
+    for look in resolved.looks.values():
+        ancestor, descends = look.source, False
+        while ancestor is not None and not descends:
+            descends = ancestor == casting_id
+            ancestor = resolved.looks[ancestor].source if ancestor in resolved.looks else None
+        if descends and look.casting is not None and look.casting.artifact and look.casting.state != store.STALE:
+            store.set_made(connection, "casting", look.casting.id, store.STALE)
+
+
+def recompile_look(connection: Any, casting_id: int) -> None:
+    """Every prompt of a shot that shows this look, compiled again: its picture or its state moved."""
+    casting = store.casting(connection, casting_id)
+    if casting is None:
+        return
+    _, production = _shot_and_production(connection, casting.shot_id)
+    resolved = looks.resolve(connection, production)
+    for chapter in store.chapters_of(connection, production.id):
+        for shot in store.shots_of(connection, chapter.id):
+            placed = resolved.placed.get(shot.id, {}).values()
+            if shot.plan.get("beats") and any(casting_id in (p.source, p.look) for p in placed):
+                recompile(connection, production, chapter, shot.id, written_for="looks")
+
+
+def rewrite(shot_id: int, asked_by: str = "person") -> str:
+    """The shot's prose and prompt written again as a run, a prompt written by hand let go."""
+    with store.connect() as connection, store.transaction(connection):
+        shot, production = _shot_and_production(connection, shot_id)
+        if not shot.plan.get("beats"):
+            raise ValueError("plan the chapter first: a rewrite writes the prose of a planned shot")
+        store.release_prompt(connection, shot_id)
+        run_id = store.next_run_id(connection, datetime.now().strftime("%Y-%m-%d-%H%M%S"))
+        store.add_run(
+            connection, run_id, title=f"{production.title} · rewrite shot {shot.position + 1}", asked_by=asked_by,
+            scope=f"plan:{shot.chapter_id}", production_id=production.id,
+            spec={"production": production.id, "chapter": shot.chapter_id, "items": [f"shot {shot.position + 1}"]},
+        )  # fmt: skip
+        common = {"production": production.id, "chapter": shot.chapter_id, "position": shot.position}
+        written = store.add_job(
+            connection, run_id, "write_shot", {**common, "take": time.time_ns() // 1_000_000 % 1_000_000_000},
+            label=f"write shot {shot.position + 1}", settings=settings.for_job("write_shot", production.id),
+        )  # fmt: skip
+        store.add_job(
+            connection, run_id, "compile_shot", {**common, "written": [{"from_job": written.id, "output": "summary"}]},
+            label=f"compile shot {shot.position + 1}", settings=settings.for_job("compile_shot", production.id),
+        )  # fmt: skip
+        return run_id
+
+
 # --- a person's verdict ------------------------------------------------------------------------
 def review(kind: str, made_id: int, approved: bool) -> int:
     """Approved as it is, or rejected so the next run makes it anew. Returns the production."""
@@ -707,16 +958,50 @@ def review(kind: str, made_id: int, approved: bool) -> int:
         owner = _OWNER[kind](connection, thing)
         if not approved:
             _REJECT[kind](connection, thing)
-            return owner
-        made = thing.artifact or (isinstance(thing, store.Prompt) and thing.text.strip())
-        if not made or thing.state not in (store.MADE, store.NEEDS_REVIEW, store.APPROVED, store.PINNED):
-            raise ValueError(f"the {kind} is {thing.state.replace('_', ' ')}: approve it once it is made")
-        store.set_made(connection, kind, made_id, store.APPROVED, review=thing.review, reviewed_by=store.PERSON)
-        if isinstance(thing, store.Clip):
-            shot = store.shot(connection, thing.shot_id)
-            assert shot is not None
-            _tell_paused(connection, shot.chapter_id, "resume")
+        else:
+            _approve(connection, kind, thing)
+        if isinstance(thing, store.Casting):
+            recompile_look(connection, thing.id)
         return owner
+
+
+def _approve(connection: Any, kind: str, thing: store.Made) -> None:
+    made = thing.artifact or (isinstance(thing, store.Prompt) and thing.text.strip())
+    if not made or thing.state not in (store.MADE, store.NEEDS_REVIEW, store.APPROVED, store.PINNED):
+        raise ValueError(f"the {kind} is {thing.state.replace('_', ' ')}: approve it once it is made")
+    store.set_made(connection, kind, thing.id, store.APPROVED, review=thing.review, reviewed_by=store.PERSON)
+    if isinstance(thing, store.Clip):
+        shot = store.shot(connection, thing.shot_id)
+        assert shot is not None
+        _tell_paused(connection, shot.chapter_id, "resume")
+
+
+def approve_shot(shot_id: int) -> tuple[int, list[str]]:
+    """The shot's prompt, keyframe and looks approved, each that is made; the production and what was not."""
+    with store.connect() as connection, store.transaction(connection):
+        shot = store.shot(connection, shot_id)
+        if shot is None:
+            raise LookupError(f"no shot {shot_id}")
+        owner = _shot_owner(connection, store.prompt_of(connection, shot_id))
+        things: list[tuple[str, store.Made]] = [
+            ("prompt", store.prompt_of(connection, shot_id)),
+            ("keyframe", store.keyframe_of(connection, shot_id)),
+        ]
+        things += [("casting", c) for c in store.castings_of(connection, shot_id) if c.amended]
+        left = []
+        for kind, thing in things:
+            if isinstance(thing, store.Keyframe) and thing.source in (store.CHAINED, store.REFS):
+                continue
+            if thing.state == store.APPROVED and thing.reviewed_by == store.PERSON:
+                continue
+            try:
+                _approve(connection, kind, thing)
+            except ValueError as problem:
+                left.append(str(problem))
+                continue
+            if isinstance(thing, store.Casting):
+                recompile_look(connection, thing.id)
+        return owner, left
 
 
 def _shot_owner(connection: Any, thing: store.Made) -> int:
@@ -725,6 +1010,21 @@ def _shot_owner(connection: Any, thing: store.Made) -> int:
     chapter = None if shot is None else store.chapter(connection, shot.chapter_id)
     assert chapter is not None
     return chapter.production_id
+
+
+def _casting_owner(connection: Any, thing: store.Made) -> int:
+    assert isinstance(thing, store.Casting)
+    shot = store.shot(connection, thing.shot_id)
+    chapter = None if shot is None else store.chapter(connection, shot.chapter_id)
+    assert chapter is not None
+    return chapter.production_id
+
+
+def _reject_casting(connection: Any, thing: store.Made) -> None:
+    assert isinstance(thing, store.Casting)
+    if not thing.amended:
+        raise ValueError("a member as it stands has no picture of its own to reject")
+    store.set_made(connection, "casting", thing.id, store.STALE, review=thing.review, reviewed_by=store.PERSON)
 
 
 def _reference_owner(connection: Any, thing: store.Made) -> int:
@@ -771,13 +1071,33 @@ def _reject_reference(connection: Any, thing: store.Made) -> None:
 
 
 # Per kind a person can judge: the production it belongs to, and what rejecting it does.
-_OWNER = {"keyframe": _shot_owner, "prompt": _shot_owner, "clip": _shot_owner, "reference": _reference_owner}
+_OWNER = {
+    "keyframe": _shot_owner,
+    "prompt": _shot_owner,
+    "clip": _shot_owner,
+    "reference": _reference_owner,
+    "casting": _casting_owner,
+}
 _REJECT = {
     "keyframe": _reject_keyframe,
     "prompt": _reject_prompt,
     "clip": _reject_clip,
     "reference": _reject_reference,
+    "casting": _reject_casting,
 }
+
+
+def production_of_casting(casting_id: int) -> int | None:
+    with store.connect() as connection:
+        casting = store.casting(connection, casting_id)
+    return None if casting is None else production_of_shot(casting.shot_id)
+
+
+def undrawn_looks(shot_id: int) -> list[int]:
+    """The shot's own looks with no picture to show: never drawn, failed, or stale."""
+    wanted = (store.MISSING, store.FAILED, store.STALE)
+    with store.connect() as connection:
+        return [c.id for c in store.castings_of(connection, shot_id) if c.amended and c.state in wanted]
 
 
 def production_of_shot(shot_id: int) -> int | None:
@@ -811,9 +1131,15 @@ def describe(production_id: int) -> dict[str, Any] | None:
         production = store.production(connection, production_id)
         if production is None:
             return None
+        resolved = looks.resolve(connection, production)
+        cast = {m.id: m for m in store.members_of(connection, production.id)}
+        bases = {m.slug: looks.base_picture(connection, m) for m in cast.values()}
         chapters = []
         for chapter in store.chapters_of(connection, production.id):
-            shots = [_shot(connection, chapter, shot) for shot in store.shots_of(connection, chapter.id)]
+            shots = [
+                _shot(connection, chapter, shot, resolved, cast, bases)
+                for shot in store.shots_of(connection, chapter.id)
+            ]
             chapters.append({"id": chapter.id, "position": chapter.position, "title": chapter.title, "shots": shots})
         runs = [
             {"id": run.id, "title": run.title, "state": run.state, "scope": run.scope, "created": run.created_at}
@@ -821,9 +1147,7 @@ def describe(production_id: int) -> dict[str, Any] | None:
             if run.production_id == production.id
         ]
         editor = drawn.editor_for(production.id)
-        members = [
-            _member(connection, production, member, editor) for member in store.members_of(connection, production.id)
-        ]
+        members = [_member(connection, production, member, editor, resolved, bases) for member in cast.values()]
         return {
             **_production(production),
             "members": members,
@@ -859,7 +1183,14 @@ def _hashes(
         "bible": _digest(
             [[{k: m[k] for k in _BIBLE}, [r["key"] or r["artifact"] for r in m["references"]]] for m in members]
         ),
-        "shots": _digest([[s[k] for k in _SHOTS] + [s["prompt"]["text"], s["keyframe"]["key"]] for s in shots]),
+        "shots": _digest(
+            [
+                [s[k] for k in _SHOTS]
+                + [s["prompt"]["text"], s["keyframe"]["key"]]
+                + [[c["member"], c["parent"], c["amend"], c["key"]] for c in s["castings"]]
+                for s in shots
+            ]
+        ),
         "render": _digest([s["clip"]["key"] for s in shots]),
         "assemble": _digest(sorted(newest.items())),
     }
@@ -893,7 +1224,12 @@ def _overrides(given: Settings) -> dict[str, Any]:
 
 
 def _member(
-    connection: Any, production: store.Production, member: store.Member, editor: EditSettings
+    connection: Any,
+    production: store.Production,
+    member: store.Member,
+    editor: EditSettings,
+    resolved: looks.Resolved,
+    bases: dict[str, store.Reference | None],
 ) -> dict[str, Any]:
     def reference(ref: store.Reference) -> dict[str, Any]:
         made = _made(ref)
@@ -918,10 +1254,107 @@ def _member(
             {"id": conflict.id, "says": conflict.novel_says, "resolution": conflict.resolution}
             for conflict in store.conflicts_of(connection, member.id)
         ],
+        "looks": [
+            {
+                **_look(resolved, look, bases),
+                "amend": look.casting.amend,
+                "origin": look.casting.origin,
+                "source": _look(resolved, resolved.look(member.slug, look.source), bases),
+                "carried_into": list(resolved.placed[look.casting.shot_id][member.slug].carried_into),
+                "made": _made(look.casting),
+            }
+            for look in resolved.looks.values()
+            if look.member == member.slug and look.casting is not None
+        ],
+        "off_screen": [list(gap) for gap in resolved.gaps.get(member.slug, ())],
     }
 
 
-def _shot(connection: Any, chapter: store.Chapter, shot: store.Shot) -> dict[str, Any]:
+def _look(resolved: looks.Resolved, look: looks.Look, bases: dict[str, store.Reference | None]) -> dict[str, Any]:
+    """A look as a page names it: `id` None is the bible's, whose picture is the member's base one."""
+    base = bases.get(look.member)
+    return {
+        "id": look.id,
+        "member": look.member,
+        "label": look.label,
+        "words": look.text,
+        "shot": None if look.casting is None else look.casting.shot_id,
+        "image": _image(look),
+        "artifact": look.casting.artifact if look.casting is not None else base.artifact if base else None,
+    }
+
+
+def _image(look: looks.Look) -> str:
+    """done | flag | running | pending | failed, as the design's state chips say them."""
+    if look.casting is None or look.approved:
+        return "done"
+    return {
+        store.NEEDS_REVIEW: "flag", store.QUEUED: "running", store.RUNNING: "running", store.FAILED: "failed",
+    }.get(look.casting.state, "pending")  # fmt: skip
+
+
+def _castings(
+    connection: Any, shot: store.Shot, resolved: looks.Resolved, cast: dict[int, store.Member],
+    bases: dict[str, store.Reference | None],
+) -> list[dict[str, Any]]:  # fmt: skip
+    out = []
+    for casting in store.castings_of(connection, shot.id):
+        slug = cast[casting.member_id].slug
+        placed = resolved.placed[shot.id][slug]
+        out.append(
+            {
+                **_made(casting),
+                "member": slug,
+                "member_id": casting.member_id,
+                "kind": cast[casting.member_id].kind,
+                "position": casting.position,
+                "parent": casting.parent,
+                "amend": casting.amend,
+                "label": casting.label,
+                "origin": casting.origin,
+                "size": casting.size,
+                "amended": casting.amended,
+                "source": _look(resolved, resolved.look(slug, placed.source), bases),
+                "look": _look(resolved, resolved.look(slug, placed.look), bases),
+                "latest": _look(resolved, resolved.look(slug, placed.latest), bases),
+                "is_revert": placed.revert,
+                "back": placed.back,
+                "carried_into": list(placed.carried_into),
+            }
+        )
+    return out
+
+
+def _marker(prompt: store.Prompt, shot: store.Shot) -> dict[str, Any] | None:
+    """Kept by hand, kept by hand while the shot moved, recompiled for its looks, or compiled N ago."""
+    at = prompt.written_at
+    if prompt.pinned:
+        # One PATCH can write the prompt and the shot's own columns a moment apart.
+        changed = at is not None and shot.updated_at > at + 1.0
+        label = "hand-edited · shot changed since" if changed else "hand-edited · pinned"
+        return {"kind": "changed" if changed else "pinned", "label": label, "at": at}
+    if at is None or not prompt.text:
+        return None
+    if prompt.written_for == "looks":
+        return {"kind": "rewritten", "label": "rewritten from changed states", "at": at}
+    return {"kind": "written", "label": f"written {_ago(time.time() - at)} ago", "at": at}
+
+
+def _ago(seconds: float) -> str:
+    for size, unit in ((86400, "d"), (3600, "h"), (60, "min")):
+        if seconds >= size:
+            return f"{int(seconds // size)} {unit}"
+    return f"{int(seconds)} s"
+
+
+def _shot(
+    connection: Any,
+    chapter: store.Chapter,
+    shot: store.Shot,
+    resolved: looks.Resolved,
+    cast: dict[int, store.Member],
+    bases: dict[str, store.Reference | None],
+) -> dict[str, Any]:
     keyframe = store.keyframe_of(connection, shot.id)
     prompt = store.prompt_of(connection, shot.id)
     clip = store.clip_of(connection, shot.id)
@@ -936,6 +1369,10 @@ def _shot(connection: Any, chapter: store.Chapter, shot: store.Shot) -> dict[str
         "seconds": shot.seconds,
         "chained": shot.chained,
         "pinned": shot.pinned,
+        "opening": opening_of(keyframe),
+        "sound": str(shot.plan.get("sounds", "")),
+        "castings": _castings(connection, shot, resolved, cast, bases),
+        "waiting": [look.id for look in resolved.waiting(shot.id)],
         "keyframe": {
             **_made(keyframe),
             "source": keyframe.source,
@@ -950,6 +1387,7 @@ def _shot(connection: Any, chapter: store.Chapter, shot: store.Shot) -> dict[str
             "written_by": prompt.written_by,
             "pictures": prompt.pictures,
             "checks": prompt.checks,
+            "marker": _marker(prompt, shot),
         },
         "plan": shot.plan,
         "clip": {**_made(clip), "seed": clip.seed, "handoff": clip.handoff},

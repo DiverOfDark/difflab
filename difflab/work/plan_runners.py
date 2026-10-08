@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import re
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -376,8 +377,62 @@ def run_arrange(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, A
 
 def run_plan_shots(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
     outputs = _plan_shots(inputs, settings)
+    _castings(inputs, outputs)
     _write_and_compile(inputs, len(outputs["chunks"]))
     return outputs
+
+
+def _castings(inputs: dict[str, Any], outputs: dict[str, Any]) -> None:
+    """Each unpinned shot's castings from its plan's cast and the planner's lasting changes."""
+    if "looks" not in outputs:  # a plan reused from before its looks were an output of their own
+        return
+    production_id, chapter_id = int(inputs["production"]), int(inputs["chapter"])
+    story = [(str(words_), int(clip)) for words_, clip in outputs.get("story", [])]
+    with store.connect() as connection, store.transaction(connection):
+        chapter = store.chapter(connection, chapter_id)
+        assert chapter is not None
+        members = {m.slug: m.id for m in store.members_of(connection, production_id)}
+        shots = store.shots_of(connection, chapter_id)
+        said: dict[str, str] = {}
+        for shot, plan, changed in zip(shots, outputs["chunks"], outputs["looks"], strict=False):
+            if shot.pinned:
+                continue
+            existing = {c.member_id: c for c in store.castings_of(connection, shot.id)}
+            cast = [str(m) for m in plan.get("cast", []) if str(m) in members]
+            for position, slug in enumerate(cast):
+                amend = " ".join(str(changed.get(slug) or "").split())
+                # Said again word for word in a later clip, a change is that clip carrying it, not a new look.
+                amend = "" if amend and amend == said.get(slug) else amend
+                said[slug] = amend or said.get(slug, "")
+                where = _paragraph(str(inputs["idea"]), story, shot.position + 1)
+                origin = f"from text · ch {chapter.position + 1}" + (f" ¶{where}" if where else "") if amend else ""
+                found = existing.pop(members[slug], None)
+                if found is None:
+                    found = store.add_casting(connection, shot.id, members[slug], amend=amend, origin=origin)
+                elif found.amend != amend or found.parent is not None:
+                    store.set_made(connection, "casting", found.id, store.STALE if found.artifact else store.MISSING)
+                    store.update_casting(connection, found.id, parent=None, amend=amend, label="")
+                store.update_casting(connection, found.id, position=position, origin=origin)
+            for gone in existing.values():
+                store.delete_casting(connection, gone.id)
+
+
+def _paragraph(idea: str, story: list[tuple[str, int]], clip: int) -> int | None:
+    """The idea's paragraph a clip's first event comes from: its number when the idea numbers its lines."""
+    paragraphs = [" ".join(p.split()) for p in re.split(r"\n\s*\n", idea) if p.strip()]
+    lines = [line.strip() for line in idea.splitlines()]
+    numbered = {int(m[1]): m[2] for line in lines if (m := re.match(r"(\d+)[.)]\s+(.*)", line))}
+    for event, at in story:
+        wanted = event.lower().strip(" .")
+        if at != clip or not wanted:
+            continue
+        for number, text in numbered.items():
+            if wanted in text.lower():
+                return number
+        for number, text in enumerate(paragraphs, 1):
+            if wanted in text.lower():
+                return number
+    return None
 
 
 def _write_and_compile(inputs: dict[str, Any], count: int) -> None:
@@ -444,6 +499,7 @@ def _plan_shots(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, A
     with _take(inputs):
         planned = plan_shots.plan(base, idea, total)
     chunks = [compiler.plan_of(chunk) for chunk in planned.chunks]
+    changed = [dict(chunk.looks) for chunk in planned.chunks]
     with store.connect() as connection, store.transaction(connection):
         now = store.production(connection, production_id)
         assert now is not None
@@ -493,6 +549,7 @@ def _plan_shots(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, A
         "ambience": planned.ambience,
         "story": [list(e) for e in planned.story],
         "order": list(planned.members),
+        "looks": changed,
     }
 
 

@@ -52,7 +52,9 @@ def _with_prose(take: compose.Take, index: int, data: Any) -> compose.Take:
 
 
 def _directive(take: compose.Take, index: int) -> str:
-    return "[video continuation" if compose.carried(take, index) else "[keyframe completion + reference generation]"
+    if compose.carried(take, index):
+        return "[video continuation"
+    return caption.directive(False, not compose.unframed(take, index))
 
 
 def chunk_problems(take: compose.Take, index: int) -> list[caption.Problem]:
@@ -75,7 +77,8 @@ def write_one(take: compose.Take, index: int) -> compose.Take:
     """One call for chunk `index`: prose only, around the sentences the compiler already owns."""
     chunk = take.chunks[index]
     cast = "\n".join(
-        f"{c.id} | {c.noun} | {c.full()}" + (f", and now {now}" if (now := compose.look(take, index, c.id)) else "")
+        f"{c.id} | {c.noun} | {c.full()}"
+        + (f", and now {now.before}" if (now := chunk.states.get(c.id)) and now.before else "")
         for c in (take.cards[m] for m in take.members if m in chunk.cast)
     )
     written = compose.written(chunk)

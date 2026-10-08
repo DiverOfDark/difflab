@@ -24,7 +24,7 @@ from typing import Any
 
 from difflab import store
 from difflab.models.minimax_h3 import caption
-from difflab.screenplay import config, words
+from difflab.screenplay import config, looks, words
 
 PLACEHOLDER = re.compile(r"\{(?!say\})([a-z_]+)\}")  # {say} marks where a dialogue line goes
 LIVING = ("person", "animal")
@@ -104,6 +104,7 @@ class Ref:
     rows: int  # what holding it costs a chunk: (width/32) * (height/32) reference rows
     quality: float  # among crops of one member and role, the larger wins (the head's or the box's size in px)
     photo: int = 0  # which photo it is cut from; -1 for a drawn one
+    look: bool = False  # the picture of an amended look: held only by a chunk its member has that look in
 
 
 @dataclass(frozen=True)
@@ -126,6 +127,15 @@ class Beat:
 
 
 @dataclass(frozen=True)
+class Now:
+    """A member's look beyond its card in one chunk, from `looks.resolve`."""
+
+    before: str  # what earlier shots changed, as the chunk starts; "" at the bible's look
+    after: str  # what it has by the chunk's end: `before`, unless this chunk's casting amends it
+    picture: str = ""  # the ref key of `after`'s own picture once approved; "" while it has none
+
+
+@dataclass(frozen=True)
 class Chunk:
     purpose: str
     cast: tuple[str, ...]
@@ -142,9 +152,10 @@ class Chunk:
     seconds: float = 0.0  # on H3's frame grid; 0 in a plan from before the director chose lengths: `Take.seconds`
     cut: str = ""  # "" continues the chunk before; "back" returns to the opening photo; "new" opens on `opening`
     opening: str = ""  # a "new" cut's first frame, {id} placeholders
-    looks: dict[str, str] = dataclasses.field(default_factory=dict)  # member -> its look from this chunk's end on
+    looks: dict[str, str] = dataclasses.field(default_factory=dict)  # the planner's: member -> its look from here on
     ambience: str = ""  # the sound of a place other than the take's first; "" is `Take.ambience`
     scene: str = ""  # the slug line the chunk plays under, "INT lantern room · dusk"
+    states: dict[str, Now] = dataclasses.field(default_factory=dict)  # the castings' looks; never stored in a plan
 
 
 @dataclass(frozen=True)
@@ -162,6 +173,7 @@ class Take:
     story: tuple[tuple[str, int], ...] = ()  # the IDEA's actions: (its words, the clip from 1)
     tails: tuple[bool, ...] = ()  # per chunk, whether it carries the one before's tail; empty is `tail` after the first
     lands: tuple[bool, ...] = ()  # per chunk, whether it ends on the next one's keyframe
+    unframed: tuple[bool, ...] = ()  # per chunk, whether it opens on no picture, from its references alone
 
 
 @dataclass(frozen=True)
@@ -209,17 +221,6 @@ def opening(take: Take, index: int) -> str:
     return chunk.opening if chunk.cut == "new" else take.chunks[index - 1].closing
 
 
-def look(take: Take, index: int, member: str) -> str:
-    """How `member` looks beyond its card when chunk `index` starts: the last change a chunk before it
-    made. A cut back to the opening photo ends every change, the way waking ends a dream."""
-    found = ""
-    for chunk in take.chunks[:index]:
-        if chunk.cut == "back":
-            found = ""
-        found = chunk.looks.get(member, found)
-    return "" if take.chunks[index].cut == "back" else found
-
-
 def ambience(take: Take, index: int) -> str:
     return take.chunks[index].ambience or take.ambience
 
@@ -247,14 +248,24 @@ def lands(take: Take, index: int) -> bool:
     return bool(take.lands) and take.lands[index]
 
 
+def unframed(take: Take, index: int) -> bool:
+    return bool(take.unframed) and take.unframed[index]
+
+
 def joins(
     keyframes: list[store.Keyframe], shots: list[store.Shot], tail: bool
 ) -> tuple[tuple[bool, ...], tuple[bool, ...]]:
     """`(tails, lands)` for a chapter. A shot ends on the next one's composed or provided keyframe
     unless that keyframe is set not to be landed on; the motion then runs into it, so the tail crosses
-    too. Into a keyframe nothing landed on it would drag the old motion into a picture it never reaches."""
+    too. Into a keyframe nothing landed on it would drag the old motion into a picture it never reaches.
+    A shot opened from its references alone lands on nothing and is landed on by nothing: its caption
+    numbers its references from <Picture 1>, where a landing's last frame would have to come first."""
+    pictured = (store.COMPOSED, store.PROVIDED)
     landed = tuple(
-        index + 1 < len(keyframes) and keyframes[index + 1].source != store.CHAINED and keyframes[index + 1].landed
+        index + 1 < len(keyframes)
+        and keyframes[index].source != store.REFS
+        and keyframes[index + 1].source in pictured
+        and keyframes[index + 1].landed
         for index in range(len(keyframes))
     )
     tails = tuple(
@@ -275,18 +286,31 @@ def references(take: Take, index: int) -> tuple[str, ...]:
     An animal seen in several photos is held at most once per photo: its look is its coat, and photos
     in different light disagree about the coat's colour, so no one photo may outvote the others.
     `lint.plan_rules` fails a plan that leaves an on-screen member with no picture at all.
+
+    A member with a look of its own is held as that look's picture and its own face, nothing else that
+    shows it: every other picture of it shows the bible's look. The room's picture stays.
     """
-    on = set(take.chunks[index].cast)
+    chunk = take.chunks[index]
+    on = set(chunk.cast)
+    looked = {m: now.picture for m, now in chunk.states.items() if now.picture and m in on}
 
     def kind(member: str) -> str:
         return take.cards[member].kind
+
+    def held(ref: Ref) -> bool:
+        if ref.look:
+            return looked.get(ref.member) == ref.key
+        if ref.role == "environment":
+            return ref.member not in looked
+        amended = set(ref.shows) & looked.keys()
+        return not amended or (ref.role == "face" and amended == {ref.member})
 
     # A picture of a place the chunk is not in brings that place back: the room photo, which also shows
     # the cat, pulled production 10's sky chase back onto the desk.
     usable = [
         ref
         for ref in take.refs.values()
-        if on & set(ref.shows) and all(m in on for m in ref.shows if kind(m) in (*LIVING, "environment"))
+        if on & set(ref.shows) and all(m in on for m in ref.shows if kind(m) in (*LIVING, "environment")) and held(ref)
     ]
     best: dict[tuple[str, str], Ref] = {}
     for ref in usable:
@@ -316,7 +340,8 @@ def references(take: Take, index: int) -> tuple[str, ...]:
     for member in sorted(on, key=lambda m: (GUARANTEE_ORDER[kind(m)], take.members.index(m))):
         if any(member in ref.shows for ref in chosen):
             continue
-        own = [ref for ref in ranked if ref.member == member] or [ref for ref in ranked if member in ref.shows]
+        own = [ref for ref in ranked if ref.key == looked.get(member)]
+        own = own or [ref for ref in ranked if ref.member == member] or [ref for ref in ranked if member in ref.shows]
         if own:
             chosen.append(own[0])
     rows = sum(ref.rows for ref in chosen)
@@ -464,38 +489,53 @@ def compile_chunk(take: Take, index: int) -> Compiled:
     refs = references(take, index)
     tail = carried(take, index)
     landing = lands(take, index)
-    shown = Presentation(("opening" if index == 0 else "handoff", *(("closing",) if landing else ()), *refs), tail)
+    framed = not unframed(take, index)
+    first = ("opening" if index == 0 else "handoff",) if framed else ()
+    shown = Presentation((*first, *(("closing",) if landing else ()), *refs), tail)
     cast = [m for m in take.members if m in chunk.cast]
     subject = {m: f"<Subject {i + 1}>" for i, m in enumerate(cast)}
     speakers = {line.who: f"S{i + 1}" for i, line in enumerate(chunk.dialogue)}
     env = place(take, chunk)
     living = [m for m in cast if take.cards[m].kind in LIVING]
     labels_only = Expander(take, subject, speakers)
-    now = {m: look(take, index, m) for m in cast if look(take, index, m)}
+    states = {m: chunk.states[m] for m in cast if m in chunk.states}
+    now = {m: state.before for m, state in states.items() if state.before}
+    changes = {m: state for m, state in states.items() if state.after != state.before}
+
+    def cited(state: Now) -> str:
+        return shown.picture(state.picture) if state.picture in shown.pictures else ""
 
     # subject_definitions: identity-only pictures are cited inside the <Subject N> lines (ref-en 2.2)
     definitions = [definition(take, member, subject[member], shown) for member in cast]
-    definitions += [say["look"].format(subject=subject[m], look=now[m]) for m in cast if m in now]
-    definitions += [
-        say["look_change"].format(subject=subject[m], look=chunk.looks[m])
-        for m in cast
-        if chunk.looks.get(m) and chunk.looks[m] != now.get(m)
-    ]
-    definitions.append(
-        say["first_frame"].format(arrangement=_lower(_sentence(labels_only(opening(take, index), False, True))))
-    )
+    for m in cast:
+        if m in now and m not in changes and cited(states[m]):
+            definitions.append(say["look_pictured"].format(subject=subject[m], look=now[m], pictures=cited(states[m])))
+        elif m in now:
+            definitions.append(say["look"].format(subject=subject[m], look=now[m]))
+    for m, state in changes.items():
+        if cited(state):
+            definitions.append(
+                say["look_change_pictured"].format(subject=subject[m], look=state.after, pictures=cited(state))
+            )
+        else:
+            definitions.append(say["look_change"].format(subject=subject[m], look=state.after))
+    if framed:
+        definitions.append(
+            say["first_frame"].format(arrangement=_lower(_sentence(labels_only(opening(take, index), False, True))))
+        )
     if landing:
         definitions.append(say["last_frame"].format(arrangement=_lower(_sentence(labels_only(chunk.closing, False)))))
     if tail:
         definitions += [say["video"], say["audio"]]
 
     # summary
-    directive = caption.directive(tail)
+    directive = caption.directive(tail, framed)
+    lead = "lead_continued" if tail else "lead" if framed else "lead_refs"
     summary = " ".join(
         part
         for part in (
             directive,
-            say["lead_continued" if tail else "lead"].format(room=subject[env]),
+            say[lead].format(room=subject[env]),
             say["lead_lands"] if landing else "",
             labels_only(chunk.summary.strip(), False),
             say["audio_role"] if tail else "",
@@ -510,7 +550,7 @@ def compile_chunk(take: Take, index: int) -> Compiled:
         )
         for m in cast
     ]
-    retention += [say["retain_frame"]] + ([say["retain_last"]] if landing else [])
+    retention += ([say["retain_frame"]] if framed else []) + ([say["retain_last"]] if landing else [])
     moving = index > 0 and any(beat.phase == "carry" for beat in take.chunks[index - 1].beats[-1:])
     retention += [say["retain_video_moving" if moving else "retain_video"], say["retain_audio"]] if tail else []
 
@@ -518,7 +558,7 @@ def compile_chunk(take: Take, index: int) -> Compiled:
     expand = Expander(take, subject, speakers, now)
     room = take.cards[env]
     body = [
-        say["begin_continued" if tail else "begin"].format(
+        say["begin_continued" if tail else "begin" if framed else "begin_refs"].format(
             arrangement=_lower(_sentence(expand(opening(take, index), behind=True)))
         ),
         say["room" if room.lights else "room_unlit"].format(
@@ -676,15 +716,14 @@ def chunk_of(plan: dict[str, Any]) -> Chunk:
         seconds=float(plan.get("seconds", 0.0)),
         cut=str(plan.get("cut", "")),
         opening=str(plan.get("opening", "")),
-        looks={str(m): str(v) for m, v in (plan.get("looks") or {}).items()},
         ambience=str(plan.get("ambience", "")),
         scene=str(plan.get("scene", "")),
     )
 
 
 def plan_of(chunk: Chunk) -> dict[str, Any]:
-    """The chunk as the shot row keeps it."""
-    return dataclasses.asdict(chunk)
+    """The chunk as the shot row keeps it: its looks are its castings'."""
+    return {k: v for k, v in dataclasses.asdict(chunk).items() if k not in ("looks", "states")}
 
 
 def ref_keys(references: list[store.Reference], slugs: dict[int, str]) -> list[str]:
@@ -721,13 +760,49 @@ def refs_of(references: list[store.Reference], members: list[store.Member], phot
     return out
 
 
+def look_key(look: looks.Look) -> str:
+    return f"{look.member}_look{look.id}"
+
+
+def look_refs(resolved: looks.Resolved, members: list[store.Member]) -> dict[str, Ref]:
+    """The picture of every approved look, as a crop of its member alone; held only where it is worn."""
+    kinds = {member.slug: member.kind for member in members}
+    out: dict[str, Ref] = {}
+    for look in resolved.looks.values():
+        if look.approved and look.casting is not None and look.casting.size:
+            width, height = look.casting.size
+            name = look_key(look)
+            # Larger than any crop, so it is the member's best picture of its role wherever it is held.
+            out[name] = Ref(name, look.member, DRAWN_ROLE[kinds[look.member]], (look.member,),
+                            (width // 32) * (height // 32), float(width * height) * 1e6, -1, look=True)  # fmt: skip
+    return out
+
+
+def states_of(resolved: looks.Resolved, shot_id: int) -> dict[str, Now]:
+    out: dict[str, Now] = {}
+    for member, placed in resolved.placed.get(shot_id, {}).items():
+        if placed.source is None and placed.look is None:
+            continue
+        after = resolved.look(member, placed.look)
+        picture = look_key(after) if after.approved and after.casting is not None and after.casting.size else ""
+        out[member] = Now(resolved.look(member, placed.source).text, after.text, picture)
+    return out
+
+
 def pictures_of(connection: sqlite3.Connection, production: store.Production) -> dict[str, str]:
     """Each reference's file by the name the compiler gives it, for the clip job to be handed."""
     members = store.members_of(connection, production.id)
     references = pictured(store.refs_of_production(connection, production.id))
     slugs = {member.id: member.slug for member in members}
+    resolved = looks.resolve(connection, production)
+    worn = {
+        look_key(look): str(look.casting.artifact)
+        for look in resolved.looks.values()
+        if look.approved and look.casting is not None
+    }
     return {
-        name: str(reference.artifact) for name, reference in zip(ref_keys(references, slugs), references, strict=True)
+        **{name: str(ref.artifact) for name, ref in zip(ref_keys(references, slugs), references, strict=True)},
+        **worn,
     }
 
 
@@ -742,7 +817,11 @@ def take_of(connection: sqlite3.Connection, production: store.Production, chapte
     keyframes = [store.keyframe_of(connection, shot.id) for shot in shots]
     tails, landed = joins(keyframes, shots, tail)
     first = keyframes[0].provided if keyframes else None
-    chunks = [dataclasses.replace(chunk_of(shot.plan), seconds=shot.seconds) for shot in shots]
+    resolved = looks.resolve(connection, production)
+    chunks = [
+        dataclasses.replace(chunk_of(shot.plan), seconds=shot.seconds, states=states_of(resolved, shot.id))
+        for shot in shots
+    ]
     # A later shot handed the first photo by hand cuts back to it, whatever its plan says.
     chunks = [
         dataclasses.replace(chunk, cut="back") if index and first and keyframe.provided == first else chunk
@@ -752,7 +831,10 @@ def take_of(connection: sqlite3.Connection, production: store.Production, chapte
         title=production.title,
         members=tuple(member.slug for member in members),
         cards={member.slug: card_of(member) for member in members},
-        refs=refs_of(references, members, [str(p) for p in manifest.get("photos", [])]),
+        refs={
+            **refs_of(references, members, [str(p) for p in manifest.get("photos", [])]),
+            **look_refs(resolved, members),
+        },
         opening=str(manifest.get("opening_arrangement", "")),
         ambience=str(planned.get("ambience", "")),
         seconds=float(manifest.get("seconds", 0.0)),
@@ -762,4 +844,5 @@ def take_of(connection: sqlite3.Connection, production: store.Production, chapte
         story=tuple((str(event), int(clip)) for event, clip in planned.get("story", [])),
         tails=tails,
         lands=landed,
+        unframed=tuple(keyframe.source == store.REFS for keyframe in keyframes),
     )

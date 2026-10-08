@@ -17,7 +17,7 @@ from typing import Any
 from difflab import config, store
 from difflab.core.settings import Continuity, JudgeSettings
 from difflab.models.minimax_h3.settings import VideoSettings
-from difflab.screenplay import compiler, settings, words
+from difflab.screenplay import compiler, looks, settings, words
 from difflab.screenplay import config as knobs
 from difflab.screenplay import production as productions
 
@@ -27,8 +27,9 @@ _LAST_FRAME = words.SENTENCES["last_frame"].split(":")[0]
 def check(
     connection: Any, shots: list[store.Shot], production: store.Production | None = None, keyframes_only: bool = False
 ) -> list[str]:
-    """What stops a chapter rendering, said before a run exists. Making only its keyframes reads no prompt."""
+    """What stops a chapter rendering, before a run exists; a keyframes-only run reads no prompt, waits on no look."""
     problems = []
+    resolved = looks.resolve(connection, production) if production is not None else None
     if not shots:
         problems.append("the chapter has no shots")
     _, lands = compiler.joins([store.keyframe_of(connection, shot.id) for shot in shots], shots, True)
@@ -62,9 +63,41 @@ def check(
                     f"{name}'s keyframe is composed, and there is no picture to compose it over: no reference of "
                     "the place, and none of who its first frame names"
                 )
-        elif shot.position == 0:
+        elif keyframe.source != store.REFS and shot.position == 0:
             problems.append(f"{name} opens the chapter, so it needs a keyframe of its own")
+        for look in [] if resolved is None or keyframes_only else resolved.waiting(shot.id):
+            assert look.casting is not None
+            made = store.shot(connection, look.casting.shot_id)
+            where = f" from shot {made.position + 1}" if made is not None and made.id != shot.id else ""
+            problems.append(
+                f"{name} shows {look.member} “{look.label}”{where}, whose picture is {_unready(look)}: "
+                "draw it, or approve it"
+            )
     return problems
+
+
+def _unready(look: looks.Look) -> str:
+    assert look.casting is not None
+    state = look.casting.state
+    if state == store.NEEDS_REVIEW:
+        return "flagged by the judge"
+    if state in (store.QUEUED, store.RUNNING):
+        return "still being drawn"
+    if state == store.MADE:
+        return "not judged yet"
+    return {store.MISSING: "not drawn", store.STALE: "stale", store.FAILED: "failed"}.get(state, state)
+
+
+def preflight(production_id: int) -> dict[int, list[str]]:
+    """Per chapter position, what would stop it rendering, without queuing anything."""
+    with store.connect() as connection:
+        production = store.production(connection, production_id)
+        if production is None:
+            raise LookupError(f"no production {production_id}")
+        return {
+            chapter.position: check(connection, store.shots_of(connection, chapter.id), production)
+            for chapter in store.chapters_of(connection, production_id)
+        }
 
 
 def render_chapter(chapter_id: int, asked_by: str = "person", keyframes_only: bool = False) -> str:
@@ -151,6 +184,7 @@ def _queue_chapter(connection: Any, chapter_id: int, asked_by: str, keyframes_on
     editor, _ = settings.effective("edit_image", production.id)
     keyframes = [store.keyframe_of(connection, shot.id) for shot in shots]
     tails, lands = compiler.joins(keyframes, shots, carries)
+    resolved = looks.resolve(connection, production)
     # Every composed keyframe before any clip: the shot before one ends on it, and the editor is
     # loaded once rather than between clips.
     openings: list[Any] = []
@@ -159,7 +193,11 @@ def _queue_chapter(connection: Any, chapter_id: int, asked_by: str, keyframes_on
         cast = [str(m) for m in shot.plan.get("cast", [])]
         judged = bool(cast or shot.action)
         arrangement, where = _opening(connection, production, shots, shot.position)
-        if keyframe.source == store.COMPOSED:
+        before, _ = _looks(resolved, shot)
+        worn = _worn(resolved, shot, end=False)
+        if keyframe.source == store.COMPOSED and resolved.waiting(shot.id):
+            openings.append(None)  # only a keyframes run gets here: `check` refuses a render
+        elif keyframe.source == store.COMPOSED:
             seed = keyframe.seed if keyframe.seed is not None else int(video["seed"]) + 1000 + shot.position
             composed = store.add_job(
                 connection, run_id, "compose_keyframe",
@@ -168,9 +206,9 @@ def _queue_chapter(connection: Any, chapter_id: int, asked_by: str, keyframes_on
                     "shot": shot.id,
                     "arrangement": arrangement,
                     **(under := base(connection, production, arrangement, where) or {}),
-                    "pictures": pictures(connection, production, arrangement, under.get("keep")),
+                    "pictures": pictures(connection, production, arrangement, under.get("keep"), worn),
                     "note": keyframe.note,
-                    "looks": _looks(connection, production, shot)[0],
+                    "looks": before,
                     "size": _canvas(production),
                     "seed": seed,
                 },
@@ -184,8 +222,8 @@ def _queue_chapter(connection: Any, chapter_id: int, asked_by: str, keyframes_on
                      "purpose": f"the shot's first frame, as the arrangement says, before its action starts "
                                 f"({shot.action})",
                      "arrangement": arrangement, "cast": cast,
-                     "pictures": pictures(connection, production, arrangement),
-                     "looks": _looks(connection, production, shot)[0]},
+                     "pictures": pictures(connection, production, arrangement, worn=worn),
+                     "looks": before},
                     f"shot {shot.position + 1}: judge the keyframe", keyframe.id,
                 ))  # fmt: skip
             openings.append(_output(composed.id, "frame"))
@@ -218,10 +256,16 @@ def _queue_chapter(connection: Any, chapter_id: int, asked_by: str, keyframes_on
         clip = store.clip_of(connection, shot.id)
         cast = [str(m) for m in shot.plan.get("cast", [])]
         judged = bool(cast or shot.action)
-        opening = openings[shot.position] if openings[shot.position] is not None else _output(previous, "frame")
+        if keyframe.source == store.REFS:
+            opening = None
+        elif openings[shot.position] is not None:
+            opening = openings[shot.position]
+        else:
+            opening = _output(previous, "frame")
         tail = _output(previous, "tail") if tails[shot.position] else None
         inputs = {
             "opening": opening,
+            "canvas": _canvas(production),
             "closing": openings[shot.position + 1] if lands[shot.position] else None,
             "prompt": prompt.text,
             "tail": tail,
@@ -254,8 +298,9 @@ def _queue_chapter(connection: Any, chapter_id: int, asked_by: str, keyframes_on
                 connection, run_id, "judge",
                 {"production": production.id, "kind": "clip", "path": _output(job.id, "chunk"),
                  "purpose": shot.action, "arrangement": str(shot.plan.get("closing", "")), "cast": cast,
-                 "pictures": pictures(connection, production, " ".join(f"{{{m}}}" for m in cast)),
-                 "looks": (changed := _looks(connection, production, shot))[0], "becomes": changed[1]},
+                 "pictures": pictures(connection, production, " ".join(f"{{{m}}}" for m in cast),
+                                      worn=_worn(resolved, shot, end=True)),
+                 "looks": (changed := _looks(resolved, shot))[0], "becomes": changed[1]},
                 label=f"shot {shot.position + 1}: judge the clip", settings=verdicts.data(),
                 for_kind="clip", for_id=clip.id,
             )  # fmt: skip
@@ -355,15 +400,22 @@ PICTURES = 3
 
 
 def pictures(
-    connection: Any, production: store.Production, arrangement: str, keep: str | None = None
+    connection: Any,
+    production: store.Production,
+    arrangement: str,
+    keep: str | None = None,
+    worn: dict[str, str] | None = None,
 ) -> dict[str, str]:
-    """Each person and animal the arrangement names, by id, as the picture the editor and the judge are
-    handed of it: a whole body cut from a photo before a face, a given or drawn one when that is all."""
+    """Each person and animal the arrangement names, by id, as the picture the editor and the judge get."""
+    # A look's picture was drawn with the base face handed over, so it carries the face: one picture a member.
     members = {m.slug: m for m in store.members_of(connection, production.id)}
     out: dict[str, str] = {}
     for slug in dict.fromkeys(re.findall(r"\{([a-z_]+)\}", arrangement)):
         member = members.get(slug)
         if member is None or member.kind not in ("person", "animal") or slug == keep or len(out) == PICTURES:
+            continue
+        if worn and slug in worn:
+            out[slug] = worn[slug]
             continue
         own = [r for r in store.refs_of(connection, member.id) if r.artifact]
         own.sort(key=lambda r: (r.role not in ("body", "view"), r.generated, r.role == "face", -r.quality))
@@ -372,14 +424,27 @@ def pictures(
     return out
 
 
-def _looks(connection: Any, production: store.Production, shot: store.Shot) -> tuple[dict[str, str], dict[str, str]]:
-    """What earlier shots changed about each member of this one for good, and what this one changes."""
-    chapter = store.chapter(connection, shot.chapter_id)
-    assert chapter is not None
-    take = compiler.take_of(connection, production, chapter)
-    chunk = take.chunks[shot.position]
-    carried = {m: look for m in chunk.cast if (look := compiler.look(take, shot.position, m))}
-    return carried, {m: v for m, v in chunk.looks.items() if v}
+def _looks(resolved: looks.Resolved, shot: store.Shot) -> tuple[dict[str, str], dict[str, str]]:
+    """What earlier shots changed about each member of this one, and what this one changes."""
+    before: dict[str, str] = {}
+    becomes: dict[str, str] = {}
+    for member, placed in resolved.placed.get(shot.id, {}).items():
+        start, end = resolved.look(member, placed.source), resolved.look(member, placed.look)
+        if start.text:
+            before[member] = start.text
+        if end.id != start.id:
+            becomes[member] = end.text
+    return before, becomes
+
+
+def _worn(resolved: looks.Resolved, shot: store.Shot, end: bool) -> dict[str, str]:
+    """Each member's approved look picture as the shot starts, or as it ends."""
+    out: dict[str, str] = {}
+    for member, placed in resolved.placed.get(shot.id, {}).items():
+        look = resolved.look(member, placed.look if end else placed.source)
+        if look.approved and look.casting is not None and look.casting.artifact:
+            out[member] = look.casting.artifact
+    return out
 
 
 def _opening(

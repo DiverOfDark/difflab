@@ -78,13 +78,11 @@ def labels(pictures: int, tail: bool, videos: int = 0) -> list[str]:
     return numbered + held + (["<Audio 1>", f"<Video {videos + 1}>"] if tail else [])
 
 
-def directive(tail: bool) -> str:
-    """The square-bracketed H3 task list a chunk's summary opens with."""
-    return (
-        "[video continuation + keyframe completion + reference generation + audio reference]"
-        if tail
-        else "[keyframe completion + reference generation]"
-    )
+def directive(tail: bool, framed: bool = True) -> str:
+    """The H3 task list a chunk's summary opens with; `framed` is false for one that opens on no picture."""
+    if tail:
+        return "[video continuation + keyframe completion + reference generation + audio reference]"
+    return "[keyframe completion + reference generation]" if framed else "[reference generation]"
 
 
 @dataclass(frozen=True)

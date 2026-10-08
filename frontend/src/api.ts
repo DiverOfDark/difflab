@@ -185,6 +185,44 @@ export interface MadeThing {
   reviewed_at: number | null
 }
 
+/** A member's look: the bible's (`id` null, its picture the member's base one) or an amended casting's. */
+export interface LookRef {
+  id: number | null
+  member: string
+  label: string
+  /** Every amendment from the base on, joined. */
+  words: string
+  /** The shot whose casting made it; null for the base. */
+  shot: number | null
+  image: 'done' | 'flag' | 'running' | 'pending' | 'failed'
+  artifact: string | null
+}
+
+/** A member in a shot. `parent` null is the look it last had, 'base' the bible's, or a casting id;
+ *  with `amend` set it is a look of its own, whose picture the made columns are. */
+export interface CastingInfo extends MadeThing {
+  member: string
+  member_id: number
+  kind: string
+  position: number
+  parent: string | null
+  amend: string
+  label: string
+  /** "from text · ch N ¶P" when the planner wrote it, "by hand" when a person did. */
+  origin: string
+  size: number[]
+  amended: boolean
+  /** The look it starts from, the one it has, and the one it had last before this shot. */
+  source: LookRef
+  look: LookRef
+  latest: LookRef
+  is_revert: boolean
+  /** Its source was decided by a cut back to the opening scene. */
+  back: boolean
+  /** Later shot ids that show this casting's look; only for an amended one. */
+  carried_into: number[]
+}
+
 export interface ShotInfo {
   id: number
   /** Its chapter's position, from 0. */
@@ -198,6 +236,11 @@ export interface ShotInfo {
   chained: boolean
   /** Its plan was edited by hand: a re-plan leaves it as written. */
   pinned: boolean
+  opening: 'keyframe' | 'chain' | 'refs'
+  sound: string
+  castings: CastingInfo[]
+  /** Look ids the shot shows whose picture is not approved yet. */
+  waiting: number[]
   keyframe: MadeThing & {
     source: string
     provided: string | null
@@ -206,7 +249,13 @@ export interface ShotInfo {
     /** A composed keyframe's inputs: the place it was made over, and each cast member's picture by id. */
     made_from: { base: string | null; pictures: Record<string, string>; note: string | null } | null
   }
-  prompt: MadeThing & { text: string; written_by: string; pictures: string[]; checks: { severity: string; code: string; message: string }[] }
+  prompt: MadeThing & {
+    text: string
+    written_by: string
+    pictures: string[]
+    checks: { severity: string; code: string; message: string }[]
+    marker: { kind: 'pinned' | 'changed' | 'rewritten' | 'written'; label: string; at: number | null } | null
+  }
   clip: MadeThing & { seed: number; handoff: number | null }
   plan: Record<string, unknown>
 }
@@ -252,6 +301,10 @@ export interface MemberInfo {
   /** Pictures its prompts want that the last cut could not make from the photographs, and why. */
   gaps?: { role: string; why: string }[]
   conflicts: Conflict[]
+  /** Its looks across the film, in film order. */
+  looks?: (LookRef & { amend: string; origin: string; source: LookRef; carried_into: number[]; made: MadeThing })[]
+  /** Each stretch of shot ids it is off screen between two appearances. */
+  off_screen?: number[][]
 }
 
 export interface ProductionSummary {
@@ -365,7 +418,7 @@ export const planProduction = (id: number, chapter: number | null, fresh = false
   json<{ run: string; runs: string[] }>(`/api/productions/${id}/plan${chapterQuery(chapter, fresh ? 'fresh=true' : '')}`, post({}))
 export const renderProduction = (id: number, chapter: number | null) =>
   json<{ run: string; runs: string[] }>(`/api/productions/${id}/render${chapterQuery(chapter)}`, post({}))
-export type MadeKind = 'keyframe' | 'prompt' | 'clip' | 'reference'
+export type MadeKind = 'keyframe' | 'prompt' | 'clip' | 'reference' | 'casting'
 /** Approved as it is by a person: the judge no longer overrules it, and a run paused on the clip goes on. */
 export const approveMade = (kind: MadeKind, id: number) => json<Production>(`/api/made/${kind}/${id}/approve`, post({}))
 /** Made anew by the next run, on a new seed; a prompt stays stale until re-planned or written by hand. */
@@ -375,6 +428,20 @@ export const addShot = (id: number, body: Record<string, unknown>) =>
 export const patchShot = (shotId: number, body: Record<string, unknown>) =>
   json<Production>(`/api/shots/${shotId}`, send('PATCH', body))
 export const deleteShot = (shotId: number) => json<Production>(`/api/shots/${shotId}`, { method: 'DELETE' })
+/** The shot's prose written again and its prompt compiled from it, as a run; a hand-written prompt is let go. */
+export const rewriteShot = (shotId: number) => json<{ run: string; runs: string[] }>(`/api/shots/${shotId}/rewrite`, post({}))
+/** The shot's prompt, keyframe and looks approved, each that is made; `left` says what was not. */
+export const approveShot = (shotId: number) => json<Production & { left: string[] }>(`/api/shots/${shotId}/approve`, post({}))
+export const addCasting = (shotId: number, body: { member: string; parent?: string | null; amend?: string; label?: string }) =>
+  json<Production>(`/api/shots/${shotId}/castings`, post(body))
+export const patchCasting = (castingId: number, body: { parent?: string | null; amend?: string; label?: string }) =>
+  json<Production>(`/api/castings/${castingId}`, send('PATCH', body))
+export const deleteCasting = (castingId: number) => json<Production>(`/api/castings/${castingId}`, { method: 'DELETE' })
+export const drawLook = (castingId: number) => json<{ run: string; runs: string[] }>(`/api/castings/${castingId}/draw`, post({}))
+export const drawShotLooks = (shotId: number) => json<{ run: string; runs: string[] }>(`/api/shots/${shotId}/looks`, post({}))
+/** An uploaded picture as the look's own instead of a drawn one, approved. */
+export const uploadLook = (castingId: number, path: string) => json<Production>(`/api/castings/${castingId}/upload`, post({ path }))
+export const preflight = (id: number) => json<{ problems: Record<string, string[]> }>(`/api/productions/${id}/preflight`)
 export const rerollShot = (shotId: number, seed?: number) =>
   json<{ seed: number; run: string }>(`/api/shots/${shotId}/reroll`, post(seed === undefined ? {} : { seed }))
 /** Every member with no usable picture, drawn from its words, as a run. */
