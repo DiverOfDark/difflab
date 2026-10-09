@@ -46,6 +46,8 @@ def wanted(member: store.Member, editor: EditSettings, size: list[int]) -> Key:
     """The words it is drawn from, the editor's settings with its seed, and its size: an edit to the
     member moves it, and so does a regenerate."""
     look = {k: member.identity.get(k, []) for k in ("traits", "lights")}
+    if member.appearance.strip():  # only when set, so a member drawn from its traits keeps its key
+        look["appearance"] = " ".join(member.appearance.split())
     return key(
         "draw_reference", 1, kind=member.kind, noun=member.noun, look=look, settings=editor, size=list(size),
         words=[words.COMPOSE_REFERENCE_INSTRUCTION[member.kind], words.COMPOSE_REFERENCE_LOOK],

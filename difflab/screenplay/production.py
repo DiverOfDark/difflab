@@ -561,7 +561,27 @@ def update_member(member_id: int, **changes: Any) -> dict[str, int]:
         store.touch_production(connection, member.production_id)
     if changes.get("plate"):
         moved["plating"] = 1 if plate(member_id) else 0
+    if any(field in changes for field in IDENTITY):
+        moved["drawing"] = 1 if _redraw(member_id) else 0
     return moved
+
+
+def _redraw(member_id: int) -> str | None:
+    """A run drawing the member again on its own seed, when its words moved a drawing that is its only picture."""
+    with store.connect() as connection:
+        member = store.member(connection, member_id)
+        production = None if member is None else store.production(connection, member.production_id)
+        if member is None or production is None:
+            return None
+        if any(r.artifact and not r.generated for r in store.refs_of(connection, member_id)):
+            return None
+        drawing = store.generated_ref(connection, member_id)
+        if drawing is None or not drawing.artifact or drawn.live_run(connection, production.id) is not None:
+            return None
+        editor = drawn.editor_for(production.id)
+        if drawn.state(drawing, member, production.manifest, editor) != store.STALE:
+            return None
+    return drawn.draw(production.id, member_id, seed=drawing.seed)
 
 
 def _reidentify(connection: Any, member: store.Member, changes: dict[str, Any]) -> dict[str, int]:

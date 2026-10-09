@@ -685,15 +685,22 @@ def voice_of(member: store.Member) -> str:
 
 
 def card_of(member: store.Member) -> Card:
+    """Words written over the traits stand in for all of them, as one trait: a card of traits alone keys as before."""
     identity = member.identity
+    said = " ".join(member.appearance.split()) if member.kind != "style" else ""
+    traits = (
+        (Trait("appearance", said, said, "appearance"),)
+        if said
+        else tuple(
+            Trait(str(t["part"]), str(t["phrase"]), str(t["short"]), str(t["name"])) for t in identity.get("traits", [])
+        )
+    )
     return Card(
         member.slug,
         member.kind,
         member.noun,
         member.possessive,
-        tuple(
-            Trait(str(t["part"]), str(t["phrase"]), str(t["short"]), str(t["name"])) for t in identity.get("traits", [])
-        ),
+        traits,
         tuple(str(light) for light in identity.get("lights", [])),
         bool(identity.get("photographed", True)),
     )
