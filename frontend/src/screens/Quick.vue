@@ -2,7 +2,7 @@
 /** The three quick modes: a photo restyled, one clip, an upscale. A render queues and the page follows it. */
 import { ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { checkJob, listTools, startRun, type Job } from '../api'
+import { checkJob, listTools, startRun, startRuns, type Job } from '../api'
 import Compose from '../components/Compose.vue'
 import { live, queued, refresh, state } from '../store'
 
@@ -38,15 +38,23 @@ blank()
   .then((made) => (job.value = { ...made, ...state.quick }))
   .catch((error) => (failure.value = `no settings from the server: ${error}`))
 
-/** The server is what says whether a job is renderable - the same check a render runs. */
+const expand = (base: Job, item: string): Job =>
+  base.mode === 'upscale' ? { ...base, clip: item } : { ...base, photos: [item, ...base.photos] }
+
+/** The server is what says whether a job is renderable - the same check a render runs. A batch is
+ *  checked on its first item: the rest differ only in an uploaded file, which exists. */
 let pending = 0
 watch(
-  job,
+  [job, () => state.batch, () => state.batching],
   () => {
     if (!job.value) return
     const asked = ++pending
     state.quick = job.value
-    checkJob(job.value)
+    if (state.batching && !state.batch.length) {
+      problems.value = ['the batch is empty: drop what each run starts from']
+      return
+    }
+    checkJob(state.batching ? expand(job.value, state.batch[0]!) : job.value)
       .then(({ problems: found }) => {
         if (asked === pending) problems.value = found
       })
@@ -60,7 +68,15 @@ async function render() {
   failure.value = ''
   starting.value = true
   try {
-    const { run: id } = await startRun(job.value)
+    const base = job.value
+    if (state.batching) {
+      await startRuns(state.batch.map((item) => expand(base, item)))
+      state.batch = []
+      await refresh()
+      router.push('/runs')
+      return
+    }
+    const { run: id } = await startRun(base)
     await refresh()
     router.push(`/runs/${id}`)
   } catch (error) {
@@ -73,7 +89,17 @@ async function render() {
 
 <template>
   <p v-if="failure" class="band error top">{{ failure }}</p>
-  <Compose v-if="job" v-model="job" :problems="problems" :queued="queued" :busy="live" :starting="starting" @render="render" />
+  <Compose
+    v-if="job"
+    v-model="job"
+    v-model:batch="state.batch"
+    v-model:batching="state.batching"
+    :problems="problems"
+    :queued="queued"
+    :busy="live"
+    :starting="starting"
+    @render="render"
+  />
 </template>
 
 <style scoped>

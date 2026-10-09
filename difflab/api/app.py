@@ -774,6 +774,20 @@ async def start_run(request: Request) -> dict[str, Any]:
     return {"run": run_id, "title": job.title}
 
 
+@app.post("/api/runs/batch")
+async def start_runs(request: Request) -> list[dict[str, Any]]:
+    """A list of jobs, each its own run in the order given; one refused queues none of them."""
+    jobs = [_job_from(data) for data in await request.json()]
+    for index, job in enumerate(jobs):
+        problems = job.check()
+        if problems:
+            raise HTTPException(400, f"{job.title} (#{index + 1}): {problems[0]}")
+    try:
+        return [{"run": queue.enqueue(job), "title": job.title} for job in jobs]
+    except (sqlite3.Error, OSError) as problem:
+        raise HTTPException(500, f"the runs could not be queued ({problem})") from problem
+
+
 @app.get("/api/runs")
 def list_runs() -> list[dict[str, Any]]:
     return runs.runs()

@@ -141,6 +141,7 @@ export const listRuns = () => json<RunSummary[]>('/api/runs')
 export const listUploads = () => json<Asset[]>('/api/uploads')
 /** Queued, not started: the worker takes runs in the order they were asked for, and answers here at once. */
 export const startRun = (job: Job) => json<{ run: string; title: string }>('/api/runs', post(job))
+export const startRuns = (jobs: Job[]) => json<{ run: string; title: string }[]>('/api/runs/batch', post(jobs))
 export const readRun = (runId: string) => json<RunRecord>(`/api/runs/${encodeURIComponent(runId)}`)
 
 /** `pause`, `resume` and `cancel` are the run's; the rest go to the job in flight and act where it next

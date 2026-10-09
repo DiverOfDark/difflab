@@ -5,6 +5,8 @@ import type { Job } from '../api'
 import PhotoPicker from './PhotoPicker.vue'
 
 const job = defineModel<Job>({ required: true })
+const batch = defineModel<string[]>('batch', { required: true })
+const batching = defineModel<boolean>('batching', { required: true })
 const props = defineProps<{
   problems: string[]
   /** Runs ahead of this one: the card renders one at a time and the worker keeps the order. */
@@ -268,6 +270,7 @@ const estimate = computed(() => {
 const label = computed(() => {
   if (props.starting) return 'queueing…'
   const ahead = props.queued + (props.busy ? 1 : 0)
+  if (batching.value) return ahead ? `Queue ${batch.value.length} behind ${ahead}` : `Queue ${batch.value.length}`
   return ahead ? `Queue behind ${ahead}` : 'Render'
 })
 </script>
@@ -298,9 +301,31 @@ const label = computed(() => {
       <section v-if="shows('photos') || shows('clip')" class="card">
         <div class="head">
           <h5>References</h5>
-          <span class="note">{{ shows('clip') ? 'the finished video' : 'the first is what it opens on' }}</span>
+          <div class="segmented">
+            <button :class="{ on: !batching }" @click="batching = false">ONE</button>
+            <button :class="{ on: batching }" @click="batching = true">BATCH</button>
+          </div>
         </div>
-        <div class="body">
+        <div v-if="batching" class="body">
+          <PhotoPicker
+            v-if="shows('clip')"
+            v-model:photos="batch"
+            accept="video/*"
+            each
+            empty="Drop finished mp4s here. Each is enlarged in its own run, with the same settings."
+          />
+          <template v-else>
+            <PhotoPicker
+              v-model:photos="batch"
+              accept="image/*"
+              each
+              empty="Drop photos here. Each opens a take of its own, with the same words and settings."
+            />
+            <span class="label">shared references · after each one, in this order</span>
+            <PhotoPicker v-model:photos="job.photos" empty="Optional. Every take is handed these after its own photo." />
+          </template>
+        </div>
+        <div v-else class="body">
           <label v-if="shows('clip')" class="stacked">
             <span class="label">clip</span>
             <input v-model="job.clip" placeholder="an mp4 under output/, or its full path" />

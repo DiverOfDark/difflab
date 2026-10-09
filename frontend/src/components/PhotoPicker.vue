@@ -12,6 +12,11 @@ const props = defineProps<{
   /** What each item is called in a caption; empty when a planned direction will cut its own crops
    *  and number them itself. */
   labels?: string[]
+  /** Set when no item is the one the take opens on. */
+  empty?: string
+  /** Every item is a run of its own. */
+  each?: boolean
+  accept?: string
 }>()
 const emit = defineEmits<{ 'update:photos': [photos: string[]] }>()
 
@@ -114,7 +119,7 @@ const thumb = (path: string) => known.value[path]?.thumb ?? thumbUrl(path)
         <img :src="thumb(path)" alt="" @error="($event.target as HTMLImageElement).style.visibility = 'hidden'" />
         <div class="what">
           <div class="name">{{ name(path) }}</div>
-          <div v-if="index === 0 && !labels?.length" class="opens">opens the take</div>
+          <div v-if="index === 0 && !labels?.length && !empty" class="opens">opens the take</div>
         </div>
         <button
           v-if="labels?.[index]"
@@ -128,14 +133,15 @@ const thumb = (path: string) => known.value[path]?.thumb ?? thumbUrl(path)
         <button class="quiet" title="remove" @click="remove(index)">✕</button>
       </li>
     </ul>
-    <p v-else class="dim empty">Drop photos here, or choose them. The first one is what the take opens on.</p>
+    <p v-else class="dim empty">{{ empty ?? 'Drop photos here, or choose them. The first one is what the take opens on.' }}</p>
 
     <div class="row">
       <label class="choose">
-        <input type="file" multiple accept="image/*,video/*" hidden @change="onPick" />
+        <input type="file" multiple :accept="accept ?? 'image/*,video/*'" hidden @change="onPick" />
         <span>{{ busy ? 'uploading…' : 'choose…' }}</span>
       </label>
-      <span class="dim small">drag to reorder</span>
+      <span v-if="each" class="dim small">one run each · {{ photos.length }}</span>
+      <span v-else class="dim small">drag to reorder</span>
     </div>
     <p v-if="problem" class="band error">{{ problem }}</p>
   </div>

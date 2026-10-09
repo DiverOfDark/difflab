@@ -23,6 +23,9 @@ export const state = reactive({
   productions: [] as ProductionSummary[],
   /** The quick form's job, kept across screens so a run's "again" can fill it. */
   quick: null as Job | null,
+  /** Each one is its own run of `quick`: the photo it opens on, or the clip it enlarges. */
+  batch: [] as string[],
+  batching: false,
   gpu: null as Gpu | null,
   /** What the open production says in the header: its title, stage and version. */
   heading: '',
