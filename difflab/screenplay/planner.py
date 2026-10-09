@@ -42,10 +42,16 @@ def check(
                 f"{'add' if landing else 'drop'} “{_LAST_FRAME}: …”, or turn the landing "
                 f"{'off' if landing else 'on'}"
             )
+    slugs = {m.slug for m in store.members_of(connection, production.id, style=True)} if production else None
     for shot in shots:
         keyframe = store.keyframe_of(connection, shot.id)
         prompt = store.prompt_of(connection, shot.id)
         name = f"shot {shot.position + 1}"
+        for gone in [] if slugs is None else sorted(set(shot.plan.get("cast", [])) - slugs):
+            problems.append(
+                f"{name} casts {gone}, who is no longer in the bible; a re-plan keeps a pinned shot as it is: "
+                "edit its cast, or unpin it and re-plan"
+            )
         if keyframes_only:
             pass
         elif not prompt.text.strip():
