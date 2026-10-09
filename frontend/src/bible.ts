@@ -28,6 +28,8 @@ export const shotLabel = (shot: ShotInfo) => `${pad(shot.chapter + 1, 2)}.${pad(
 type Ref = MemberInfo['references'][number]
 const shown = (r: Ref) => !!r.artifact && r.present
 export const photographs = (m: MemberInfo) => m.references.filter((r) => r.role !== GENERATED && shown(r))
+/** The file the member is handed over as: its plate, while it plates and one is drawn. */
+export const shownAs = (m: MemberInfo, r: Ref) => (m.plate && r.plate ? r.plate : r.artifact!)
 export const drawnRef = (m: MemberInfo) => m.references.find((r) => r.role === GENERATED)
 
 /** "2 photos · 1 generated", "drawn from words", "no reference". */

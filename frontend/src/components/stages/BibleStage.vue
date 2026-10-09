@@ -2,7 +2,7 @@
 import { computed, reactive, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { attachUnmatched, describeMember, drawReference, drawReferences, outputUrl, type MemberInfo, type Production, type ShotInfo } from '../../api'
-import { KIND_LABEL, TABS, appearance, changesIn, drawnRef, meta, pictures, shotLabel, shotsOf, source, states } from '../../bible'
+import { KIND_LABEL, TABS, appearance, changesIn, drawnRef, meta, pictures, shotLabel, shotsOf, shownAs, source, states } from '../../bible'
 import { drawingRun, type StageId } from '../../production'
 import { state } from '../../store'
 import BibleEditor from './BibleEditor.vue'
@@ -109,12 +109,12 @@ const attach = (u: Production['unmatched'][number]) =>
         <div class="inside">
           <div class="pics">
             <span v-if="pictures(m)[0]" class="leadpic">
-              <img class="frame lead" :src="outputUrl(pictures(m)[0].artifact!)" :alt="pictures(m)[0].role" />
+              <img class="frame lead" :src="outputUrl(shownAs(m, pictures(m)[0]))" :alt="pictures(m)[0].role" />
               <span class="tag mono" :class="{ gen: pictures(m)[0].role === 'generated' }">{{ pictures(m)[0].role === 'generated' ? 'GEN' : 'PHOTO' }}</span>
             </span>
             <div v-else class="frame lead empty mono">{{ inDrawing(m) ? 'drawing…' : 'no reference' }}</div>
             <div class="thumbs">
-              <img v-for="r in pictures(m).slice(1, 4)" :key="r.id" class="frame" :src="outputUrl(r.artifact!)" :alt="r.role" :title="r.role" />
+              <img v-for="r in pictures(m).slice(1, 4)" :key="r.id" class="frame" :src="outputUrl(shownAs(m, r))" :alt="r.role" :title="r.role" />
             </div>
           </div>
           <div class="words">
