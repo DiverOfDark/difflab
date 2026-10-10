@@ -85,8 +85,15 @@ const STATUS_COLOR: Record<LookRef['image'], string> = {
 // --- references ---------------------------------------------------------------------------------
 const members = computed(() => new Map(props.production.members.map((m) => [m.slug, m])))
 const typed = useRowDrafts()
+// Clicking an action blurs the field just typed in, so its save and the action leave together; a job takes
+// the words the server has when it is queued, and a look drew the old ones whenever it arrived first.
+const saving = new Map<string, Promise<unknown>>()
+const saved = () => Promise.all(saving.values())
 async function save(key: string, what: () => Promise<unknown>) {
-  await props.act(key, what)
+  const done = props.act(key, what)
+  saving.set(key, done)
+  await done
+  saving.delete(key)
   await nextTick()
   typed.drop(key)
 }
@@ -126,7 +133,10 @@ const setLabel = (c: CastingInfo, value: string) => {
   if (value.trim() === c.label) return typed.drop(`label ${c.id}`)
   save(`label ${c.id}`, () => patchCasting(c.id, { label: value }))
 }
-const draw = (c: CastingInfo) => props.act(`draw ${c.id}`, () => drawLook(c.id))
+const draw = async (c: CastingInfo) => {
+  await saved()
+  return props.act(`draw ${c.id}`, () => drawLook(c.id))
+}
 const give = (c: CastingInfo, event: Event) => {
   const input = event.target as HTMLInputElement
   const file = input.files?.[0]
@@ -205,7 +215,10 @@ watch(
   { immediate: true },
 )
 const takeIssues = () => (note.value = [note.value.trim(), ...(keyframeVerdict.value?.issues ?? [])].filter(Boolean).join('; '))
-const redo = () => props.act(`keyframe ${props.shot.id}`, () => redoKeyframe(props.shot.id, note.value))
+const redo = async () => {
+  await saved()
+  return props.act(`keyframe ${props.shot.id}`, () => redoKeyframe(props.shot.id, note.value))
+}
 const approveFrame = () => props.act(`approve ${props.shot.id}`, () => approveMade('keyframe', props.shot.keyframe.id))
 const ownFrame = (event: Event) => {
   const el = event.target as HTMLInputElement
@@ -231,7 +244,10 @@ const MARKER_COLOR: Record<string, string> = {
   rewritten: 'var(--text-tertiary)',
   written: 'var(--text-tertiary)',
 }
-const rewrite = () => props.act(`rewrite ${props.shot.id}`, () => rewriteShot(props.shot.id))
+const rewrite = async () => {
+  await saved()
+  return props.act(`rewrite ${props.shot.id}`, () => rewriteShot(props.shot.id))
+}
 
 // --- all changes --------------------------------------------------------------------------------
 const changes = computed(() =>
