@@ -753,6 +753,44 @@ def give_ref(member_id: int, path: str, role: str) -> dict[str, int]:
         return _stale(connection, _shots_of(connection, production.id, member.slug))
 
 
+def garment_name(name: str) -> str:
+    return " ".join(name.lower().split())
+
+
+def dress(member_id: int, name: str, path: str | None) -> dict[str, int]:
+    """`path` puts the garment `name` in the member's wardrobe, None takes it out. A look the plan named
+    after it goes stale, and so does every look drawn from that one; the next plan sees the wardrobe."""
+    said = garment_name(name)
+    if not said:
+        raise ValueError('a garment needs a name, as a plan\'s look would call it ("blue robe")')
+    with store.connect() as connection, store.transaction(connection):
+        member = store.member(connection, member_id)
+        production = None if member is None else store.production(connection, member.production_id)
+        if member is None or production is None:
+            raise LookupError(f"no member {member_id}")
+        if member.kind not in compiler.LIVING:
+            raise ValueError(f"{member.slug} wears nothing: a garment belongs to a person or an animal")
+        kept = [g for g in member.wardrobe if g["name"] != said]
+        if path is not None:
+            found = store.under_output(path)
+            if not found.is_file():
+                raise ValueError(f"{path}: no such upload")
+            kept.append({"name": said, "path": store.relative(found)})
+        elif len(kept) == len(member.wardrobe):
+            raise ValueError(f"{member.slug} has no garment called {said}")
+        store.update_member(connection, member_id, wardrobe=kept)
+        resolved = looks.resolve(connection, production)
+        for look in resolved.looks.values():
+            casting = look.casting
+            if look.member != member.slug or casting is None or garment_name(look.label) != said:
+                continue
+            if casting.artifact and not casting.pinned and casting.state != store.STALE:
+                store.set_made(connection, "casting", casting.id, store.STALE)
+            restale_looks(connection, casting.id)
+        store.touch_production(connection, production.id)
+    return {}
+
+
 def add_style_picture(connection: Any, member: store.Member, path: str) -> None:
     """Kept whole, as given: a style is read for its look, never cut or fitted to the canvas."""
     with Image.open(store.under_output(path)) as picture:
@@ -923,8 +961,9 @@ def add_photos(production_id: int, paths: list[str]) -> int:
         return len(new)
 
 
-def attach(production_id: int, photo: str, to: str) -> dict[str, int]:
-    """An unmatched photograph held as `to`'s picture, or `ignore`d; either way it leaves the list."""
+def attach(production_id: int, photo: str, to: str, garment: str = "") -> dict[str, int]:
+    """An unmatched photograph held as `to`'s picture, as its `garment` when named, or `ignore`d; either
+    way it leaves the list."""
     with store.connect() as connection:
         production = store.production(connection, production_id)
         if production is None:
@@ -934,7 +973,12 @@ def attach(production_id: int, photo: str, to: str) -> dict[str, int]:
         member = None if to == "ignore" else store.member_by_slug(connection, production_id, to)
     if to != "ignore" and member is None:
         raise ValueError(f"no member called {to}")
-    moved = give_ref(member.id, photo, GIVEN_ROLE[member.kind]) if member is not None else {}
+    if member is None:
+        moved = {}
+    elif garment.strip():
+        moved = dress(member.id, garment, photo)
+    else:
+        moved = give_ref(member.id, photo, GIVEN_ROLE[member.kind])
     with store.connect() as connection, store.transaction(connection):
         now = store.production(connection, production_id)
         assert now is not None
@@ -1816,6 +1860,7 @@ def _member(
         "delivery": member.delivery,
         "reference_audio": member.reference_audio,
         "plate": member.plate,
+        "wardrobe": member.wardrobe,
         "references": [reference(ref) for ref in store.refs_of(connection, member.id)],
         "variants": drawn.drawn_variants(connection, member.id),
         "gaps": gaps(production, member, store.refs_of(connection, member.id)),

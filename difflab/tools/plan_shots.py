@@ -92,6 +92,7 @@ def plan(
     total: float,
     aliases: dict[str, str] | None = None,
     shortest: float = h3.DIRECTOR_CLIP_MIN,
+    wardrobe: dict[str, list[str]] | None = None,
 ) -> compose.Take:
     """The whole take in one call, so the model sees every join while it decides where beats end.
 
@@ -117,6 +118,9 @@ def plan(
         total=round(total), shortest=shortest, longest=longest,
         early=window[0] * 100, late=window[1] * 100, moves=moves, beat_min=h3.DIRECTOR_BEAT_MIN,
     )  # fmt: skip
+    worn = "\n".join(f"- {m}: {', '.join(names)}" for m, names in (wardrobe or {}).items() if names)
+    if worn:
+        question += "\n\n" + words.PLAN_WARDROBE.format(wardrobe=worn)
     system = words.PLAN_SYSTEM.format(
         longest=longest, look_words=h3.DIRECTOR_LOOK_WORDS, name_words=h3.DIRECTOR_LOOK_NAME_WORDS,
         airlock=h3.DIRECTOR_AIRLOCK[0], airlock_min=h3.DIRECTOR_AIRLOCK[1], settle=h3.DIRECTOR_SETTLE[0],

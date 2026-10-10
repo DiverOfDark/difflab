@@ -489,6 +489,9 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         ), '')
         """,
     ),
+    # Garments a person or animal can change into, each {name, path}: handed to the look the plan names
+    # after one, never as a picture of the member itself.
+    ("ALTER TABLE members ADD COLUMN wardrobe TEXT NOT NULL DEFAULT '[]'",),
 )
 
 SCHEMA_VERSION = len(MIGRATIONS)

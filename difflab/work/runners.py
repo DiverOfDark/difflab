@@ -438,10 +438,15 @@ def run_draw_look(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str,
         said = f"{said} {words.COMPOSE_LOOK_ALLOWED.format(allowed=str(inputs['allowed']).strip().rstrip('.'))}"
     if face is not None:
         said = f"{said} {words.COMPOSE_LOOK_FACE}"
-    # By both pictures' pixels: a source drawn again moves every look drawn from it.
+    garment = _frame(inputs["garment"]) if inputs.get("garment") else None
+    if garment is not None:
+        picture = 3 if face is not None else 2
+        said = f"{said} {words.COMPOSE_LOOK_GARMENT.format(name=inputs['garment_name'], picture=picture)}"
+    # By every picture's pixels: a source drawn again moves every look drawn from it.
     made = key(
         "draw_look", 1, source=source.pixels, amend=amend, said=said, settings=chosen, size=list(size),
         face=face.pixels if face is not None else None,
+        **({"garment": garment.pixels} if garment is not None else {}),
     )  # fmt: skip
     target = cache.path(made, ".png")
     outputs = {"frame": store.relative(target), "key": str(made), "size": list(size)}
@@ -450,7 +455,8 @@ def run_draw_look(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str,
         return Skipped(outputs)
     width, height = megapixel_size(*size, chosen.megapixels)
     work = (max(16, width // 16 * 16), max(16, height // 16 * 16))  # the editor floors its output to /16
-    edited = edit_image.edit(source, said, chosen, size=work, donors=[face] if face is not None else [])
+    donors = [p for p in (face, garment) if p is not None]
+    edited = edit_image.edit(source, said, chosen, size=work, donors=donors)
     edited.resized(*size).pil().save(target)
     record.artifact_made(target, store.IMAGE, chosen.seed, key=str(made))
     return outputs

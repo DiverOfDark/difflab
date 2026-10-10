@@ -11,6 +11,7 @@ import {
   outputUrl,
   patchMember,
   pickVariant,
+  dress,
   resolveConflict,
   upload,
   type Conflict,
@@ -179,6 +180,20 @@ const provided = computed(() => refs.value.filter((r) => r.role !== GENERATED).l
 const generated = computed(() => refs.value.filter((r) => r.role === GENERATED).length)
 const refName = (r: Ref) => (r.role === GENERATED ? `drawn · seed ${r.seed ?? '—'}` : `${r.role} · ${audioName(r.photo || r.artifact!)}`)
 const drawing = computed(() => drawingRun(props.production))
+const garment = ref('')
+const garmentInput = ref<HTMLInputElement | null>(null)
+function addGarment(files: FileList | null | undefined) {
+  const file = files?.[0]
+  const m = props.member
+  const name = garment.value.trim()
+  if (!file || !m || !name) return
+  props.act(`dress ${m.id}`, async () => {
+    const [asset] = await upload([file])
+    told((await dress(m.id, name, asset.path)).stale)
+    garment.value = ''
+  })
+}
+const undress = (name: string) => props.member && props.act(`dress ${props.member.id}`, async () => told((await dress(props.member!.id, name, null)).stale))
 const GIVEN_ROLE: Record<string, string> = { environment: 'environment', person: 'body', animal: 'view', object: 'object', style: 'style' }
 const dragging = ref(false)
 const fileInput = ref<HTMLInputElement | null>(null)
@@ -470,6 +485,22 @@ const remove = () => {
                 <span>Replace each photo's background with a flat backdrop, so the model copies the {{ member.noun }} and not the room it was photographed in.</span>
               </label>
               <span v-if="member.plate" class="mono small dim">{{ plating ? 'plating…' : `${plated} of ${plates.length} plated` }}</span>
+            </div>
+            <div v-if="member.kind === 'person' || member.kind === 'animal'" class="plate wardrobe">
+              <span class="eyebrow">WARDROBE</span>
+              <span class="mono small dim">What {{ member.noun }} changes into. A look the plan names exactly as a garment here is drawn wearing its picture.</span>
+              <div v-for="g in member.wardrobe ?? []" :key="g.name" class="garment">
+                <img class="frame" :src="outputUrl(g.path)" :alt="g.name" />
+                <span class="mono name">{{ g.name }}</span>
+                <button class="link" :disabled="!!busy" title="take it out of the wardrobe" @click="undress(g.name)">remove</button>
+              </div>
+              <div class="garment">
+                <input v-model="garment" class="mono" placeholder="its name, e.g. blue robe" />
+                <button :disabled="!!busy || !garment.trim()" @click="garmentInput?.click()">
+                  {{ busy === `dress ${member.id}` ? 'adding…' : 'picture…' }}
+                </button>
+                <input ref="garmentInput" type="file" accept="image/*" hidden @change="addGarment(($event.target as HTMLInputElement).files)" />
+              </div>
             </div>
             <div class="links">
               <button class="link" :disabled="!!busy" title="its card and conflicts read again from the photographs, and given back to the director" @click="describe">describe again from photos</button>
@@ -903,6 +934,28 @@ video.player {
 
 .plate input {
   margin: 2px 0 0;
+}
+
+.garment {
+  display: flex;
+  gap: var(--space-1);
+  align-items: center;
+}
+
+.garment .frame {
+  width: 40px;
+  height: 40px;
+  object-fit: cover;
+}
+
+.garment .name {
+  flex: 1;
+  font-size: 12px;
+}
+
+.garment input {
+  flex: 1;
+  margin: 0;
 }
 
 .links {

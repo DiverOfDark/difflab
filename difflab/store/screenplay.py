@@ -506,13 +506,13 @@ def set_identity(connection: sqlite3.Connection, member_id: int, identity: dict[
 def update_member(connection: sqlite3.Connection, member_id: int, **fields: Any) -> Member | None:
     allowed = {
         "kind", "noun", "possessive", "find", "identity", "pinned", "aliases", "appearance", "allowed", "voice",
-        "delivery", "reference_audio", "plate",
+        "delivery", "reference_audio", "plate", "wardrobe",
     }  # fmt: skip
     unknown = set(fields) - allowed
     if unknown:
         raise ValueError(f"a member has no {', '.join(sorted(unknown))}")
     values = {
-        name: (_dump(value) if name == "identity" else int(value) if name in ("pinned", "plate") else value)
+        name: _dump(value) if name in ("identity", "wardrobe") else int(value) if name in ("pinned", "plate") else value
         for name, value in fields.items()
     }
     assignments = ", ".join(f"{name} = ?" for name in values)

@@ -433,6 +433,7 @@ class Member:
     delivery: str = ""
     reference_audio: str = ""
     plate: bool = False
+    wardrobe: list[dict[str, str]] = field(default_factory=list)
 
     def picture(self, reference: Reference) -> str | None:
         """The file a reference is handed over as: its plate while the member plates and one is drawn."""
@@ -458,6 +459,7 @@ class Member:
             delivery=_text(row["delivery"]),
             reference_audio=_text(row["reference_audio"]),
             plate=bool(row["plate"]),
+            wardrobe=[{"name": str(g["name"]), "path": str(g["path"])} for g in _list(row["wardrobe"])],
         )
 
 

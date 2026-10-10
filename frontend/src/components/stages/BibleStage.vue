@@ -49,10 +49,15 @@ const drawMissing = () => props.act('draw references', () => drawReferences(prop
 
 // --- unmatched photographs --------------------------------------------------------------------------
 const picks = reactive<Record<string, string>>({})
+const garments = reactive<Record<string, string>>({})
 const pickOf = (u: Production['unmatched'][number]) => picks[u.photo] ?? (u.likely || '')
+const wearers = computed(() => props.production.members.filter((m) => m.kind === 'person' || m.kind === 'animal'))
 const name = (path: string) => path.split('/').at(-1)!.replace(/^[0-9a-f]{16}-/, '')
-const attach = (u: Production['unmatched'][number]) =>
-  props.act(`attach ${u.photo}`, () => attachUnmatched(props.production.id, u.photo, pickOf(u)))
+const attach = (u: Production['unmatched'][number]) => {
+  const [to, worn] = pickOf(u).startsWith('garment:') ? [pickOf(u).slice(8), garments[u.photo] ?? ''] : [pickOf(u), '']
+  return props.act(`attach ${u.photo}`, () => attachUnmatched(props.production.id, u.photo, to, worn))
+}
+const ready = (u: Production['unmatched'][number]) => !!pickOf(u) && (!pickOf(u).startsWith('garment:') || !!garments[u.photo]?.trim())
 </script>
 
 <template>
@@ -173,9 +178,17 @@ const attach = (u: Production['unmatched'][number]) =>
         <select :value="pickOf(u)" class="mono" @change="picks[u.photo] = ($event.target as HTMLSelectElement).value">
           <option value="" disabled>which entity…</option>
           <option v-for="m in production.members" :key="m.id" :value="m.slug">{{ m.slug }}</option>
+          <option v-for="m in wearers" :key="`garment ${m.id}`" :value="`garment:${m.slug}`">garment of {{ m.slug }}</option>
           <option value="ignore">ignore</option>
         </select>
-        <button :disabled="!!busy || !pickOf(u)" @click="attach(u)">{{ busy === `attach ${u.photo}` ? 'attaching…' : 'Attach' }}</button>
+        <input
+          v-if="pickOf(u).startsWith('garment:')"
+          v-model="garments[u.photo]"
+          class="mono"
+          placeholder="its name, e.g. blue robe"
+          title="a look the plan names this exactly is drawn wearing it"
+        />
+        <button :disabled="!!busy || !ready(u)" @click="attach(u)">{{ busy === `attach ${u.photo}` ? 'attaching…' : 'Attach' }}</button>
       </div>
     </section>
   </div>
@@ -431,7 +444,7 @@ const attach = (u: Production['unmatched'][number]) =>
   padding: var(--space-1) var(--space-2);
   border-bottom: 1px solid var(--border);
   display: grid;
-  grid-template-columns: 40px minmax(0, 1fr) minmax(140px, 200px) auto;
+  grid-template-columns: 40px minmax(0, 1fr) minmax(140px, 200px) auto auto;
   gap: var(--space-2);
   align-items: center;
 }

@@ -230,6 +230,7 @@ def draw(production_id: int, casting_ids: list[int], asked_by: str = "person") -
                     )
                 source, size = parent.artifact, parent.size
             face = face_of(connection, member)
+            worn = next((g for g in member.wardrobe if g["name"] == " ".join(look.label.lower().split())), None)
             seed = random.randrange(2**32) if look.casting.artifact else (look.casting.seed or editor.seed)
             store.update_casting(connection, casting_id, seed=seed)
             job = store.add_job(
@@ -237,7 +238,8 @@ def draw(production_id: int, casting_ids: list[int], asked_by: str = "person") -
                 {"production": production_id, "casting": casting_id, "source": source,
                  "face": member.picture(face) if face else None, "kind": member.kind, "noun": member.noun,
                  "amend": " ".join(look.casting.amend.split()), "size": list(size), "seed": seed,
-                 **({"allowed": member.allowed} if member.allowed.strip() else {})},
+                 **({"allowed": member.allowed} if member.allowed.strip() else {}),
+                 **({"garment": worn["path"], "garment_name": worn["name"]} if worn else {})},
                 label=f"draw {member.slug} · {look.label}", settings=editor.data(), for_kind="casting",
                 for_id=casting_id,
             )  # fmt: skip

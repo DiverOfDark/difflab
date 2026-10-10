@@ -19,6 +19,7 @@ RULES
 - A member is one person, one animal or one object that the IDEA needs and a picture shows, or a place where the video happens.
 - The first member of kind "environment" is the place shown in Picture 1, where the video starts. When the IDEA moves somewhere else (out of the window into the sky, onto the street), each further place is an environment member of its own; a place no picture shows is listed in no picture's "shows" and is created from words. The other pictures are used only for the members they show, never for their places.
 - Add an object only when the IDEA's action moves it, uses it or passes it on (the hookah that is smoked, the ball that is thrown). Anything that only sits in the place - furniture, a mouse on a desk, a blanket lain on, walls, lights - belongs to the environment, however clearly a picture shows it.
+- Clothing is part of the person or animal wearing it, never a member of its own, even when the IDEA has it taken off, put on or swapped (the robe he slips off, the jacket she puts on): that is a change of the wearer's look. A picture that shows only a garment shows no member: say what it is in "about" and put its wearer in "likely".
 - Add no person or animal that the IDEA does not need, even when a picture shows one: people in the background are bystanders, not members.
 - A person or animal the IDEA brings in that no picture shows is a member too: list it in no picture's "shows" and it is created from words alone ("a man enters the scene" where every picture is of the woman). So is an object the IDEA's action moves, uses or passes on that no picture shows (the sword he fights with): it is drawn from words, so it looks the same in every shot.
 - Two or more animals the IDEA treats as one group (two pigeons that fly together) are one member whose noun says how many ("two pigeons"), with "their".
@@ -287,6 +288,13 @@ OPENING (the first frame of clip 1, a real photograph):
 TAKE: at most {total:g} seconds, split into clips of {shortest:g} to {longest:g} seconds each. In every clip the main beat starts between {early:.0f}% and {late:.0f}% of the clip's length, and every beat lasts at least {beat_min:g} second.
 CAMERA MOVES:
 {moves}"""
+
+# A garment the member changes into is a look, never a member: production 13 (2026-10-10) cast both robes
+# as objects, handed the green robe's picture to every clip after he took it off, and drew the blue one from
+# words beside the photo of it that was given.
+PLAN_WARDROBE = """\
+WARDROBE (garments a member can change into, each shown in a picture the program hands over). A clip in which a member puts one on gives "looks" for that member with "name" exactly as listed here; a garment taken off is described in words, never cast:
+{wardrobe}"""
 
 WRITE_SYSTEM = """\
 You are the prose writer for ONE clip of an unbroken live-action take rendered by MiniMax H3. A program has already written everything that must be exact: the style, the opening arrangement, the place and its light, the camera move, the rule for mouths, the closing arrangement and every reference label. You write only the motion in between, as JSON.
@@ -655,6 +663,9 @@ COMPOSE_LOOK_KEEP = {
     "environment": "the same walls, ground, furniture, colours and light",
 }
 COMPOSE_LOOK_FACE = "The face is exactly the face in Picture 2: the same features, skin and hair."
+COMPOSE_LOOK_GARMENT = (
+    "The {name} is exactly the garment in Picture {picture}: the same cut, colour, pattern and trim, now worn."
+)
 COMPOSE_LOOK_ALLOWED = "These may differ as the change needs: {allowed}."
 # The shape the old plates were written in (b1d50dc): the realism clause is positive because the editor
 # runs at cfg 1 and drops the negative prompt.

@@ -673,11 +673,13 @@ def _plan_shots(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, A
     photos = [str(p) for p in production.manifest.get("photos", [])]
     refs = compiler.refs_of(references, rows, photos)
     aliases = {m.slug: m.aliases for m in rows if m.aliases.strip() and m.slug in members}
+    wardrobe = {m.slug: [g["name"] for g in m.wardrobe] for m in rows if m.wardrobe and m.slug in members}
     made = key(
         "plan_shots", 2, production=production_id, chapter=chapter_id, idea=idea, take_seconds=total,
         members=inputs["members"],
         cards=identities, refs={k: dataclasses.asdict(r) for k, r in refs.items()}, arrangement=arrangement,
         seconds=seconds, tail=tail, budget=budget, **({"aliases": aliases} if aliases else {}), **_taken(inputs),
+        **({"wardrobe": wardrobe} if wardrobe else {}),
         **({"shortest": shortest} if shortest != knobs.DIRECTOR_CLIP_MIN else {}),
         **_fingerprint(),
     )  # fmt: skip
@@ -695,7 +697,7 @@ def _plan_shots(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, A
         budget=budget,
     )
     with _take(inputs):
-        planned = plan_shots.plan(base, idea, total, aliases, shortest)
+        planned = plan_shots.plan(base, idea, total, aliases, shortest, wardrobe)
     chunks = [compiler.plan_of(chunk) for chunk in planned.chunks]
     changed = [
         {m: {"amend": look, "label": chunk.look_names.get(m, "")} for m, look in chunk.looks.items()}

@@ -232,6 +232,14 @@ async def give_reference(member_id: int, request: Request) -> dict[str, Any]:
     )
 
 
+@app.post("/api/members/{member_id}/wardrobe")
+async def dress(member_id: int, request: Request) -> dict[str, Any]:
+    """`path`, an uploaded picture of a garment the member can change into, called `name`; no `path` takes it out."""
+    body = await request.json()
+    path = str(body["path"]) if body.get("path") else None
+    return _staling(_member_owner(member_id), lambda: production.dress(member_id, str(body.get("name", "")), path))
+
+
 @app.post("/api/conflicts/{conflict_id}/resolve")
 async def resolve_conflict(conflict_id: int, request: Request) -> dict[str, Any]:
     """`resolution`: which wording is kept, in words; empty opens it again."""
@@ -255,11 +263,11 @@ async def keep_conflict(conflict_id: int, request: Request) -> dict[str, Any]:
 
 @app.post("/api/productions/{production_id}/unmatched")
 async def attach_unmatched(production_id: int, request: Request) -> dict[str, Any]:
-    """`photo`, one the survey placed with no member, held as member `to`'s picture, or `to` "ignore"."""
+    """`photo`, one the survey placed with no member, held as member `to`'s picture - its `garment` of that
+    name when one is given - or `to` "ignore"."""
     body = await request.json()
-    return _staling(
-        production_id, lambda: production.attach(production_id, str(body.get("photo", "")), str(body.get("to", "")))
-    )
+    photo, to, garment = str(body.get("photo", "")), str(body.get("to", "")), str(body.get("garment") or "")
+    return _staling(production_id, lambda: production.attach(production_id, photo, to, garment))
 
 
 @app.post("/api/productions/{production_id}/photos")

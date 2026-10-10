@@ -338,6 +338,8 @@ export interface MemberInfo {
   reference_audio: string
   /** Its photographs are handed over on a flat backdrop, each reference's `plate` once drawn. */
   plate: boolean
+  /** Garments it can change into: a look the plan names after one is drawn wearing that picture. */
+  wardrobe: { name: string; path: string }[]
   /** Role `generated`: drawn by the editor from the member's words, with the seed it was drawn with. */
   references: (MadeThing & {
     role: string
@@ -575,9 +577,12 @@ export const resolveConflict = (conflictId: number, resolution: string) =>
 /** The story against a photograph settled: `reference` rewrites the story's sentences, `novel` takes its trait. */
 export const keepConflict = (conflictId: number, keep: 'reference' | 'novel') =>
   json<Production>(`/api/conflicts/${conflictId}/keep`, post({ keep }))
-/** An unmatched photograph held as member `to`'s picture, or `to` 'ignore'. */
-export const attachUnmatched = (id: number, photo: string, to: string) =>
-  json<Production & { stale: Stale }>(`/api/productions/${id}/unmatched`, post({ photo, to }))
+/** An unmatched photograph held as member `to`'s picture - its garment when `garment` names one - or `to` 'ignore'. */
+export const attachUnmatched = (id: number, photo: string, to: string, garment = '') =>
+  json<Production & { stale: Stale }>(`/api/productions/${id}/unmatched`, post({ photo, to, garment }))
+/** `path` null takes the garment out of the wardrobe. */
+export const dress = (memberId: number, name: string, path: string | null) =>
+  json<Production & { stale: Stale }>(`/api/members/${memberId}/wardrobe`, post({ name, path }))
 /** The member read again from its photographs, as a run; it goes back to the director. */
 export const describeMember = (memberId: number) => json<{ run: string }>(`/api/members/${memberId}/describe`, post({}))
 export const ingestStory = (form: IngestStory) => json<Production & { runs: string[] }>('/api/ingest', post(form))
