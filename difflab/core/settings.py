@@ -312,9 +312,10 @@ class Continuity(Settings):
 
     The tail is priced in rows, and rows cost quadratic attention: at 15 s / 0.8 MP a 0.21 s tail is
     +1.8% of the packed sequence and about +3% of a render, 1 s is +6.5% and +12%, 2.3 s is +16% and
-    +30%. 0.21 s is the grid's minimum (frame counts must satisfy `n % 17 == 5`) and five frames is
-    already plenty to establish velocity - the community's LongTake measured 5 frames *better* than
-    22 for reference adherence, while 22 is smoother and repeats the previous motion.
+    +30%. 0.21 s (five frames, the grid's minimum: `n % 17 == 5`) carries pose and a hint of velocity,
+    and with it every chunk eased in from near-stillness. 0.92 s is 22 frames, which the community's
+    LongTake measured smoother than 5, at the cost of some reference adherence and a tendency to repeat
+    the previous motion; the plan's carry joins need the speed to come across.
 
     What a chain loses anyway, measured by the same people: about +4% contrast and x1.3 texture per
     join, and audio treble. The countermeasures are a colour anchor to chunk 1 (holding its frame as
@@ -323,7 +324,7 @@ class Continuity(Settings):
     """
 
     tail_seconds: float = setting(
-        0.25,
+        0.92,
         "tail",
         "seconds of the previous chunk shown to the next; 0 disables it",
         unit="s",
@@ -339,7 +340,7 @@ class Continuity(Settings):
         advanced=True,
     )
     crossfade: float = setting(
-        0.0,
+        0.1,
         "seam blend",
         "seconds a chained shot blends over the frames it shares with the shot before; at most the handoff window",
         unit="s",

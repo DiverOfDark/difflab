@@ -151,7 +151,7 @@ def plan(
             count = len(data["clips"])
             out.append(direct.problem(f'the clips\' "seconds" add up to {planned:g}; the take lasts at most {total:g}, '
                                       f"so cut {planned - total:g} seconds: {count} clips average at most "
-                                      f"{total / count:.1f} s, so shorten each clip's main beat and its settle "
+                                      f"{total / count:.1f} s, so shorten each clip's main beat and its closing beat "
                                       f"toward the least they may be, or merge two"))  # fmt: skip
         # Never returned alone: an answer stopped here counted one problem and was kept over answers that
         # broke fewer rules, unchecked - a 72 s plan whose closings named members missing from the next cast.

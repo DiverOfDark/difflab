@@ -46,7 +46,6 @@ SIDE = re.compile(
 )
 PHASES = ("airlock", "carry", "build", "primary", "handoff", "reaction", "settle")
 QUIET = ("airlock", "settle")  # beats in which nothing new happens
-TRAVEL = {"follow", "crane_up", "stay"}  # camera moves that show a member travelling through space
 
 
 def chunk_rules(text: str, labels: list[str], directive: str) -> list[Problem]:
@@ -250,27 +249,21 @@ def plan_rules(take: compose.Take) -> list[Problem]:
             if abs(a.end - b.start) > 0.01:
                 fail("coverage", f"{clip}: beats must be contiguous ({a.end} then {b.start})")
         airlock, settle = config.DIRECTOR_AIRLOCK[1], config.DIRECTOR_SETTLE[1]
-        before = take.chunks[index - 1].beats[-1:] if index > 0 else ()
         following = take.chunks[index + 1] if index + 1 < len(take.chunks) else None
-        carried_in = any(beat.phase == "carry" for beat in before) and not chunk.cut
-        if carried_in and beats[0].phase != "carry":
-            fail("carry", f"{clip}: the clip before ends in a carry, so this one starts with a carry beat")
-        elif index > 0 and not carried_in and (beats[0].phase != "airlock" or beats[0].end - beats[0].start < airlock):
-            fail("airlock", f"{clip}: start with an airlock beat of at least {airlock:g} seconds")
-        if beats[-1].phase == "carry":
-            if following is None or following.cut:
-                fail("carry", f"{clip}: a carry ends a clip only when the next clip continues it; end with a settle")
-        elif beats[-1].phase != "settle" or beats[-1].end - beats[-1].start < settle:
-            fail("settle", f"{clip}: end with a settle of at least {settle:g} seconds, or a carry into the next clip")
+        continued = following is not None and not following.cut
+        if chunk.cut and (beats[0].phase != "airlock" or beats[0].end - beats[0].start < airlock):
+            fail("airlock", f"{clip}: a cut starts with an airlock beat of at least {airlock:g} seconds")
+        elif index > 0 and not chunk.cut and beats[0].phase != "carry":
+            fail("carry", f"{clip}: it continues the clip before, so it starts with a carry beat, that clip's last "
+                 "motion going on")  # fmt: skip
+        if continued and beats[-1].phase != "carry":
+            fail("carry", f"{clip}: the next clip continues it, so it ends with a carry beat, the next movement "
+                 "already under way")  # fmt: skip
+        elif not continued and (beats[-1].phase != "settle" or beats[-1].end - beats[-1].start < settle):
+            fail("settle", f"{clip}: it ends the take or comes before a cut, so it ends with a settle of at least "
+                 f"{settle:g} seconds")  # fmt: skip
         if any(beat.phase == "carry" for beat in beats[1:-1]):
             fail("carry", f"{clip}: a carry beat comes only first or last")
-        # Production 10's chase was told rule 14 and still stopped at every join to face the camera; a
-        # travelling camera that runs straight into another is one motion, and it is held to it here.
-        travels = following is not None and not following.cut and {chunk.camera_move, following.camera_move} <= TRAVEL
-        if following is not None and travels and beats[-1].phase != "carry":
-            fail("carry", f"{clip} and the next clip both travel ({chunk.camera_move}, then "
-                 f"{following.camera_move}): end this one with a carry beat, the motion still under way, and "
-                 "start the next with one")  # fmt: skip
         for beat in beats:
             # 0.36 s: `plan_shots.on_grid` moves the last beat's end by up to half a 17-frame cycle.
             if beat.phase in (*QUIET, "carry") and beat.end - beat.start > config.DIRECTOR_QUIET_MAX + 0.36:

@@ -66,8 +66,8 @@ DIRECTOR_WORDS_HARD = (300, 650)
 DIRECTOR_MAX_NEGATIONS = 3  # in a detailed_description: a negated noun tends to be rendered
 
 # The plan's rules (lint.plan_rules), stated in the plan prompt with these same numbers.
-DIRECTOR_AIRLOCK = (2.0, 1.5)  # the opening beat of every chunk after the first: asked, least accepted (s)
-DIRECTOR_SETTLE = (2.0, 1.5)  # the closing beat of every chunk: asked, least accepted (s)
+DIRECTOR_AIRLOCK = (2.0, 1.5)  # the opening beat of a cut chunk: asked, least accepted (s)
+DIRECTOR_SETTLE = (2.0, 1.5)  # the closing beat of the last chunk and one before a cut: asked, least accepted (s)
 # Longest airlock or settle accepted. With none, a 60 s take of five events came back as five 12.2 s
 # clips whose settles ran up to 6.2 s: the lengths were the budget divided by the count, padded with stillness.
 DIRECTOR_QUIET_MAX = 3.0
@@ -76,7 +76,7 @@ DIRECTOR_LOOK_NAME_WORDS = (2, 4)  # a look's name, as a state chip and a timeli
 DIRECTOR_HANDOFF_MIN = 4.0  # s: reach, grip and release all visible
 DIRECTOR_BEAT_MIN = 1.0  # s
 # The plan chooses how many clips and how long each; the longest is the render settings' duration.
-# 6 s holds a 2 s airlock, a main beat and a 2 s settle.
+# 6 s holds a 2 s airlock, a main beat and a 2 s settle, the most a clip opens and closes with.
 DIRECTOR_CLIP_MIN = 6.0
 SHOT_SECONDS = (5.0, 15.0)  # what a shot's length may be set to by hand (s)
 DIRECTOR_TAKE_SLACK = 0.1  # the take's length is a ceiling; the clips may run over it by this fraction
