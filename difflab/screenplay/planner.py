@@ -231,6 +231,9 @@ def _queue_chapter(connection: Any, chapter_id: int, asked_by: str, keyframes_on
                     "looks": before,
                     "size": _canvas(production),
                     "seed": seed,
+                    # The editor draws in its own palette; a chain that lands on it would take that cast on.
+                    **({"anchor": anchor, "anchor_strength": continuity.color_anchor}
+                       if shot.position and anchor is not None and continuity.color_anchor else {}),
                 },
                 label=f"shot {shot.position + 1}: compose the keyframe", settings=editor.data(),
                 for_kind="keyframe", for_id=keyframe.id,

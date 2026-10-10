@@ -25,7 +25,7 @@ from difflab.screenplay import checks, compiler, crops, looks, words
 from difflab.screenplay import config as knobs
 from difflab.screenplay import production as production_module
 from difflab.screenplay import settings as chosen
-from difflab.screenplay.production import CUT_NOTE, OPENING_NOTE
+from difflab.screenplay.production import CUT_NOTE, LAND_NOTE, OPENING_NOTE
 from difflab.tools import (
     cards,
     cut_crops,
@@ -732,12 +732,15 @@ def _plan_shots(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, A
                 store.update_shot(connection, shot.id, plan=plan, dialogue=dialogue, scene=chunk.scene)
                 store.set_clip_seed(connection, shot.id, video.seed + shot.position)
             first = store.keyframe_of(connection, shot.id)
-            by_hand = first.source != store.CHAINED and first.note not in (OPENING_NOTE, CUT_NOTE)
+            by_hand = first.source != store.CHAINED and first.note not in (OPENING_NOTE, CUT_NOTE, LAND_NOTE)
             if not by_hand:
                 if position == 0 or chunk.cut == "back":
                     store.provide_keyframe(connection, shot.id, str(inputs["opening"]), note=OPENING_NOTE)
                 elif chunk.cut == "new":
                     store.compose_keyframe(connection, shot.id, note=CUT_NOTE)
+                elif position % knobs.DIRECTOR_LAND_EVERY == 0:
+                    if first.note != LAND_NOTE:
+                        store.compose_keyframe(connection, shot.id, note=LAND_NOTE)
                 elif first.source != store.CHAINED:
                     store.chain_keyframe(connection, shot.id)
                 # A cut's keyframe is where the clip starts, not where the clip before it ends.

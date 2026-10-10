@@ -83,6 +83,15 @@ DIRECTOR_TAKE_SLACK = 0.1  # the take's length is a ceiling; the clips may run o
 # The main beat starts mid-chunk, because a chunk's last beat gets squeezed; it may start right after a
 # 2 s airlock (0.16 of a 12.25 s chunk).
 DIRECTOR_MAIN_BEAT_WINDOW = (0.15, 0.65)
+# How far each camera move pushes the framing in. Pushes add up along a chain, since each clip opens on the
+# last frame of the one before: production 13's push_in, hold, pan_right, push_in took the man's head to about 3x its
+# height by the end of shot 4, magnifying pixels H3 had drawn small, which is what read as soft and waxy.
+DIRECTOR_ZOOM = {"push_in": 1, "pull_out": -1, "reveal_left": -2, "reveal_right": -2}
+DIRECTOR_ZOOM_MAX = 1  # net pushes a chain may hold before it pulls out again
+# Every this many shots the plan composes a clean keyframe and the shot before lands on it. A clip pinned at
+# both ends keeps its detail (production 13's shot 1: Laplacian 1056 -> 1096); one free at its end slides to H3's own
+# level within a few seconds (shot 2: 1124 -> 443 in 6 s, from a clean composed start).
+DIRECTOR_LAND_EVERY = 2
 DIRECTOR_MAX_LIVING = 3  # people and animals on screen per chunk (the official shot-table rule)
 DIRECTOR_WORDS_PER_SECOND = 2.5  # dialogue
 DIRECTOR_DIALOGUE_TAIL = 2.0  # s of silence after a chunk's last line

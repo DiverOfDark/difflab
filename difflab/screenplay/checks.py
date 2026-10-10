@@ -191,9 +191,15 @@ def plan_rules(take: compose.Take) -> list[Problem]:
     def fail(code: str, message: str) -> None:
         out.append(Problem("error", code, message, True))
 
+    zoom = 0
     for index, chunk in enumerate(take.chunks):
         clip = f"clip {index + 1}"
         beats = list(chunk.beats)
+        zoom = (0 if chunk.cut else zoom) + config.DIRECTOR_ZOOM.get(chunk.camera_move, 0)
+        if zoom > config.DIRECTOR_ZOOM_MAX:
+            fail("camera", f"{clip} pushes in while an earlier clip's push_in still holds the framing close; make it "
+                 "pull_out, a reveal, a pan or a hold, or let an earlier clip pull out")  # fmt: skip
+        zoom = max(zoom, -config.DIRECTOR_ZOOM_MAX)
         seconds = compose.length(take, index)
         unknown = {m for beat in beats for m in beat.who} | set(chunk.cast) | {chunk.camera_toward}
         if unknown - set(take.members):

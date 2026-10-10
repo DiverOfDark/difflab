@@ -402,6 +402,8 @@ def run_compose_keyframe(inputs: dict[str, Any], settings: dict[str, Any]) -> di
     looks = {str(m): str(v) for m, v in (inputs.get("looks") or {}).items() if v}
     style = _frame(inputs["style"]) if inputs.get("style") else None
     look = str(inputs.get("look") or "")
+    anchor = _frame(inputs["anchor"]) if inputs.get("anchor") else None
+    strength = float(inputs.get("anchor_strength") or 0.0) if anchor is not None else 0.0
     made = key(
         "compose_keyframe", 2, base=base.pixels, arrangement=arrangement,
         cards={slug: dataclasses.asdict(card) for slug, card in cards.items()}, settings=chosen,
@@ -410,6 +412,7 @@ def run_compose_keyframe(inputs: dict[str, Any], settings: dict[str, Any]) -> di
         **({"note": note} if note else {}),
         **({"looks": looks} if looks else {}),
         **({"style": style.pixels} if style is not None else {}), **({"look": look} if look else {}),
+        **({"anchor": anchor.pixels, "strength": strength} if anchor is not None and strength else {}),
     )  # fmt: skip
     target = cache.path(made, ".png")
     if target.is_file():
@@ -419,6 +422,8 @@ def run_compose_keyframe(inputs: dict[str, Any], settings: dict[str, Any]) -> di
         base, arrangement, cards, chosen, keep=keep, size=size, pictures=pictures, note=note, looks=looks,
         style=style, look=look,
     )  # fmt: skip
+    if anchor is not None and strength:
+        frame = media.recolored(frame, media.color_gain(frame, anchor, strength))
     frame.pil().save(target)
     record.artifact_made(target, store.IMAGE, chosen.seed, key=str(made))
     return {"frame": store.relative(target), "key": str(made)}
