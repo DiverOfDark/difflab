@@ -438,6 +438,8 @@ def run_draw_look(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str,
         said = f"{said} {words.COMPOSE_LOOK_ALLOWED.format(allowed=str(inputs['allowed']).strip().rstrip('.'))}"
     if face is not None:
         said = f"{said} {words.COMPOSE_LOOK_FACE}"
+    if inputs.get("fixes"):
+        said = f"{said} {words.COMPOSE_FIXES.format(fixes='; '.join(str(f) for f in inputs['fixes']))}"
     garment = _frame(inputs["garment"]) if inputs.get("garment") else None
     if garment is not None:
         picture = 3 if face is not None else 2
@@ -486,12 +488,15 @@ def run_draw_reference(inputs: dict[str, Any], settings: dict[str, Any]) -> dict
     member = _place_from_story(member, forced=bool(inputs.get("describe")))
     chosen = EditSettings(**settings).with_(seed=int(inputs["seed"]))
     size = [int(v) for v in inputs["size"]]
+    # Keyed without the judge's fixes, so a reference redrawn from them stays current: the picture under
+    # this seed is the fixed one, and asking for the seed again finds it.
     made = drawn.wanted(member, chosen, size)
     target = cache.path(made, ".png")
     if target.is_file():
         ui.note(f"{member.slug} already drawn as {made}")
         return Skipped({"frame": store.relative(target), "key": str(made)})
-    frame = draw_reference.draw(compiler.card_of(member), chosen, (size[0], size[1]))
+    fixes = [str(fix) for fix in inputs.get("fixes") or []]
+    frame = draw_reference.draw(compiler.card_of(member), chosen, (size[0], size[1]), fixes)
     frame.pil().save(target)
     record.artifact_made(target, store.IMAGE, chosen.seed, key=str(made))
     return {"frame": store.relative(target), "key": str(made)}

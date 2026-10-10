@@ -560,6 +560,10 @@ def ref(connection: sqlite3.Connection, ref_id: int) -> Reference | None:
     return None if row is None else Reference.of(row)
 
 
+def set_ref_seed(connection: sqlite3.Connection, ref_id: int, seed: int) -> None:
+    connection.execute("UPDATE refs SET seed = ? WHERE id = ?", (seed, ref_id))
+
+
 def set_plate(connection: sqlite3.Connection, ref_id: int, path: str | None) -> None:
     connection.execute("UPDATE refs SET plate = ? WHERE id = ?", (path, ref_id))
 

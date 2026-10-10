@@ -183,7 +183,7 @@ class JudgeSettings(Settings):
     retries: int = setting(
         2,
         "retries",
-        "keyframe attempts, told the judge's fixes, before a failing one goes to review",
+        "keyframe, look and drawn-reference attempts, told the judge's fixes, before a failing one goes to review",
         low=0,
         high=5,
         keyed=False,

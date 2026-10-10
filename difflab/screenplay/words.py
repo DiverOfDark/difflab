@@ -516,7 +516,11 @@ Arrangement: {arrangement}
 WHO IS IN IT
 {cast}
 
-Answer JSON: {{"score": 0.0-1.0, "cast": [{{"id": "<id>", "present": true|false, "likeness": 0.0-1.0, "outfit": true|false}}, ...], "strangers": ["a few words for each person or animal not listed"], "issues": ["..."], "fixes": ["..."], "notes": "one sentence"}}. One "cast" entry per listed member; "outfit" is false only when a garment is a different garment or a different colour from the one in their photo (a bright robe with gold medallions for a dark embroidered one) and WHO IS IN IT does not say it has changed; a missing accessory, a detail of embroidery or the way the hair is worn is an issue, not a changed outfit. "fixes" are the issues a painter is told, about who is there, where each stands, what each holds and does; never about clothes, hair or a face, which the painter copies from the photos."""
+Answer JSON: {{"score": 0.0-1.0, "cast": [{{"id": "<id>", "present": true|false, "likeness": 0.0-1.0, "outfit": true|false}}, ...], "strangers": ["a few words for each person or animal not listed"], "issues": ["..."], "fixes": ["..."], "notes": "one sentence"}}. One "cast" entry per listed member; "outfit" is false only when a garment is a different garment or a different colour from the one in their photo (a bright robe with gold medallions for a dark embroidered one) and WHO IS IN IT does not say it has changed; a missing accessory, a detail of embroidery or the way the hair is worn is an issue, not a changed outfit. {fixes}"""
+JUDGE_FIXES_SCENE = '"fixes" are the issues a painter is told, about who is there, where each stands, what each holds and does; never about clothes, hair or a face, which the painter copies from the photos.'
+# A look or a drawn reference is redrawn alone from its own words, so there the clothes, hair and face are
+# exactly what the editor must be told.
+JUDGE_FIXES_PICTURE = '"fixes" are what the editor redrawing this one picture is told, each a short instruction about the member\'s clothes, colours, hair, face, build, pose or backdrop that brings it to the description and the reference photo ("make the robe deep sapphire blue, not teal").'
 
 # --- ruling: what a gate asks about meaning, answered by the model instead of a word list ---------------------
 RULING_EVENTS_SYSTEM = """\
@@ -663,6 +667,7 @@ COMPOSE_LOOK_KEEP = {
     "environment": "the same walls, ground, furniture, colours and light",
 }
 COMPOSE_LOOK_FACE = "The face is exactly the face in Picture 2: the same features, skin and hair."
+COMPOSE_FIXES = "Also fix this: {fixes}."
 COMPOSE_LOOK_GARMENT = (
     "The {name} is exactly the garment in Picture {picture}: the same cut, colour, pattern and trim, now worn."
 )

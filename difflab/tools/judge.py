@@ -33,6 +33,10 @@ class Verdict:
         }  # fmt: skip
 
 
+# Judged alone against their own words, and redrawn from the verdict's fixes (`made._picture_judged`).
+PICTURES = ("look picture", "reference picture")
+
+
 def judge(
     frames: list[Frame],
     kind: str,
@@ -99,6 +103,7 @@ def judge(
         )
         or "- nobody in particular",
         count=len(frames),
+        fixes=words.JUDGE_FIXES_PICTURE if kind in PICTURES else words.JUDGE_FIXES_SCENE,
         references=f", then {len(given)} reference photo(s)" if given else "",
     )
     images = [direct.shrink(frame, h3.DIRECTOR_PHOTO_PIXELS) for frame in [*frames, *given.values()]]

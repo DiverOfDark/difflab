@@ -161,11 +161,8 @@ def _judged(connection: sqlite3.Connection, job: store.Job, outputs: dict[str, A
         if kind == "casting":
             production.recompile_look(connection, made_id)
         return
-    # No retries for a reference, whose new seed replaces the picture every prompt casting it hands. A look
-    # below the gate is flagged for a person, who sees the judge's issues beside it.
-    if kind == "casting":
-        store.set_made(connection, kind, made_id, store.NEEDS_REVIEW, review=review, reviewed_by=store.JUDGE)
-        production.recompile_look(connection, made_id)
+    if kind in ("casting", "reference"):
+        _picture_judged(connection, job, thing, outputs, verdict)
         return
     attempts = int(
         connection.execute(
@@ -189,6 +186,69 @@ def _judged(connection: sqlite3.Connection, job: store.Job, outputs: dict[str, A
     if shot is not None:
         run = store.run(connection, job.run_id)
         _again.append((shot.chapter_id, bool(run is not None and (run.data() or {}).get("keyframes_only"))))
+
+
+def _picture_judged(
+    connection: sqlite3.Connection, job: store.Job, thing: store.Made, outputs: dict[str, Any], verdict: dict[str, Any]
+) -> None:
+    """A look or a drawn reference below the gate, drawn again on a new seed told the judge's fixes until its
+    `retries` are spent; then the best take is put back and goes to review. Every take stays in `review.takes`."""
+    kind, made_id = str(job.for_kind), thing.id
+    path = job.inputs.get("path")
+    draw = store.job(connection, int(path["from_job"])) if isinstance(path, dict) else None
+    if draw is None:
+        store.set_made(
+            connection, kind, made_id, store.NEEDS_REVIEW, review=json.dumps(verdict), reviewed_by=store.JUDGE
+        )
+        _picture_moved(connection, kind, made_id, thing, False)
+        return
+    take = {**verdict, "seed": int(draw.inputs.get("seed") or 0), "outputs": draw.outputs}
+    takes = [*(production.takes_of(thing.review) if draw.inputs.get("retake") else []), take]
+    name = job.label.removeprefix("judge ")
+    said = f"{float(outputs.get('score') or 0):.2f} below the gate"
+    if len(takes) <= int(outputs.get("retries", 0)):
+        seed = random.randrange(2**32)
+        fixes = [str(f) for f in outputs.get("fixes") or []] or [str(i) for i in verdict["issues"] or []]
+        store.requeue_job(connection, draw.id, {**draw.inputs, "seed": seed, "fixes": fixes, "retake": True})
+        store.requeue_job(connection, job.id)
+        _seeded(connection, kind, made_id, seed)
+        store.set_made(
+            connection, kind, made_id, store.QUEUED, current_job=draw.id,
+            review=json.dumps({**verdict, "takes": takes}), reviewed_by=store.JUDGE,
+        )  # fmt: skip
+        _notes.append(f"{name}: {said}; drawn again on seed {seed}, told: {'; '.join(fixes) or 'nothing'}")
+        return
+    best = max(takes, key=lambda t: float(t.get("score") or 0))
+    kept = best["outputs"]
+    if best is not take:
+        store.set_job_outputs(connection, draw.id, kept)
+        _seeded(connection, kind, made_id, int(best["seed"]))
+    review = {k: v for k, v in best.items() if k not in ("seed", "outputs")} | {"takes": takes}
+    store.set_made(
+        connection, kind, made_id, store.NEEDS_REVIEW, wanted_key=kept.get("key"), artifact=kept.get("frame"),
+        review=json.dumps(review), reviewed_by=store.JUDGE,
+    )  # fmt: skip
+    _picture_moved(connection, kind, made_id, thing, best is not take)
+    if len(takes) > 1:
+        score = float(best.get("score") or 0)
+        _notes.append(f"{name}: kept take {takes.index(best) + 1} of {len(takes)} ({score:.2f}) for review")
+
+
+def _seeded(connection: sqlite3.Connection, kind: str, made_id: int, seed: int) -> None:
+    if kind == "casting":
+        store.update_casting(connection, made_id, seed=seed)
+    else:
+        store.set_ref_seed(connection, made_id, seed)
+
+
+def _picture_moved(connection: sqlite3.Connection, kind: str, made_id: int, thing: store.Made, swapped: bool) -> None:
+    """`swapped`: an earlier take put back, so every look drawn from the later one is stale."""
+    if kind == "casting":
+        if swapped:
+            production.restale_looks(connection, made_id)
+        production.recompile_look(connection, made_id)
+    elif isinstance(thing, store.Reference):
+        production.recompile_casting(connection, thing.member_id)
 
 
 def _clip_judged(
