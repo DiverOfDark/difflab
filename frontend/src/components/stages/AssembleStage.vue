@@ -210,7 +210,7 @@ const file = (path: string) => path.split('/').at(-1)
     </section>
 
     <section class="card">
-      <div class="head slim"><h5>Chapter runs</h5><span class="mono dim small">each ends in a native join, then the finish</span></div>
+      <div class="head slim"><h5>Chapter runs</h5><span class="mono dim small">each ends in a native join; Finish enlarges and retimes it</span></div>
       <div v-for="j in joined" :key="j.run" class="row">
         <RouterLink class="mono" :to="`/runs/${j.run}`">{{ j.run }}</RouterLink>
         <span class="ph" :class="j.state === 'done' ? 'done' : j.state === 'failed' ? 'stale' : 'running'">{{ j.state.toUpperCase() }}</span>

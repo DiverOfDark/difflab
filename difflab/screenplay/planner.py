@@ -14,7 +14,7 @@ import time
 from datetime import datetime
 from typing import Any
 
-from difflab import config, store
+from difflab import store
 from difflab.core.settings import Continuity, JudgeSettings
 from difflab.models.minimax_h3.settings import VideoSettings
 from difflab.screenplay import assembling, compiler, looks, settings, words
@@ -122,7 +122,6 @@ def render_production(
     with store.connect() as connection, store.transaction(connection):
         chapters = _chosen(connection, production_id, chapter_position)
         runs = []
-        finished: dict[int, int] = {}
         native: dict[int, int] = {}
         for chapter in chapters:
             try:
@@ -133,10 +132,10 @@ def render_production(
                 ) from None
             for job in store.jobs_of(connection, runs[-1]):
                 if job.tool == "master":
-                    (finished if job.inputs.get("finished") else native)[chapter.id] = job.id
+                    native[chapter.id] = job.id
         production = store.production(connection, production_id)
         if not keyframes_only and production is not None:
-            film = assembling.film_after(connection, production, finished, native)
+            film = assembling.film_after(connection, production, None, native)
             runs += [film] if film else []
         return runs
 
@@ -267,7 +266,6 @@ def _queue_chapter(connection: Any, chapter_id: int, asked_by: str, keyframes_on
         return run_id
     previous: int | None = None
     clip_jobs: list[int] = []
-    opened: list[Any] = []
     for shot, keyframe in zip(shots, keyframes, strict=True):
         prompt = store.prompt_of(connection, shot.id)
         clip = store.clip_of(connection, shot.id)
@@ -323,7 +321,6 @@ def _queue_chapter(connection: Any, chapter_id: int, asked_by: str, keyframes_on
             )  # fmt: skip
         previous = job.id
         clip_jobs.append(job.id)
-        opened.append(opening)
     parts = {
         "chunks": [_output(job_id, "chunk") for job_id in clip_jobs],
         "audios": [_output(job_id, "audio") for job_id in clip_jobs],
@@ -337,40 +334,6 @@ def _queue_chapter(connection: Any, chapter_id: int, asked_by: str, keyframes_on
     )
     said = [assembling.lines(shot) for shot in shots]
     assembling.add_master(connection, run_id, production, chapter, _output(joined.id, "video"), parts, said, False)
-    # After the native join, so a watchable chapter exists an hour before the 4K one does.
-    enlarging, _ = settings.effective("restore", production.id)
-    retiming, _ = settings.effective("retime", production.id)
-    enlarged = [
-        store.add_job(
-            connection,
-            run_id,
-            "enlarge_shot",
-            {
-                "latents": _output(job_id, "latents"),
-                "key": _output(job_id, "key"),
-                "opening": opening,
-                "megapixels": config.FINISH_MEGAPIXELS,
-            },
-            label=f"shot {position + 1}: enlarge",
-            settings={"video": video, "continuity": continuity_data, "enlarge": enlarging.data()},
-        ).id
-        for position, (job_id, opening) in enumerate(zip(clip_jobs, opened, strict=True))
-    ]
-    finishing = {
-        **parts,
-        "chunks": [_output(job_id, "chunk") for job_id in enlarged],
-        "keys": [_output(job_id, "key") for job_id in enlarged],
-        "fps": config.FINISH_FPS,
-    }
-    finish = store.add_job(
-        connection,
-        run_id,
-        "finish",
-        {**finishing, "name": production.slug},
-        label=f"the chapter enlarged and at {config.FINISH_FPS} fps",
-        settings={"retime": retiming.data()},
-    )
-    assembling.add_master(connection, run_id, production, chapter, _output(finish.id, "video"), finishing, said, True)
     return run_id
 
 

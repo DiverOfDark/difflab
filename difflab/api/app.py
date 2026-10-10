@@ -593,6 +593,12 @@ def assemble_production(production_id: int, chapter: int | None = None) -> dict[
     return _runs(lambda: assembling.queue(production_id, chapter))
 
 
+@app.post("/api/productions/{production_id}/finish")
+def finish_production(production_id: int, chapter: int | None = None) -> dict[str, Any]:
+    """Chapter `chapter` (from 0), or every one and the film, enlarged to 4K and retimed from the clips it has."""
+    return _runs(lambda: assembling.finish(production_id, chapter))
+
+
 @app.get("/api/productions/{production_id}/assembled")
 def read_assembled(production_id: int) -> dict[str, Any]:
     """The Assemble page: each chapter's joins, dialogue and newest masters, and the film."""

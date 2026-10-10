@@ -620,6 +620,9 @@ export const renderProduction = (id: number, chapter: number | null) =>
 /** Joined, levelled and subtitled from the clips there are; every chapter also queues the film. Nothing renders. */
 export const assembleProduction = (id: number, chapter: number | null) =>
   json<{ run: string; runs: string[] }>(`/api/productions/${id}/assemble${chapterQuery(chapter)}`, post({}))
+/** Enlarged to 4K and retimed to 60 fps from the clips there are, after they are reviewed; every chapter also queues the film. */
+export const finishProduction = (id: number, chapter: number | null) =>
+  json<{ run: string; runs: string[] }>(`/api/productions/${id}/finish${chapterQuery(chapter)}`, post({}))
 export interface Mastered {
   video: string
   srt: string | null

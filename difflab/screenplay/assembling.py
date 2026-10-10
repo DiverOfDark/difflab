@@ -115,14 +115,17 @@ def add_film(connection: Any, production: store.Production, masters: list[tuple[
 
 
 def film_after(
-    connection: Any, production: store.Production, finished: dict[int, int], native: dict[int, int]
+    connection: Any, production: store.Production, finished: dict[int, int] | None, native: dict[int, int] | None
 ) -> str | None:
     """The film run over each chapter's master: the one just queued (chapter id: job id) or the newest made;
     None while a chapter has none. Finished chapters only once every chapter is finished, since the film's
-    streams are copied and a 24 fps chapter cannot follow a 60 fps one."""
+    streams are copied and a 24 fps chapter cannot follow a 60 fps one. A kind given as None is not tried:
+    a render's film is native, since the finished masters there are of the clips before it."""
     chapters = store.chapters_of(connection, production.id)
     done = _masters(connection, production.id)
     for queued, kind in ((finished, True), (native, False)):
+        if queued is None:
+            continue
         picked = [(c, queued.get(c.id) or done.get((c.id, kind))) for c in chapters]
         if all(job for _, job in picked):
             return add_film(connection, production, [(c, int(job or 0)) for c, job in picked])
@@ -154,12 +157,19 @@ def _present(path: Any) -> bool:
 
 
 def _finish_of(connection: Any, chapter: store.Chapter) -> store.Job | None:
+    # A finish queued by a render run before the two were split names its chapter only in the run's scope.
     found = [
         job
-        for job in _jobs(connection, chapter.production_id, "finish", f"chapter:{chapter.id}")
+        for job in _jobs(connection, chapter.production_id, "finish")
         if _present(job.outputs.get("video"))
+        and (job.inputs.get("chapter") == chapter.id or _scope(connection, job) == f"chapter:{chapter.id}")
     ]
     return found[-1] if found else None
+
+
+def _scope(connection: Any, job: store.Job) -> str:
+    row = connection.execute("SELECT scope FROM runs WHERE id = ?", (job.run_id,)).fetchone()
+    return str(row[0]) if row else ""
 
 
 def _shot_of_render(connection: Any, reference: Any) -> store.Shot | None:
@@ -241,6 +251,78 @@ def queue(production_id: int, chapter_position: int | None = None) -> list[str]:
         runs = [run_id]
         if chapter_position is None:
             film = film_after(connection, production, finished, native)
+            if film is not None:
+                runs.append(film)
+        return runs
+
+
+def finish(production_id: int, chapter_position: int | None = None) -> list[str]:
+    """Enlarge, retime and master one chapter or every one from the clips it has, kept apart from the render
+    so its clips are reviewed before an hour of ESRGAN and RIFE goes into them; the film when every chapter
+    is asked for."""
+    with store.connect() as connection, store.transaction(connection):
+        production = store.production(connection, production_id)
+        if production is None:
+            raise LookupError(f"no production {production_id}")
+        chapters = store.chapters_of(connection, production_id)
+        if chapter_position is not None and not 0 <= chapter_position < len(chapters):
+            raise LookupError(f"production {production_id} has {len(chapters)} chapter(s), not {chapter_position + 1}")
+        wanted = chapters if chapter_position is None else [chapters[chapter_position]]
+        rendered = {}
+        for chapter in wanted:
+            shots = store.shots_of(connection, chapter.id)
+            if not shots:
+                raise ValueError(f"{marker(chapter).lower()} has no shots")
+            try:
+                rendered[chapter.id] = (shots, [_rendered(connection, shot) for shot in shots])
+            except ValueError as problem:
+                raise ValueError(
+                    f"{marker(chapter).lower()}: {problem}" if len(chapters) > 1 else str(problem)
+                ) from None
+        enlarging, _ = settings.effective("restore", production.id)
+        retiming, _ = settings.effective("retime", production.id)
+        run_id = store.next_run_id(connection, datetime.now().strftime("%Y-%m-%d-%H%M%S"))
+        what = "the film" if chapter_position is None else marker(wanted[0]).lower()
+        store.add_run(
+            connection, run_id, title=f"{production.title} · finish {what}", spec={"production": production.id},
+            scope=f"finish:{production.id}", production_id=production.id,
+        )  # fmt: skip
+        finished: dict[int, int] = {}
+        for chapter in wanted:
+            shots, jobs = rendered[chapter.id]
+            # Each clip enlarged with the settings it was rendered with: they key the latents it decodes.
+            enlarged = [
+                store.add_job(
+                    connection, run_id, "enlarge_shot",
+                    {"latents": _output(job.id, "latents"), "key": _output(job.id, "key"),
+                     "opening": job.inputs.get("opening"), "megapixels": config.FINISH_MEGAPIXELS},
+                    label=f"{marker(chapter).lower()}, shot {shot.position + 1}: enlarge",
+                    settings={"video": job.settings["video"], "continuity": job.settings["continuity"],
+                              "enlarge": enlarging.data()},
+                ).id
+                for shot, job in zip(shots, jobs, strict=True)
+            ]  # fmt: skip
+            finishing = {
+                "chunks": [_output(job_id, "chunk") for job_id in enlarged],
+                "audios": [_output(job.id, "audio") for job in jobs],
+                "cuts": [_output(job.id, "cut") for job in jobs],
+                "keys": [_output(job_id, "key") for job_id in enlarged],
+                **joins(connection, production, shots),
+                "fps": config.FINISH_FPS,
+            }
+            made = store.add_job(
+                connection, run_id, "finish",
+                {**finishing, "name": _name(production, chapter, len(chapters)), "chapter": chapter.id},
+                label=f"{marker(chapter).lower()}: enlarged and at {config.FINISH_FPS} fps",
+                settings={"retime": retiming.data()},
+            )  # fmt: skip
+            finished[chapter.id] = add_master(
+                connection, run_id, production, chapter, _output(made.id, "video"), finishing,
+                [lines(shot) for shot in shots], finished=True,
+            )  # fmt: skip
+        runs = [run_id]
+        if chapter_position is None:
+            film = film_after(connection, production, finished, None)
             if film is not None:
                 runs.append(film)
         return runs

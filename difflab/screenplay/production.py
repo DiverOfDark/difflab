@@ -1477,7 +1477,7 @@ def listing() -> list[dict[str, Any]]:
             "shots": "running" if "plan" in live else _phase(planned) if shots else "pending",
             "render": "running" if "chapter" in live else _phase([clips]) if shots else "pending",
             "assemble": "running"
-            if live & {"assemble", "film"}
+            if live & {"assemble", "finish", "film"}
             else "done"
             if shots and counts["clips_done"] == shots and _mastered(production.id)
             else "pending",

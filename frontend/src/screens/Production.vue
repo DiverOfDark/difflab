@@ -5,6 +5,7 @@ import {
   addPhotos,
   approveBible,
   assembleProduction,
+  finishProduction,
   drawProductionLooks,
   planProduction,
   preflight,
@@ -320,7 +321,7 @@ const mastered = computed(
     ).length,
 )
 const assemblyRun = computed(() =>
-  production.value?.runs.find((r) => [`assemble:${production.value!.id}`, `film:${production.value!.id}`].includes(r.scope) && runLive(r.state)),
+  production.value?.runs.find((r) => [`assemble:${production.value!.id}`, `finish:${production.value!.id}`, `film:${production.value!.id}`].includes(r.scope) && runLive(r.state)),
 )
 const assembling = computed(() => !!assemblyRun.value || !!assembled.value?.busy)
 const watchable = computed(() =>
@@ -328,6 +329,7 @@ const watchable = computed(() =>
 )
 const target = computed(() => chapter.value ?? (production.value?.chapters.length === 1 ? 0 : null))
 const assemble = () => act('assemble', () => assembleProduction(props.id!, chapter.value))
+const finish = () => act('finish', () => finishProduction(props.id!, chapter.value))
 const canPreview = computed(() => {
   const at = target.value
   const found = at === null ? null : assembled.value?.chapters.find((c) => c.position === at)
@@ -398,7 +400,7 @@ const approve = () =>
     if (left.length) notice.value = { text: `Approved what was made. Not approved: ${left.join('; ')}.`, unchanged: false, run: null }
   })
 const ing = (name: string, label: string) => (busy.value === name ? 'queueing…' : label)
-const actions = computed<{ secondary: Action; primary: Action } | null>(() => {
+const actions = computed<{ extra?: Action; secondary: Action; primary: Action } | null>(() => {
   const p = production.value
   if (!p || editing.value) return null
   const idle = !!busy.value
@@ -455,6 +457,12 @@ const actions = computed<{ secondary: Action; primary: Action } | null>(() => {
           run: () => (previewing.value = target.value ?? -1),
           disabled: !canPreview.value,
           title: target.value === null ? 'the full film, with its subtitles' : 'the chapter, with its subtitles',
+        },
+        extra: {
+          label: ing('finish', target.value === null ? 'Finish film' : `Finish chapter ${pad(target.value + 1, 2)}`),
+          run: finish,
+          disabled: idle || !shots.value.length || assembling.value,
+          title: 'enlarged to 4K and retimed to 60 fps from the clips there are: review the native render first',
         },
         primary: {
           label: assembling.value ? 'Assembling…' : ing('assemble', target.value === null ? 'Assemble film' : `Assemble chapter ${pad(target.value + 1, 2)}`),
@@ -615,6 +623,7 @@ onUnmounted(() => (state.heading = ''))
               · <RouterLink :to="`/runs/${watchable.id}`">watch run</RouterLink></template
             ></span
           >
+          <button v-if="actions.extra" :disabled="actions.extra.disabled" :title="actions.extra.title" @click="actions.extra.run">{{ actions.extra.label }}</button>
           <button :disabled="actions.secondary.disabled" :title="actions.secondary.title" @click="actions.secondary.run">{{ actions.secondary.label }}</button>
           <button class="primary" :disabled="actions.primary.disabled" :title="actions.primary.title" @click="actions.primary.run">{{ actions.primary.label }}</button>
           <input ref="picker" type="file" accept="image/*" multiple hidden @change="addReferences" />
