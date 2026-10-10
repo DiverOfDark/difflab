@@ -13,25 +13,36 @@ from typing import Any
 from difflab import prompts
 from difflab.core import models
 from difflab.core.cache import cache as default_cache
-from difflab.core.hub import HubFile
+from difflab.core.hub import HubFile, parse_file
 from difflab.core.imaging import megapixel_size, resize_to
 from difflab.core.keys import key
 from difflab.core.settings import EditSettings
 from difflab.core.types import Frame
 from difflab.models.qwen_edit import Editor
+from difflab.models.qwen_image21 import Editor21
 
 VAE_REFERENCE_AREA = 1024 * 1024
 """The pixel area QwenImageEditPlus encodes every input at for its VAE reference latents. Not a knob:
 a fact about the pipeline, which `vae_reference_size` exists only to agree with."""
 
 
-def spec(checkpoint: str) -> models.ModelSpec:
-    """One registry entry per AIO file, so two checkpoints never share a slot."""
-    weights = HubFile.parse(checkpoint)
+def spec(settings: EditSettings) -> models.ModelSpec:
+    """One registry entry per model file and LoRA stack, so two never share a slot."""
+    if settings.engine == "qwen-image-2.1":
+        weights, text_encoder = HubFile.parse(settings.model_21), HubFile.parse(settings.text_encoder_21)
+        loras = [(parse_file(ref), strength) for ref, strength in settings.loras_21()]
+        stack = ",".join(f"{lora.filename}*{strength:g}" for lora, strength in loras)
+        return models.ModelSpec(
+            name=f"qwen_image21:{weights.filename}:{text_encoder.filename}:{stack}",
+            build=lambda: Editor21(weights, text_encoder, loras),
+            checkpoints=(weights.path, text_encoder.path),
+            unload=lambda editor: editor.unload(),
+        )
+    aio = HubFile.parse(settings.checkpoint)
     return models.ModelSpec(
-        name=f"qwen_edit:{weights.filename}",
-        build=lambda: Editor(weights),
-        checkpoints=(weights.path,),
+        name=f"qwen_edit:{aio.filename}",
+        build=lambda: Editor(aio),
+        checkpoints=(aio.path,),
         unload=lambda editor: editor.unload(),
     )
 
@@ -54,7 +65,7 @@ def edit(
     target = size or megapixel_size(frame.width, frame.height, settings.megapixels)
 
     def produce() -> Frame:
-        model: Any = models.registry.acquire(spec(settings.checkpoint))
+        model: Any = models.registry.acquire(spec(settings))
         resized = resize_to(frame.pil(), target)
         edited = model.edit(
             resized,
@@ -64,6 +75,7 @@ def edit(
             cfg=settings.cfg,
             seed=settings.seed,
             donors=[donor.pil() for donor in donors],
+            **({"turbo": settings.turbo} if settings.engine == "qwen-image-2.1" else {}),
         )
         return Frame.from_pil(edited, origin=f"edited({frame.origin})" if frame.origin else "edited")
 

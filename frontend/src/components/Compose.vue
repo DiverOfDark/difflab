@@ -123,9 +123,29 @@ const groups = computed(() => {
     })
   if (shows('edit'))
     out.push({
-      title: 'Qwen Image Edit',
-      meta: `${j.edit.steps} steps · seed ${j.edit.seed}`,
+      title: j.edit.engine === 'qwen-image-2.1' ? 'Qwen-Image 2.1 · experimental' : 'Qwen Image Edit',
+      meta: `${j.edit.engine === 'qwen-image-2.1' && j.edit.turbo ? 8 : j.edit.steps} steps · seed ${j.edit.seed}`,
       rows: [
+        {
+          key: 'engine',
+          hint: 'Qwen-Image 2.1 draws with its own model and the LoRAs set on the Settings page.',
+          get: () => j.edit.engine ?? 'qwen-image-edit',
+          set: (v) => (j.edit.engine = v),
+          options: [
+            ['qwen-image-edit', 'qwen-image-edit · the AIO'],
+            ['qwen-image-2.1', 'qwen-image-2.1 · experimental'],
+          ],
+        },
+        {
+          key: 'turbo',
+          hint: "Qwen-Image 2.1 on the Turbo's own 8 steps; off for the base model, which takes steps and cfg.",
+          get: () => String(j.edit.turbo ?? true),
+          set: (v) => (j.edit.turbo = v === 'true'),
+          options: [
+            ['true', 'on · 8 steps'],
+            ['false', 'off · steps below'],
+          ],
+        },
         {
           key: 'steps',
           hint: 'The all-in-one is distilled; eight is the whole of it.',

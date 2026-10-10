@@ -86,7 +86,7 @@ def run_write_video_prompt(inputs: dict[str, Any], settings: dict[str, Any]) -> 
 def run_edit_image(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
     chosen = EditSettings(**settings)
     made = edit_image.edit(_frame(inputs["photo"]), str(inputs["instruction"]), chosen)
-    png = media.save(made, HubFile.parse(chosen.checkpoint).path.stem, chosen.seed, announce=False)
+    png = media.save(made, chosen.model_stem, chosen.seed, announce=False)
     return {"image": store.relative(png)}
 
 

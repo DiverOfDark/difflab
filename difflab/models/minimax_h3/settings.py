@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from difflab.core.settings import Settings, VlmSettings, setting
+from difflab.core.settings import Settings, VlmSettings, lora_stack, setting
 
 # How a ref2va reference is sized, as `pipeline.reference_size` reads it.
 ReferenceSize = Literal["match", "max"]
@@ -117,12 +117,7 @@ class VideoSettings(Settings):
 
     def stack(self) -> list[tuple[str, float]]:
         """`loras` as (reference, strength), without the ones at strength 0."""
-        out = []
-        for line in self.loras.splitlines():
-            reference, _, strength = line.strip().partition("*")
-            if reference and (value := float(strength or 1.0)) != 0.0:
-                out.append((reference.strip(), value))
-        return out
+        return lora_stack(self.loras)
 
     def key_part(self) -> dict[str, Any]:
         # As pairs, so a line's spacing or a LoRA at strength 0 does not move a clip's key.

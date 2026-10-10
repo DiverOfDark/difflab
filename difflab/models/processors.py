@@ -7,7 +7,7 @@ ever passed here, so this subclass accepts `video_processor=None`.
 
 from typing import Any
 
-from transformers import ProcessorMixin, Qwen2VLProcessor
+from transformers import ProcessorMixin, Qwen2VLProcessor, Qwen3VLProcessor
 
 
 class _AcceptNoVideo(ProcessorMixin):
@@ -19,3 +19,7 @@ class _AcceptNoVideo(ProcessorMixin):
 
 class ImageOnlyQwen2VLProcessor(_AcceptNoVideo, Qwen2VLProcessor):
     """Editor text encoder (Qwen2.5-VL) processor."""
+
+
+class ImageOnlyQwen3VLProcessor(_AcceptNoVideo, Qwen3VLProcessor):
+    """Qwen-Image 2.1 text encoder (Qwen3-VL) processor."""

@@ -25,6 +25,9 @@ import { state } from '../store'
 const ROLES: Record<string, string> = {
   vlm: 'VLM',
   editor: 'Image editor',
+  'editor-21': 'Qwen-Image 2.1',
+  'editor-21-loras': 'Qwen-Image 2.1 LoRAs',
+  'editor-21-text-encoder': 'Qwen-Image 2.1 text encoder',
   'video-model': 'Video model',
   'video-loras': 'LoRAs',
   'video-text-encoder': 'Video text encoder',
@@ -39,6 +42,9 @@ const ROLES: Record<string, string> = {
 const ROLE_NOTES: Record<string, string> = {
   vlm: 'every question, prompt and plan, and the judge; loaded as published if it is already 4-bit, quantized to 4-bit as it loads if it is not quantized',
   editor: 'edits photos and draws keyframes',
+  'editor-21': 'the experimental engine: draws in its place when the engine is set to qwen-image-2.1',
+  'editor-21-loras': 'stacked on Qwen-Image 2.1 in order; strength 0 turns one off without removing it',
+  'editor-21-text-encoder': 'reads the instruction and the photos for Qwen-Image 2.1',
   'video-model': 'samples every clip',
   'video-loras': 'stacked on the video model in order; a video model without a turbo fused in needs a turbo LoRA first; strength 0 turns one off without removing it',
   'video-text-encoder': 'reads the caption for the video model',

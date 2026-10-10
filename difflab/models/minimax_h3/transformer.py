@@ -29,7 +29,7 @@ from torch import nn
 from difflab import config as app_config
 from difflab.core import ui
 from difflab.core.hub import HubFile, ModelFile
-from difflab.models import offload
+from difflab.models import lora, offload
 from difflab.models.convrot import ConvRotLinear, stack_lora
 from difflab.models.minimax_h3 import config, weights
 from difflab.models.minimax_h3.attention import use_int8_attention
@@ -146,21 +146,7 @@ class CurveAdaLayerNormOut(nn.Module):
         return modulated + shift[rows].unsqueeze(0).to(normed.dtype)
 
 
-@dataclass
-class LoraWeights:
-    """`W_eff = W + B @ A`, keyed by module path in the checkpoint's naming or diffusers'."""
-
-    pairs: dict[str, tuple[torch.Tensor, torch.Tensor]]
-    scales: dict[str, float]
-
-    @property
-    def has_adaln(self) -> bool:
-        return any("adaln" in module or module.startswith("norm_out.") for module in self.pairs)
-
-
 _PREFIXES = ("diffusion_model.", "transformer.", "base_model.model.")
-_DOWN = (".lora_A.weight", ".lora_A.default.weight", ".lora_down.weight", ".lora_down")
-_UP = (".lora_B.weight", ".lora_B.default.weight", ".lora_up.weight", ".lora_up")
 _KOHYA_LEAVES = {
     "attn_qkv_proj": "attn.qkv_proj",
     "attn_out_proj": "attn.out_proj",
@@ -181,31 +167,21 @@ def _module_name(name: str) -> str:
     return name
 
 
-def load_lora(path: str | Path) -> LoraWeights:
+def load_lora(path: str | Path) -> lora.LoraWeights:
     """Every naming H3 LoRAs ship in: Comfy's, kohya's underscores, PEFT's `.default`, diffusers' paths."""
-    down: dict[str, torch.Tensor] = {}
-    up: dict[str, torch.Tensor] = {}
-    alphas: dict[str, float] = {}
-    with safe_open(str(path), framework="pt", device="cpu") as f:
-        for key in list(f.keys()):  # safe_open is not a mapping
-            if suffix := next((s for s in _DOWN if key.endswith(s)), None):
-                down[_module_name(key.removesuffix(suffix))] = f.get_tensor(key)
-            elif suffix := next((s for s in _UP if key.endswith(s)), None):
-                up[_module_name(key.removesuffix(suffix))] = f.get_tensor(key)
-            elif key.endswith(".alpha"):
-                alphas[_module_name(key.removesuffix(".alpha"))] = float(f.get_tensor(key).item())
-    pairs = {module: (down[module], up[module]) for module in sorted(down.keys() & up.keys())}
-    # Per module: alpha / rank, or 1.0 when the file has no alphas (alpha == rank, as in the v4 LoRA).
-    scales = {module: alphas.get(module, pair[0].shape[0]) / pair[0].shape[0] for module, pair in pairs.items()}
-    return LoraWeights(pairs=pairs, scales=scales)
+    return lora.read(path, _module_name)
 
 
-def apply_lora(model: MiniMaxH3Transformer3DModel, lora: LoraWeights, strength: float = 1.0) -> int:
+def has_adaln(adapter: lora.LoraWeights) -> bool:
+    return any("adaln" in module or module.startswith("norm_out.") for module in adapter.pairs)
+
+
+def apply_lora(model: MiniMaxH3Transformer3DModel, adapter: lora.LoraWeights, strength: float = 1.0) -> int:
     """The base conversion split the fused `qkv_proj` into `to_q/to_k/to_v` and swapped the two halves
     of `mlp.fc1`; a checkpoint-named LoRA's `B` has to follow both, while `A` is shared. A diffusers-named
     one is already in that layout."""
     applied = 0
-    for module, (a, b) in lora.pairs.items():
+    for module, (a, b) in adapter.pairs.items():
         target = _lora_target(module)
         if target is None:
             continue
@@ -214,18 +190,18 @@ def apply_lora(model: MiniMaxH3Transformer3DModel, lora: LoraWeights, strength: 
             owner = model.get_submodule(path)
         except AttributeError:
             continue
-        scale = lora.scales[module] * strength
+        scale = adapter.scales[module] * strength
         if scale != 1.0:
             b = (b.float() * scale).to(b.dtype)
         if kind == "qkv":
             for name, part in zip(("to_q", "to_k", "to_v"), b.chunk(3, dim=0), strict=True):
-                _add_lora(model.get_submodule(f"{path}.{name}"), a, part.contiguous())
+                lora.attach(model.get_submodule(f"{path}.{name}"), a, part.contiguous())
                 applied += 1
             continue
         if kind == "ff":
             gate, value = b.chunk(2, dim=0)
             b = torch.cat([value, gate], dim=0).contiguous()
-        _add_lora(owner, a, b)
+        lora.attach(owner, a, b)
         applied += 1
     return applied
 
@@ -254,23 +230,6 @@ def _lora_target(module: str) -> tuple[str, str] | None:
         "adaln_proj.linear": (f"{prefix}.adaln_proj", "adaln"),
     }
     return mapping.get(rest)
-
-
-def _add_lora(module: nn.Module, a: torch.Tensor, b: torch.Tensor) -> None:
-    """int8 layers keep the LoRA in activation space; bf16 layers merge it.
-
-    Merging into int8 would round most of the delta away, which is why ComfyUI bypasses there — but
-    the token refiner is plain bf16, where the delta sits far above the ULP and merging is exact enough.
-    """
-    adder = getattr(module, "add_lora", None)
-    if adder is not None:
-        adder(a, b)
-        return
-    if isinstance(module, nn.Linear):
-        delta = b.to(torch.float32) @ a.to(torch.float32)
-        module.weight.data = (module.weight.data.float() + delta).to(module.weight.dtype)
-        return
-    raise TypeError(f"{type(module).__name__} cannot take a LoRA")
 
 
 def load(
@@ -310,13 +269,13 @@ def load(
 
         sites = []
         for lora_file, strength in lora_files:
-            lora = load_lora(lora_file)
-            if lora.has_adaln and silu_grid is None:
+            adapter = load_lora(lora_file)
+            if has_adaln(adapter) and silu_grid is None:
                 raise FileNotFoundError(
                     f"{lora_file.name} carries AdaLN pairs in the unpruned 2688-dim space, which this pruned "
                     f"checkpoint does not have. They are injected from {grid_file}, which is missing."
                 )
-            applied = apply_lora(model, lora, strength)
+            applied = apply_lora(model, adapter, strength)
             if not applied:
                 raise ValueError(f"{lora_file.name} matches no layer of the H3 DiT: a LoRA for another model?")
             sites.append(f"{lora_file.stem} {applied}")

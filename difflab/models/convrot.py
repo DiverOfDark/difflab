@@ -24,6 +24,20 @@ GROUP = 256
 _H4 = [[1.0, 1, 1, -1], [1, 1, -1, 1], [1, -1, 1, 1], [-1, 1, 1, 1]]
 
 
+def dequantize(weight: torch.Tensor, scale: torch.Tensor, rows: int = 16384) -> torch.Tensor:
+    """The bf16 matrix behind a ConvRot layer, for one that is looked up rather than multiplied (an embedding)."""
+    h4 = torch.tensor(_H4)
+    h = h4
+    for _ in range(3):
+        h = torch.kron(h, h4)
+    h /= 16
+    out = torch.empty(weight.shape, dtype=torch.bfloat16)
+    for start in range(0, weight.shape[0], rows):  # a 150k-row vocab in fp32 at once is 2.5 GB
+        part = weight[start : start + rows].float() * scale[start : start + rows].float().reshape(-1, 1)
+        out[start : start + rows] = (part.view(part.shape[0], -1, GROUP) @ h).view(part.shape).to(torch.bfloat16)
+    return out
+
+
 def read_quant_meta(blob: torch.Tensor) -> dict[str, object]:
     meta: dict[str, object] = json.loads(bytes(blob.tolist()).decode())
     return meta

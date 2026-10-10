@@ -16,6 +16,7 @@ import dataclasses
 import random
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Any, Literal, Self, get_args, get_origin, get_type_hints
 
 
@@ -51,6 +52,16 @@ def setting(
             "multiple": multiple,
         },
     )
+
+
+def lora_stack(text: str) -> list[tuple[str, float]]:
+    """A `multiple` field's lines as (reference, strength), without the ones at strength 0."""
+    out = []
+    for line in text.splitlines():
+        reference, _, strength = line.strip().partition("*")
+        if reference and (value := float(strength or 1.0)) != 0.0:
+            out.append((reference.strip(), value))
+    return out
 
 
 @dataclass(frozen=True)
@@ -220,6 +231,58 @@ class EditSettings(Settings):
     megapixels: float = setting(
         2.0, "size", "the picture is resized to this many pixels before editing", unit="MP", low=0.25, high=4
     )
+    engine: Literal["qwen-image-edit", "qwen-image-2.1"] = setting(
+        "qwen-image-edit",
+        "engine",
+        "qwen-image-2.1 is experimental: its own model, text encoder and LoRAs below; the AIO model is unused",
+    )
+    # Qwen's 8-step Turbo as Comfy-Org repacked it. The base model is
+    # "diffusion_models/qwen_image_2.1_int8_convrot.safetensors" in the same repo, with `turbo` off.
+    model_21: str = setting(
+        "Comfy-Org/Qwen-Image-2.1@df94239739eef7205973a145ffa6f441f7b64e84"
+        ":diffusion_models/qwen_image_2.1_turbo_int8_convrot.safetensors",
+        "model",
+        "the int8 ConvRot Qwen-Image 2.1 transformer: repo@commit:path",
+        role="editor-21",
+    )
+    text_encoder_21: str = setting(
+        "Comfy-Org/Qwen-Image-2.1@df94239739eef7205973a145ffa6f441f7b64e84"
+        ":text_encoders/qwen3vl_8b_int8_convrot.safetensors",
+        "text encoder",
+        "the int8 ConvRot Qwen3-VL 8B: repo@commit:path",
+        advanced=True,
+        role="editor-21-text-encoder",
+    )
+    loras: str = setting(
+        "",
+        "LoRAs",
+        "stacked on the Qwen-Image 2.1 model in order, as reference*strength",
+        role="editor-21-loras",
+        multiple=True,
+    )
+    # The sigmas are Qwen-Image-2.1-Turbo's `sample_sigmas`, the only schedule Qwen evaluated it on.
+    turbo: bool = setting(
+        True, "turbo", "Qwen-Image 2.1 on the Turbo's own 8 sigmas, and steps is unused; off for the base model"
+    )
+
+    @property
+    def model_stem(self) -> str:
+        return Path(self.model_21 if self.engine == "qwen-image-2.1" else self.checkpoint).stem
+
+    def loras_21(self) -> list[tuple[str, float]]:
+        return lora_stack(self.loras)
+
+    def key_part(self) -> dict[str, Any]:
+        # The AIO engine keys as it did before the 2.1 fields existed, so nothing it drew is drawn again.
+        part = super().key_part()
+        mine = ("engine", "model_21", "text_encoder_21", "loras", "turbo")
+        if self.engine == "qwen-image-edit":
+            return {name: value for name, value in part.items() if name not in mine}
+        part.pop("checkpoint")
+        part["loras"] = self.loras_21()
+        if self.turbo:
+            part.pop("steps")
+        return part
 
 
 @dataclass(frozen=True)
