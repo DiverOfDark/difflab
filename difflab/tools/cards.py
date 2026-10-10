@@ -7,6 +7,7 @@ from typing import Any
 
 from difflab.core import ui
 from difflab.core.types import Frame
+from difflab.models.exl3vl import ANY_JSON
 from difflab.models.minimax_h3 import caption
 from difflab.screenplay import compiler as compose
 from difflab.screenplay import config as h3
@@ -64,6 +65,31 @@ def _trait_problems(member: str, traits: Any) -> list[caption.Problem]:
         if not all(isinstance(trait.get(field), str) and trait[field].strip() for field in ("phrase", "short", "name")):
             out.append(direct.problem(f'{member}: every trait has "part", "phrase", "short" and "name"'))
     return out
+
+
+# Keys pinned: under ANY_JSON's forced ": " the prompt's minified `"traits":[{` is a sequence the model never
+# gets to write, and production 13's man came back as `{"traits [{": "part", ...}` on every seed.
+_TEXT = {"type": "string"}
+TIDY_SCHEMA = {
+    **ANY_JSON,
+    "type": "object",
+    "properties": {
+        "traits": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"part": {"enum": list(h3.DIRECTOR_TRAIT_ORDER)}, "phrase": _TEXT, "short": _TEXT,
+                               "name": _TEXT},
+                "required": ["part", "phrase", "short", "name"],
+                "additionalProperties": False,
+            },
+        },
+        "lights": {"type": "array", "items": _TEXT},
+        "conflicts": {"type": "array", "items": _TEXT},
+    },
+    "required": ["traits", "lights", "conflicts"],
+    "additionalProperties": False,
+}  # fmt: skip
 
 
 # --- writing: text only from here on ----------------------------------------------------------------------------
@@ -185,7 +211,9 @@ def merge(
                 out.append(direct.problem('list every light source in "lights"'))
             return out
 
-        data = direct.ask_json(words.TIDY_SYSTEM, question, [], gate, f"card · {member.id}", h3.DIRECTOR_TOKENS["tidy"])
+        data = direct.ask_json(
+            words.TIDY_SYSTEM, question, [], gate, f"card · {member.id}", h3.DIRECTOR_TOKENS["tidy"], schema=TIDY_SCHEMA
+        )
         lights = tuple(str(x) for x in data.get("lights", [])) if member.kind == "environment" else ()
         conflicts[member.id] = [str(conflict) for conflict in data.get("conflicts", [])]
         for conflict in conflicts[member.id]:
