@@ -174,6 +174,8 @@ class Take:
     tails: tuple[bool, ...] = ()  # per chunk, whether it carries the one before's tail; empty is `tail` after the first
     lands: tuple[bool, ...] = ()  # per chunk, whether it ends on the next one's keyframe
     unframed: tuple[bool, ...] = ()  # per chunk, whether it opens on no picture, from its references alone
+    scenes: tuple[bool, ...] = ()  # per chunk, whether it may hold the chapter's opening still (`scened`)
+    scene_rows: int = 0  # reference rows the opening still costs, at the canvas size
     voices: dict[str, str] = dataclasses.field(default_factory=dict)  # member -> how it sounds, from the bible
     look: str = ""  # the style members' words: the grade and lens every shot keeps
 
@@ -237,13 +239,36 @@ def place(take: Take, chunk: Chunk) -> str:
     return next(m for m in chunk.cast if take.cards[m].kind == "environment")
 
 
-KEYFRAMES = ("opening", "handoff", "closing")  # a Presentation's keys that are frames of the clip, not crops
+KEYFRAMES = ("opening", "handoff", "closing", "scene")  # a Presentation's keys that are frames, not crops
 
 
 def carried(take: Take, index: int) -> bool:
     if take.chunks and take.chunks[index].cut:
         return False  # a cut opens on its own keyframe: the clip before's motion stops there
     return take.tails[index] if take.tails else take.tail and index > 0
+
+
+def scenes(keyframes: list[store.Keyframe], shots: list[store.Shot]) -> tuple[bool, ...]:
+    """Per shot, whether it opens on the shot before's handoff frame while the chapter opens on a clean still."""
+    clean = bool(keyframes) and keyframes[0].source in (store.COMPOSED, store.PROVIDED)
+    return tuple(
+        clean and index > 0 and keyframe.source == store.CHAINED and not shot.plan.get("cut")
+        for index, (keyframe, shot) in enumerate(zip(keyframes, shots, strict=True))
+    )
+
+
+def scened(take: Take, index: int) -> bool:
+    """A chained chunk holds the chapter's opening still, the one clean picture of the scene as it is lit,
+    since its own first frame is the chunk before's last, softer and drifted at every join: production 13's chain
+    lost 80% of its Laplacian variance over four shots, and got it back only where a clean look picture
+    joined the references. Never where the still would bring back someone off screen, another place, or the
+    look someone in it has since changed out of."""
+    if not (take.scenes and take.scenes[index]):
+        return False
+    chunk, first = take.chunks[index], take.chunks[0]
+    shown = {m for m in PLACEHOLDER.findall(take.opening) if m in take.cards and take.cards[m].kind in LIVING}
+    changed = any(state.before or state.after for m, state in chunk.states.items() if m in shown)
+    return place(take, chunk) == place(take, first) and shown <= set(chunk.cast) and not changed
 
 
 def lands(take: Take, index: int) -> bool:
@@ -293,6 +318,7 @@ def references(take: Take, index: int) -> tuple[str, ...]:
     shows it: every other picture of it shows the bible's look. The room's picture stays.
     """
     chunk = take.chunks[index]
+    budget = take.budget - (take.scene_rows if scened(take, index) else 0)
     on = set(chunk.cast)
     looked = {m: now.picture for m, now in chunk.states.items() if now.picture and m in on}
 
@@ -348,7 +374,7 @@ def references(take: Take, index: int) -> tuple[str, ...]:
             chosen.append(own[0])
     rows = sum(ref.rows for ref in chosen)
     for ref in ranked:
-        if ref not in chosen and rows + ref.rows <= take.budget and not spent(ref, chosen):
+        if ref not in chosen and rows + ref.rows <= budget and not spent(ref, chosen):
             chosen.append(ref)
             rows += ref.rows
     return tuple(key for key, ref in take.refs.items() if ref in chosen)
@@ -493,7 +519,8 @@ def compile_chunk(take: Take, index: int) -> Compiled:
     landing = lands(take, index)
     framed = not unframed(take, index)
     first = ("opening" if index == 0 else "handoff",) if framed else ()
-    shown = Presentation((*first, *(("closing",) if landing else ()), *refs), tail)
+    scene = ("scene",) if scened(take, index) else ()
+    shown = Presentation((*first, *(("closing",) if landing else ()), *scene, *refs), tail)
     cast = [m for m in take.members if m in chunk.cast]
     subject = {m: f"<Subject {i + 1}>" for i, m in enumerate(cast)}
     speakers = {line.who: f"S{i + 1}" for i, line in enumerate(chunk.dialogue)}
@@ -527,6 +554,8 @@ def compile_chunk(take: Take, index: int) -> Compiled:
         )
     if landing:
         definitions.append(say["last_frame"].format(arrangement=_lower(_sentence(labels_only(chunk.closing, False)))))
+    if scene:
+        definitions.append(say["scene_frame"].format(picture=shown.picture("scene")))
     if tail:
         definitions += [say["video"], say["audio"]]
 
@@ -553,6 +582,7 @@ def compile_chunk(take: Take, index: int) -> Compiled:
         for m in cast
     ]
     retention += ([say["retain_frame"]] if framed else []) + ([say["retain_last"]] if landing else [])
+    retention += [say["retain_scene"].format(picture=shown.picture("scene"))] if scene else []
     moving = index > 0 and any(beat.phase == "carry" for beat in take.chunks[index - 1].beats[-1:])
     retention += [say["retain_video_moving" if moving else "retain_video"], say["retain_audio"]] if tail else []
 
@@ -837,6 +867,7 @@ def take_of(connection: sqlite3.Connection, production: store.Production, chapte
     planned = {**manifest, **manifest.get("chapter_plans", {}).get(str(chapter.id), {})}
     shots = store.shots_of(connection, chapter.id)
     tail = bool(manifest.get("tail", True))
+    canvas = manifest.get("canvas") or {}
     keyframes = [store.keyframe_of(connection, shot.id) for shot in shots]
     tails, landed = joins(keyframes, shots, tail)
     first = keyframes[0].provided if keyframes else None
@@ -868,6 +899,8 @@ def take_of(connection: sqlite3.Connection, production: store.Production, chapte
         tails=tails,
         lands=landed,
         unframed=tuple(keyframe.source == store.REFS for keyframe in keyframes),
+        scenes=scenes(keyframes, shots),
+        scene_rows=(int(canvas.get("width", 0)) // 32) * (int(canvas.get("height", 0)) // 32),
         voices={member.slug: said for member in members if (said := voice_of(member))},
         look=look_of(connection, production.id),
     )

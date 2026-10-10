@@ -420,7 +420,7 @@ class Continuity(Settings):
     # take still drifts, and prefer a half to a whole, because the light in a scene is allowed to change
     # and a full match argues with it every time it does.
     color_anchor: float = setting(
-        0.0,
+        0.5,
         "colour anchor",
         "each handoff frame pulled toward the take's opening colour: 0.5 closes half the gap, 1 matches",
         low=0,

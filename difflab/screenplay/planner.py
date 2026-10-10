@@ -22,6 +22,7 @@ from difflab.screenplay import config as knobs
 from difflab.screenplay import production as productions
 
 _LAST_FRAME = words.SENTENCES["last_frame"].split(":")[0]
+_SCENE = words.SENTENCES["scene_frame"].split(":")[0].removeprefix("{picture} ")
 
 
 def check(
@@ -159,9 +160,12 @@ def _queue_chapter(connection: Any, chapter_id: int, asked_by: str, keyframes_on
     # A prompt compiled before its shot's join changed - a landing added, one turned off - says the
     # wrong pictures; the compiler's own are brought up to date here, a hand-written one is `check`'s.
     _, lands = compiler.joins([store.keyframe_of(connection, shot.id) for shot in shots], shots, True)
+    take = compiler.take_of(connection, production, chapter)
     for shot, landing in zip(shots, lands, strict=True):
         prompt = store.prompt_of(connection, shot.id)
-        if shot.plan.get("beats") and not prompt.pinned and landing != (_LAST_FRAME in prompt.text):
+        scene = compiler.scened(take, shot.position)
+        moved = landing != (_LAST_FRAME in prompt.text) or scene != (_SCENE in prompt.text)
+        if shot.plan.get("beats") and not prompt.pinned and moved:
             productions.recompile(connection, production, chapter, shot.id)
     shots = store.shots_of(connection, chapter_id)
     problems = check(connection, shots, production, keyframes_only)
@@ -289,7 +293,11 @@ def _queue_chapter(connection: Any, chapter_id: int, asked_by: str, keyframes_on
             "seconds": shot.seconds,
             "position": shot.position,
             "count": len(shots),
-            "references": list(prompt.pictures),
+            # The opening still rides ahead of the crops, where the compiler numbered it.
+            "references": [
+                *([openings[0]] if _SCENE in prompt.text and openings[0] is not None else []),
+                *prompt.pictures,
+            ],
             "source": shot.plan.get("source"),
         }
         job = store.add_job(
