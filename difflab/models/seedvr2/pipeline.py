@@ -26,7 +26,7 @@ ALIGN = 16  # the VAE's 8x times the DiT's 2x patch
 
 @dataclass
 class Restorer:
-    """Kept off the card between its phases: at 1080p the VAE alone peaks near 15 GB of the 24."""
+    """Kept off the card between its phases: at 1080p the VAE alone peaks at 21.5 GiB of the 24."""
 
     dit: NaDiT
     text: torch.Tensor  # the checkpoint's positive conditioning; at cfg 1 the negative is never read
@@ -72,7 +72,7 @@ def load_vae(path: Path, device: str = config.DEVICE) -> VideoVAE:
         vae = VideoVAE()
         vae.load_state_dict(load_file(str(path)))
         detail("8x spatial, 4x temporal, 16 channels")
-    return vae.to(device, DTYPE).eval().requires_grad_(False)
+    return vae.to(device, torch.float16).channels_last().eval().requires_grad_(False)
 
 
 def _padded(frames: torch.Tensor) -> torch.Tensor:

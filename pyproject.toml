@@ -7,7 +7,7 @@ requires-python = ">=3.13"
 dependencies = [
     "accelerate>=1.15.0",
     "av>=18.1.0",
-    "comfy-kitchen>=0.2.34",
+    "comfy-kitchen>=0.2.37",
     "diffusers>=0.40.0",
     "einops>=0.8.2",
     "exllamav3>=1.5.3",
@@ -64,7 +64,7 @@ packaging = "*"
 # per block, bit-identical output). toolchain.sh reads the card's architecture from nvidia-smi, and the
 # wheel cache does not key on it: after changing card, `pixi clean && pixi install`.
 [tool.pixi.pypi-dependencies]
-comfy-kitchen = { git = "https://github.com/Comfy-Org/comfy-kitchen", tag = "v0.2.34" }
+comfy-kitchen = { git = "https://github.com/Comfy-Org/comfy-kitchen", tag = "v0.2.37" }
 # Qwen-Image 2.1 is not in a release: QwenImage21Pipeline, its transformer and its VAE exist only on
 # main, and 0.41 is unreleased. Pinned to a commit like every checkpoint is, because "main" is not a
 # version - and because H3 and Qwen-Image-Edit ride on this and their key mappings were established

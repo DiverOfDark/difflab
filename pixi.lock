@@ -104,7 +104,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/sysroot_linux-64-2.28-h4ee821c_9.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/tzdata-2026c-h151e31d_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/wheel-0.48.0-pyhd8ed1ab_0.conda
-      - pypi: git+https://github.com/Comfy-Org/comfy-kitchen?tag=v0.2.34#e5e0d020e2add85f50466bb79171bc04ef7492b6
+      - pypi: git+https://github.com/Comfy-Org/comfy-kitchen?tag=v0.2.37#be003b7c23c5b01328657955b8bc5d3f073d868e
       - pypi: git+https://github.com/huggingface/diffusers?rev=8b3c707ebd3ec4881f4190cf42931da07eaf3b65#8b3c707ebd3ec4881f4190cf42931da07eaf3b65
       - pypi: git+https://github.com/turboderp-org/exllamav3?tag=v1.5.3#d3739fd393337b1ff4d6c2a342b12f0c87a9592f
       - pypi: https://files.pythonhosted.org/packages/04/4b/29cac41a4d98d144bf5f6d33995617b185d14b22401f75ca86f384e87ff1/h11-0.16.0-py3-none-any.whl
@@ -285,7 +285,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/sysroot_linux-64-2.28-h4ee821c_9.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/tzdata-2026c-h151e31d_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/wheel-0.48.0-pyhd8ed1ab_0.conda
-      - pypi: git+https://github.com/Comfy-Org/comfy-kitchen?tag=v0.2.34#e5e0d020e2add85f50466bb79171bc04ef7492b6
+      - pypi: git+https://github.com/Comfy-Org/comfy-kitchen?tag=v0.2.37#be003b7c23c5b01328657955b8bc5d3f073d868e
       - pypi: git+https://github.com/huggingface/diffusers?rev=8b3c707ebd3ec4881f4190cf42931da07eaf3b65#8b3c707ebd3ec4881f4190cf42931da07eaf3b65
       - pypi: git+https://github.com/turboderp-org/exllamav3?tag=v1.5.3#d3739fd393337b1ff4d6c2a342b12f0c87a9592f
       - pypi: https://files.pythonhosted.org/packages/04/4b/29cac41a4d98d144bf5f6d33995617b185d14b22401f75ca86f384e87ff1/h11-0.16.0-py3-none-any.whl
@@ -1654,9 +1654,9 @@ packages:
   run_exports: {}
   size: 34528
   timestamp: 1786613220176
-- pypi: git+https://github.com/Comfy-Org/comfy-kitchen?tag=v0.2.34#e5e0d020e2add85f50466bb79171bc04ef7492b6
+- pypi: git+https://github.com/Comfy-Org/comfy-kitchen?tag=v0.2.37#be003b7c23c5b01328657955b8bc5d3f073d868e
   name: comfy-kitchen
-  version: 0.2.34
+  version: 0.2.37
   requires_dist:
   - nvidia-cublas>=13.0.0 ; extra == 'cublas'
   - pytest>=7.0.0 ; extra == 'dev'

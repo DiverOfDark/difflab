@@ -2,9 +2,8 @@
 
 Measured on production 13 (2026-10-06), against the ESRGAN alone from the native 1056x608: SeedVR2 kept
 the render's face and drew clean edges where 4xLSDIR left ladders and ringing, and its 7B looked better
-than its 3B at the same cost. At 1080p on a 3090 the 7B's DiT costs 0.17 s a frame and its VAE 1.8 s,
-encode and decode together - the VAE is the bill, and it is arithmetic (each 3D conv already runs at
-62 TFLOPS), not overhead.
+than its 3B at the same cost. At 1080p on a 3090 the 7B's DiT costs 0.17 s a frame and its VAE 1.1 s,
+encode and decode together (1.9 s on cuDNN in bf16, `models/seedvr2/vae.py`) - the VAE is the bill.
 """
 
 from __future__ import annotations
