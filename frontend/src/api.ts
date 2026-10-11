@@ -662,6 +662,8 @@ export type MadeKind = 'keyframe' | 'prompt' | 'clip' | 'reference' | 'casting'
 export const approveMade = (kind: MadeKind, id: number) => json<Production>(`/api/made/${kind}/${id}/approve`, post({}))
 export const patchShot = (shotId: number, body: Record<string, unknown>) =>
   json<Production>(`/api/shots/${shotId}`, send('PATCH', body))
+/** The shot and its made things; the shots after it close the gap. */
+export const deleteShot = (shotId: number) => json<Production>(`/api/shots/${shotId}`, { method: 'DELETE' })
 /** The shot's prose written again and its prompt compiled from it, as a run; a hand-written prompt is let go. */
 export const rewriteShot = (shotId: number) => json<{ run: string; runs: string[] }>(`/api/shots/${shotId}/rewrite`, post({}))
 /** The shot's prompt, keyframe and looks approved, each that is made; `left` says what was not. */

@@ -5,6 +5,7 @@ import {
   approveMade,
   approveShot,
   deleteCasting,
+  deleteShot,
   drawLook,
   drawShotLooks,
   outputUrl,
@@ -291,6 +292,11 @@ const impact = computed(() => {
   )
   return parts.join(' ')
 })
+const unpin = () => props.act(`unpin ${props.shot.id}`, () => patchShot(props.shot.id, { pinned: false }))
+const removeShot = () => {
+  if (confirm(`Delete shot ${named(props.shot.id)}? Its keyframe and clip go with it; the shots after it move up.`))
+    props.act(`delete ${props.shot.id}`, () => deleteShot(props.shot.id))
+}
 const drawAll = () => props.act(`looks ${props.shot.id}`, () => drawShotLooks(props.shot.id))
 const approve = () =>
   props.act(`approve shot ${props.shot.id}`, async () => {
@@ -497,6 +503,16 @@ const approve = () =>
     <div class="foot-bar">
       <span class="impact">{{ impact }}</span>
       <div class="buttons">
+        <button class="danger" :disabled="!!busy" @click="removeShot">Delete shot</button>
+        <button
+          v-if="shot.pinned"
+          class="secondary"
+          :disabled="!!busy"
+          title="edited by hand, so a re-plan leaves it as written; unpinned, the next re-plan rewrites it or, past the plan's last clip, removes it"
+          @click="unpin"
+        >
+          Unpin
+        </button>
         <button v-if="toDraw" class="secondary" :disabled="!!busy" @click="drawAll">Draw {{ toDraw }} image{{ toDraw > 1 ? 's' : '' }}</button>
         <button class="primary" :disabled="!!busy" @click="approve">Approve · next</button>
       </div>
