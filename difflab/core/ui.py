@@ -311,19 +311,22 @@ def progress(label: str, total: int, unit: str = "step") -> Iterator[Callable[[]
 def transfer(label: str, total: int, measure: Callable[[], int]) -> Iterator[None]:
     """A download that reports nothing itself: `measure()` - the bytes written so far - is read twice
     a second while the block runs, so something watching can draw a bar from it."""
-    started, stop = time.perf_counter(), threading.Event()
+    started, stop, ctx = time.perf_counter(), threading.Event(), context.current()
     events.emit(protocol.StageStart(label=label, total=total, unit="byte"))
 
     def poll() -> None:
-        while not stop.wait(0.5):
-            events.emit(
-                protocol.StageProgress(
-                    label=label,
-                    done=min(measure(), total),
-                    total=total,
-                    elapsed=round(time.perf_counter() - started, 1),
+        # A thread starts on an empty contextvar (3.13): unbound, every tick went to no run at all.
+        with context.bind(ctx):
+            while not stop.wait(0.5):
+                events.emit(
+                    protocol.StageProgress(
+                        label=label,
+                        done=min(measure(), total),
+                        total=total,
+                        unit="byte",
+                        elapsed=round(time.perf_counter() - started, 1),
+                    )
                 )
-            )
 
     watcher = threading.Thread(target=poll, daemon=True)
     watcher.start()

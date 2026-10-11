@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted } from 'vue'
 import { RouterLink, RouterView, useRoute } from 'vue-router'
+import { gb, mmss } from './production'
 import { halt, queued, start, state } from './store'
 
 const route = useRoute()
@@ -24,10 +25,22 @@ const gpu = computed(() => {
   const used = g?.vram_used === undefined ? '' : ` · ${g.vram_used.toFixed(1)} GB`
   return {
     total: g?.vram_total === undefined ? '' : `${Math.round(g.vram_total)} GB`,
-    text: `${g?.state ?? 'idle'}${used}`,
+    text: fetching.value?.text ?? `${g?.state ?? 'idle'}${used}`,
     busy: !!g && g.state !== 'idle',
     run: g?.run ?? null,
-    title: g?.run ? `${g.title} · ${g.tool} · open the run` : 'nothing is running on the card',
+    title: fetching.value ? `${fetching.value.title} · open the run` : g?.run ? `${g.title} · ${g.tool} · open the run` : 'nothing is running on the card',
+  }
+})
+
+const fetching = computed(() => {
+  const d = state.gpu?.download
+  if (!d) return null
+  const rate = d.seconds > 0 ? d.done / d.seconds : 0
+  const left = rate > 0 ? ` · ${mmss((d.total - d.done) / rate)} left` : ''
+  return {
+    text: `downloading · ${gb(d.done)} / ${gb(d.total)}${rate ? ` · ${Math.round(rate / 1e6)} MB/s` : ''}${left}`,
+    share: d.total ? Math.min(1, d.done / d.total) : 0,
+    title: d.label,
   }
 })
 
@@ -64,6 +77,7 @@ onUnmounted(halt)
           <i class="dot" :class="gpu.busy ? 'running' : 'idle'" />{{ gpu.text }}
         </component>
       </span>
+      <div v-if="fetching" class="fetch" :title="fetching.title"><i :style="{ width: `${fetching.share * 100}%` }" /></div>
     </header>
 
     <RouterView />
@@ -164,6 +178,21 @@ span.line {
 
 a.state:hover {
   color: var(--accent);
+}
+
+.fetch {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+}
+
+.fetch > i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.5s linear;
 }
 
 .dot.idle {

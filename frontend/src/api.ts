@@ -395,6 +395,8 @@ export interface Gpu {
   run: string | null
   production: number | null
   title: string
+  /** The job is waiting on weights it does not have yet: its bytes so far, of all it lacks. */
+  download: { label: string; done: number; total: number; seconds: number } | null
   name?: string
   vram_used?: number
   vram_total?: number

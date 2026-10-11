@@ -5,6 +5,7 @@
  */
 
 import type { Event } from './events'
+import { gb } from './production'
 
 export type Status = 'live' | 'done' | 'failed' | 'stopped'
 export type ItemState = 'pending' | 'running' | 'done' | 'failed'
@@ -256,7 +257,12 @@ export function apply(run: RunState, event: Event): void {
       const done = Number(event.done ?? 0)
       const total = Number(event.total ?? 0)
       const unit = String(event.unit ?? '')
-      run.stage = total ? `${event.label} · ${done}/${total}` : `${event.label} · ${done}${unit ? ` ${unit}s` : ''}`
+      run.stage =
+        unit === 'byte'
+          ? `${event.label} · ${gb(done)} / ${gb(total)}`
+          : total
+            ? `${event.label} · ${done}/${total}`
+            : `${event.label} · ${done}${unit ? ` ${unit}s` : ''}`
       run.stageFraction = total ? Math.min(1, done / total) : null
       break
     }

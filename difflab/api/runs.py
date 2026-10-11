@@ -107,14 +107,20 @@ _smi: tuple[float, dict[str, Any] | None] = (0.0, None)
 
 
 def gpu() -> dict[str, Any]:
-    """What the card is doing - the tool of the job in flight, as a word - and its VRAM, whoever holds it."""
+    """What the card is doing - the tool of the job in flight, as a word - its VRAM, whoever holds it, and
+    the weights the job is waiting on, if it is fetching them."""
     with store.connect() as connection:
         row = connection.execute(
-            "SELECT jobs.tool, jobs.run_id, runs.production_id, runs.title FROM jobs "
+            "SELECT jobs.tool, jobs.run_id, runs.production_id, runs.title, jobs.id FROM jobs "
             "JOIN runs ON runs.id = jobs.run_id WHERE jobs.state = ? ORDER BY jobs.started_at DESC LIMIT 1",
             (store.RUNNING,),
         ).fetchone()
         heard = None if row is None else store.newest_event(connection, row[1])
+        fetching = None if row is None else connection.execute(
+            "SELECT name, done, total, started_at FROM tasks WHERE job_id = ? AND state = ? AND unit = 'byte' "
+            "ORDER BY position DESC LIMIT 1",
+            (row[4], store.RUNNING),
+        ).fetchone()  # fmt: skip
     # A job a killed worker left `running` writes nothing more: it is not what the card is doing.
     live = row is not None and heard is not None and time.time() - heard < STALE_AFTER
     tool = row[0] if live else ""
@@ -124,8 +130,15 @@ def gpu() -> dict[str, Any]:
         "run": row[1] if live else None,
         "production": row[2] if live else None,
         "title": row[3] if live else "",
+        "download": _download(fetching) if live and fetching else None,
         **(_card() or {}),
     }
+
+
+def _download(task: tuple[str, int | None, int | None, float | None]) -> dict[str, Any]:
+    name, done, total, started = task
+    seconds = round(time.time() - started, 1) if started else 0.0
+    return {"label": name, "done": done or 0, "total": total or 0, "seconds": seconds}
 
 
 def _card() -> dict[str, Any] | None:

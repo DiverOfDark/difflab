@@ -39,6 +39,7 @@ export const words = (text: string) => text.split(/\s+/).filter(Boolean).length
 /** `mm:ss`, and `mm:ss:ff` with frames at 24 fps. */
 export const mmss = (t: number) =>
   t >= 3600 ? `${Math.floor(t / 3600)}:${pad(Math.floor(t / 60) % 60, 2)}:${pad(Math.floor(t % 60), 2)}` : `${pad(Math.floor(t / 60), 2)}:${pad(Math.floor(t % 60), 2)}`
+export const gb = (bytes: number) => `${(bytes / 1e9).toFixed(1)} GB`
 export const timecode = (t: number) => `${mmss(t)}:${pad(Math.floor((t % 1) * 24), 2)}`
 
 export function seconds(total: number): string {
