@@ -19,9 +19,18 @@ from difflab.tools import direct, ruling
 PROSE = {"type": "string", "maxLength": h3.DIRECTOR_WRITE_CHARS}
 
 
-def shape(count: int) -> dict[str, Any]:
-    """The writer's answer with exactly `count` beats: a beat cut off at the cap once closed the array after it."""
-    beats = {"type": "array", "items": PROSE, "minItems": count, "maxItems": count}
+def allowance(beat: compose.Beat) -> tuple[int, int]:
+    """The words a beat's prose is asked for: a short beat's floor, more for a long one."""
+    seconds = beat.end - beat.start
+    (low, high), (slow, fast) = h3.DIRECTOR_WRITE_WORDS, h3.DIRECTOR_WRITE_PACE
+    return max(low, round(slow * seconds)), max(high, round(fast * seconds))
+
+
+def shape(written: list[compose.Beat]) -> dict[str, Any]:
+    """The writer's answer with exactly these beats: a beat cut off at the cap once closed the array after it."""
+    per_word = h3.DIRECTOR_WRITE_CHARS / h3.DIRECTOR_WRITE_WORDS[1]
+    items = [{"type": "string", "maxLength": round(per_word * allowance(beat)[1])} for beat in written]
+    beats = {"type": "array", "prefixItems": items, "items": False, "minItems": len(written)}
     return {
         **ANY_JSON,
         "type": "object",
@@ -31,12 +40,12 @@ def shape(count: int) -> dict[str, Any]:
     }
 
 
-def trimmed(text: str) -> str:
-    """`text` cut to the whole sentences that fit DIRECTOR_WRITE_WORDS; the first is kept whatever its length."""
+def trimmed(text: str, most: int) -> str:
+    """`text` cut to the whole sentences that fit `most` words; the first is kept whatever its length."""
     sentences = [s for s in re.split(r"(?<=[.!?])\s+", text.strip()) if s]
     kept = sentences[:1]
     for sentence in sentences[1:]:
-        if len(" ".join([*kept, sentence]).split()) > h3.DIRECTOR_WRITE_WORDS or sentence[-1] not in ".!?":
+        if len(" ".join([*kept, sentence]).split()) > most or sentence[-1] not in ".!?":
             break
         kept.append(sentence)
     return " ".join(kept)
@@ -87,6 +96,7 @@ def write_one(take: compose.Take, index: int) -> compose.Take:
             number=i + 1,
             phase=b.phase,
             length=b.end - b.start,
+            words="{} to {}".format(*allowance(b)),
             who=", ".join(f"{{{m}}}" for m in b.who),
             action=b.action,
         )
@@ -109,7 +119,9 @@ def write_one(take: compose.Take, index: int) -> compose.Take:
         to_write = compose.written(planned)
         if len(data["beats"]) != len(to_write):
             return [direct.problem(f'"beats" has exactly {len(to_write)} strings, one per listed beat')]
-        data["beats"] = [trimmed(str(text)) for text in data["beats"]]  # `ask_json` returns this same dict
+        data["beats"] = [
+            trimmed(str(text), allowance(beat)[1]) for beat, text in zip(to_write, data["beats"], strict=True)
+        ]  # `ask_json` returns this same dict
         where = f"write · chunk {index + 1}"
         living = {m for m in planned.cast if direct.member_card(before.cards, m, where).kind in compose.LIVING}
         found = [
@@ -136,6 +148,6 @@ def write_one(take: compose.Take, index: int) -> compose.Take:
 
     data = direct.ask_json(
         words.WRITE_SYSTEM, question, [], gate, f"write · chunk {index + 1}",
-        h3.DIRECTOR_WRITE_TOKENS, h3.DIRECTOR_WRITE_TEMPERATURE, schema=shape(len(written)),
+        h3.DIRECTOR_WRITE_TOKENS, h3.DIRECTOR_WRITE_TEMPERATURE, schema=shape(written),
     )  # fmt: skip
     return _with_prose(take, index, data)

@@ -221,7 +221,6 @@ def _edit_plan(connection: Any, chapter: store.Chapter, shot: store.Shot, **plan
                 f"the next shot opens on this closing, and {', '.join(missing)} is not in its cast: put it there first"
             )
         plan["closing"] = closing
-        plan["faces_at_close"] = [m for m in closed if members[m].kind in compiler.LIVING]
         plan["cast"] = list(dict.fromkeys([*plan.get("cast", []), *closed]))
     if "cast" in planned:
         cast = [str(m) for m in planned["cast"]]

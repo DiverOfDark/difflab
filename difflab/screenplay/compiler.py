@@ -143,7 +143,6 @@ class Chunk:
     camera_toward: str
     mouths: tuple[str, ...]  # "his slow draw on the mouthpiece": every way a mouth moves in this chunk
     closing: str  # {id} placeholders; the next chunk's opening, verbatim
-    faces_at_close: tuple[str, ...]
     irreversible_change: str
     dialogue: tuple[Line, ...] = ()
     summary: str = ""  # writer
@@ -439,16 +438,16 @@ def timing(beat: Beat, index: int, seconds: float, used: set[str]) -> str:
     if index == 0:
         return words.TIMING[beat.phase if beat.phase in ("airlock", "carry") else "first"].format(seconds=length)
     if beat.phase == "handoff":
-        phrase = words.TIMING["handoff"].format(seconds=length)
+        phrase = words.TIMING["handoff"]
     else:
         phrase = words.TIMING_BY_POSITION[0][1]
         for threshold, text in words.TIMING_BY_POSITION:
             if beat.start / seconds >= threshold:
                 phrase = text
     if phrase in used:
-        return words.TIMING_REPEAT
+        phrase = words.TIMING_REPEAT
     used.add(phrase)
-    return phrase
+    return phrase.format(seconds="a second" if length == "second" else length)
 
 
 def _lower(text: str) -> str:
@@ -755,7 +754,6 @@ def chunk_of(plan: dict[str, Any]) -> Chunk:
         camera_toward=str(plan.get("camera_toward", "")),
         mouths=tuple(str(m) for m in plan.get("mouths", [])),
         closing=str(plan.get("closing", "")),
-        faces_at_close=tuple(str(m) for m in plan.get("faces_at_close", [])),
         irreversible_change=str(plan.get("irreversible_change", "")),
         dialogue=tuple(
             Line(str(d["who"]), float(d["start"]), str(d["language"]), str(d["line"])) for d in plan.get("dialogue", [])

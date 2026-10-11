@@ -64,7 +64,6 @@ def _take_from_plan(data: Any, base: compose.Take) -> compose.Take:
                 camera_toward=str(clip["camera"]["toward"]),
                 mouths=tuple(str(m) for m in clip.get("mouths", [])),
                 closing=str(clip["closing"]).strip(),
-                faces_at_close=tuple(str(m) for m in clip["faces_at_close"]),
                 irreversible_change=str(clip["irreversible_change"]),
                 dialogue=lines,
                 seconds=seconds,

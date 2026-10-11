@@ -238,7 +238,7 @@ HOW A CHAINED TAKE BREAKS, AND THE RULES THAT PREVENT IT
 1. A contradiction at a join renders as a union: extra people, doubled props. The program copies each clip's "closing" word for word as the opening of the next clip, so write every closing as a precise, complete snapshot of the last frame: where every cast member on screen is, by the sides of the frame (left of frame, right of centre, lower foreground - never "to his left"), the pose, what each hand or paw holds and in which hand, where every object of the cast is and who holds it, named as its {{id}}, which way each face points, and any smoke still in the air. Everyone on screen at the end of a clip who is also in the next clip is named in its closing.
 2. The opening is a moment in the middle of something. The first beat of clip 1 finishes whatever the OPENING shows under way (an exhale ends and its cloud thins, a raised hand comes to rest) before anything new starts.
 3. Joins in motion. Every clip that continues the clip before begins with a "carry" beat, at most {quiet_max:g} seconds, in which the motion under way at the end of the clip before goes on at the same speed and in the same direction, and nothing new starts. Only a cut clip (rule 13) begins with an "airlock" beat of {airlock:g} seconds (at least {airlock_min:g}, at most {quiet_max:g}) in which the arrangement holds: the performers only breathe, blink, shift their weight and turn their eyes, and smoke drifts. Nobody speaks, enters, leaves or passes anything during an airlock or a carry.
-4. Never stop at a join. Every clip that the next clip continues ends with a "carry" beat, at most {quiet_max:g} seconds: the clip's action is complete and the next movement has already begun and is under way at the last frame (a head turning, a hand rising toward something, a step taken, smoke still rising), so the take never stops to pose. Its closing is a snapshot of that motion: who is where in the frame, what moves which way, and the face of every person and animal on screen showing, front or three-quarter, never hidden by a hand, a prop or smoke; "faces_at_close" lists them. Only the last clip of the take and a clip followed by a cut end with a "settle" beat of {settle:g} seconds (at least {settle_min:g}, at most {quiet_max:g}): the action is complete, everyone is still, and the face of every person and animal on screen is turned toward the camera, front or three-quarter. That closing says so ("both faces turned three-quarters to the camera, smiling with closed lips").
+4. Never stop at a join. Every clip that the next clip continues ends with a "carry" beat, at most {quiet_max:g} seconds: the clip's action is complete and the next movement has already begun and is under way at the last frame (a head turning, a hand rising toward something, a step taken, smoke still rising), so the take never stops to pose. Its closing is a snapshot of that motion: who is where in the frame, what moves which way, and which way each face points. Only the last clip of the take and a clip followed by a cut end with a "settle" beat of {settle:g} seconds (at least {settle_min:g}, at most {quiet_max:g}): the action is complete and everyone is still, facing where the action left them.
 5. One main change per clip. The IDEA's events decide the clips: each main event gets a clip of its own, and a clip never carries two. A clip lasts exactly as long as its beats need: a glance and a smile take a few seconds, a hand-off with reach, grip and release takes longer. Never stretch a beat to fill time; a take shorter than the TAKE allows is right when the IDEA needs no more. Each clip has exactly one beat of phase "primary" or "handoff" that carries its main event, and it starts between {early:.0f}% and {late:.0f}% of the clip, because the end of a clip gets squeezed. "irreversible_change" names the physical fact that is true at the end of the clip and was not at its start ("the hose is in her hands", "the cat sits on the table"). A mood or a camera move is not a change.
 6. Hand-offs take time. Passing an object from one hand or paw to another is a "handoff" beat of at least {handoff_min:g} seconds in which the reach, the grip and the release are all visible.
 7. The story comes into the frame. The framing stays close to the opening framing, unless the action travels (rule 14). A member the clip's opening does not name is outside the frame when the clip starts: it takes no part in the first beat, and appears in a later beat by entering from a named edge (left, right, bottom) or from the background, or when a camera move brings it into view; nothing happens off-screen. Someone the IDEA places at the same table or close by is already sitting there, just out of frame on the side where the IDEA puts them (across the table is on the table's side of the frame): a camera move ("reveal_left", "reveal_right") brings them in, seated. Walking in is for someone who arrives. At most {max_living} people and animals are on screen in a clip. Every person and animal in a clip's cast moves in at least one beat or is named in its opening or closing.
@@ -249,7 +249,7 @@ HOW A CHAINED TAKE BREAKS, AND THE RULES THAT PREVENT IT
 12. Write only what a camera can see or a microphone can hear: no mood words, no quality words, and never mention clips, segments, prompts or stitching in any text.
 13. Cuts. A clip continues from the clip before ("cut": ""), except where the IDEA jumps: "cut": "back" returns to the OPENING photograph exactly as it was, the way waking returns to the bed a dream started in; "cut": "new" jumps to a new framing or another place, and its "opening" is a snapshot of its own first frame, written like a closing. A cut clip begins with an airlock. Never cut inside one continuous action.
 14. Travel and chases. A chase, a flight or a run covers distance: the one chased starts far ahead, small in the frame, the gap changes over the clip, and the camera moves with them ("follow"). A carry is never the main event: the leap or the swipe is the clip's primary beat, and a carry only keeps a motion going for at most {quiet_max:g} seconds.
-16. Leaving. A member that flies, runs or walks off goes away from the camera: it grows smaller in the frame while the camera stays behind ("stay"), and the closing says how small it has become and where (a small dark shape high in the upper right of the sky). It shows its back as it goes, so it is not in "faces_at_close". The camera follows it only in a later clip.
+16. Leaving. A member that flies, runs or walks off goes away from the camera: it grows smaller in the frame while the camera stays behind ("stay"), and the closing says how small it has become and where (a small dark shape high in the upper right of the sky). It shows its back as it goes. The camera follows it only in a later clip.
 15. Changes that last. When a member's look changes and stays changed (wings grow, a shirt gets soaked), the clip where it happens gives "looks": {{"cat": {{"name": "feathered wings", "look": "two large grey-and-white feathered wings on its back"}}}}: "look" is the member's look from the end of that clip on, in at most {look_words} words, and "name" names that look in {name_words[0]} to {name_words[1]} plain words ("blue robe", "soaked shirt", "torn left sleeve"). The program says it in every later clip, so a later clip does not repeat it; a "back" cut returns each member to the look it had in the opening scene.
 
 FIELDS
@@ -265,7 +265,6 @@ FIELDS
   - "camera": {{"move": one of the CAMERA MOVES, "toward": a cast id}}.
   - "mouths": every way a mouth opens in this clip, as short plain phrases with possessives and no braces ("his slow draw on the mouthpiece", "her giggle", "the two meows of the cat"); [] when every mouth stays closed.
   - "closing": one snapshot sentence of at most {closing_words} words, as rule 1 says.
-  - "faces_at_close": the id of every person and animal in the closing whose face shows; one leaving with its back to the camera is left out (rule 16).
   - "irreversible_change": at most 20 words.
   - "looks": {{}} unless a member's look changes for good in this clip (rule 15).
   - "ambience": "" in the first place; in another place, one noun phrase of the sound heard there ("wind rushing past and distant birdsong high above the trees").
@@ -273,7 +272,7 @@ FIELDS
 - In "action" and "closing", write members as their id in braces: {{man}}, {{woman}}, {{cat}}. Never put a possessive after the braces: write "the hand of {{woman}}" or "her hand", never "{{woman}}'s hand".
 
 Answer only JSON, in this shape (one clip and two of its beats shown; write every clip and every beat):
-{{"ambience":"...","story":[{{"event":"...","clip":1}}],"clips":[{{"seconds":9,"cut":"","opening":"","scene":"INT hookah lounge · night","purpose":"...","cast":["man","hookah","lounge"],"beats":[{{"start":0,"end":2,"phase":"build","who":["man"],"action":"..."}},{{"start":2,"end":6.5,"phase":"primary","who":["man"],"action":"..."}}],"camera":{{"move":"hold","toward":"man"}},"mouths":["his slow exhale"],"closing":"...","faces_at_close":["man"],"irreversible_change":"...","looks":{{}},"ambience":"","dialogue":[]}}]}}"""
+{{"ambience":"...","story":[{{"event":"...","clip":1}}],"clips":[{{"seconds":9,"cut":"","opening":"","scene":"INT hookah lounge · night","purpose":"...","cast":["man","hookah","lounge"],"beats":[{{"start":0,"end":2,"phase":"build","who":["man"],"action":"..."}},{{"start":2,"end":6.5,"phase":"primary","who":["man"],"action":"..."}}],"camera":{{"move":"hold","toward":"man"}},"mouths":["his slow exhale"],"closing":"...","irreversible_change":"...","looks":{{}},"ambience":"","dialogue":[]}}]}}"""
 
 PLAN_USER = """\
 IDEA:
@@ -300,13 +299,13 @@ WRITE_SYSTEM = """\
 You are the prose writer for ONE clip of an unbroken live-action take rendered by MiniMax H3. A program has already written everything that must be exact: the style, the opening arrangement, the place and its light, the camera move, the rule for mouths, the closing arrangement and every reference label. You write only the motion in between, as JSON.
 
 WHAT YOU WRITE
-- "beats": one string per listed beat, in the same order, each 35 to 60 words of present-tense prose that films exactly that beat's planned action. Show the physical mechanics: which hand or paw, how far the body leans, where the hose goes, how the smoke leaves the lips and spreads, what the eyes do, how fur, fabric and hair respond. Put the sound a motion makes in the same sentence when it matters (the water bubbles as she draws).
+- "beats": one string per listed beat, in the same order, each as many words of present-tense prose as its line asks, filming exactly that beat's planned action for as long as the beat lasts: a longer beat is asked for more words, so its motion fills every second of it. Show the physical mechanics: which hand or paw, how far the body leans, where the hose goes, how the smoke leaves the lips and spreads, what the eyes do, how fur, fabric and hair respond. Put the sound a motion makes in the same sentence when it matters (the water bubbles as she draws).
 - "summary": one sentence of 20 to 40 words saying what happens in this clip, naming the members as {id}.
 - "sounds": one or two sentences of this clip's physical and non-verbal sounds, with no words spoken.
 
 RULES
 1. Name a cast member as its id in braces, {man}, {woman}, {cat}, the first time it acts in a beat; afterwards use he, she, it or a plain noun such as "the cat". Every member listed as acting in a beat is named in braces in that beat. Never put a possessive after the braces: write "the hand of {woman}" or "her hand". Never write labels in angle brackets.
-2. No timing words and no numbers of seconds: the program puts a timing phrase in front of every beat ("For the first two seconds the arrangement holds with small natural motion:", "Early in the clip,", "Over about four seconds in the middle of the clip,"). Start each beat with the motion itself, in lowercase unless it starts with braces.
+2. No timing words and no numbers of seconds: the program puts a timing phrase in front of every beat ("For the first two seconds the arrangement holds with small natural motion:", "Early in the clip, for about three seconds,", "Over about four seconds in the middle of the clip,"). Start each beat with the motion itself, in lowercase unless it starts with braces.
 3. An airlock beat is quiet: breath, blinking, weight shifts, drifting smoke, a glance. Nothing enters, leaves or changes hands. A carry beat is the motion already under way going on at the same speed and in the same direction; nothing new starts in it.
 4. The program writes the clip's final settle or carry from the closing arrangement, so your last beat ends where that arrangement begins.
 5. Stay inside the plan: no new people, animals, props, lights, cuts or camera moves, and no clothing, hair or markings beyond the listed traits. Keep hands and paws exactly as the plan has them: an object in a left hand stays in that left hand.
@@ -335,7 +334,7 @@ THIS CLIP: {purpose}
 BEATS TO WRITE ({count}):
 {beats}"""
 
-WRITE_BEAT = "{number}. [{phase}, about {length:.1f} seconds, acting: {who}] {action}"
+WRITE_BEAT = "{number}. [{phase}, about {length:.1f} seconds, {words} words, acting: {who}] {action}"
 
 # Asked of every JSON answer the director wants. A third of every token it decodes used to be
 # indentation and code fences - 9,887 tokens of the measured run's answers against 6,535 minified -
@@ -421,12 +420,12 @@ TIMING = {
     "settle": "In the final {seconds}",
 }
 TIMING_BY_POSITION = (  # the rest, by where the beat starts (fraction of the clip)
-    (0.0, "Early in the clip,"),
-    (0.3, "In the middle seconds,"),
-    (0.55, "Later in the clip,"),
-    (0.75, "Toward the end of the clip,"),
+    (0.0, "Early in the clip, for about {seconds},"),
+    (0.3, "In the middle seconds, for about {seconds},"),
+    (0.55, "Later in the clip, for about {seconds},"),
+    (0.75, "Toward the end of the clip, for about {seconds},"),
 )
-TIMING_REPEAT = "A moment later,"
+TIMING_REPEAT = "A moment later, for about {seconds},"
 # Where a member is in the opening frame (`crops.where`), always in the frame's own sides: fraction of
 # the frame -> words, across by its head and down by its box.
 FRAME_ACROSS = (

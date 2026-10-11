@@ -12,12 +12,15 @@ DIRECTOR_REPAIRS = 2  # re-asks with the gate's issue list before giving up
 DIRECTOR_PLAN_REPAIRS = 3  # the plan answers to the most rules at once, and has needed two repairs on its own
 DIRECTOR_TOKENS = {"survey": 1024, "ground": 1024, "card": 2048, "opening": 512, "tidy": 2048, "plan": 8192}
 DIRECTOR_WRITE_TOKENS = 2048
-# A beat's prose is asked as 35-60 words. Unbounded, the writer once listed clothes and hair for 1,482
-# words inside one string, ran out of tokens and left the JSON open, three times in a row. The schema
-# closes each string at DIRECTOR_WRITE_CHARS; asked again to shorten, it wrote the same 115-125 words, so
-# a beat is cut in code to the whole sentences that fit DIRECTOR_WRITE_WORDS.
+# A beat's prose is asked as DIRECTOR_WRITE_WORDS, or DIRECTOR_WRITE_PACE words a second when that is
+# more: a flat 35-60 told a 6 s main beat in the words of a 2 s glance, and H3 finished it early and idled.
+# Unbounded, the writer once listed clothes and hair for 1,482 words inside one string, ran out of tokens
+# and left the JSON open, three times in a row. The schema closes each string at DIRECTOR_WRITE_CHARS per
+# 60 words; asked again to shorten, it wrote the same 115-125 words, so a beat is cut in code to the whole
+# sentences that fit its top.
 DIRECTOR_WRITE_CHARS = 700
-DIRECTOR_WRITE_WORDS = 60
+DIRECTOR_WRITE_WORDS = (35, 60)
+DIRECTOR_WRITE_PACE = (10, 15)
 DIRECTOR_WRITE_TEMPERATURE = 0.5  # beat prose only; every other first answer decodes greedily
 # Greedy decoding asked again repeats the rejected answer word for word, so a repair samples.
 DIRECTOR_REPAIR_TEMPERATURE = 0.4

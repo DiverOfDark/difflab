@@ -327,9 +327,6 @@ def plan_rules(take: compose.Take) -> list[Problem]:
                  f"where it is, as {{{member}}}")  # fmt: skip
         if closing - set(chunk.cast):
             fail("closing", f"{clip}: the closing names {sorted(closing - set(chunk.cast))}, who are not in its cast")
-        leaving = {chunk.camera_toward} if chunk.camera_move == "stay" else set()  # its back to the camera
-        if not closing & living - leaving <= set(chunk.faces_at_close):
-            fail("faces", f"{clip}: every person and animal in the closing needs its face visible")
         # The breach and the count, not the rule: told it is nine words over, the writer cuts nine
         # words; told the rule again, it writes the same sentence again, three times over.
         words_in_closing = len(chunk.closing.split())
