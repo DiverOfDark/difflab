@@ -26,6 +26,7 @@ from typing import Any
 from huggingface_hub import HfApi, snapshot_download
 from huggingface_hub.constants import HF_HUB_CACHE
 from huggingface_hub.file_download import repo_folder_name
+from huggingface_hub.hf_api import RepoFile
 
 URL_CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "difflab"
 
@@ -228,10 +229,20 @@ _HF_URL = re.compile(
     r"^https?://(?:www\.)?(?:huggingface\.co|hf\.co)/([\w.-]+/[\w.-]+)(?:/(?:blob|resolve|tree)/([^/]+)(?:/(.+))?)?/?$"
 )
 _HF_LOOSE = re.compile(r"^([\w.-]+/[\w.-]+)(?:@([^:]+))?(?::(.+))?$")
+WEIGHTS = (".safetensors", ".pth", ".pt", ".ckpt", ".bin", ".gguf")
+_SHARD = re.compile(r"-\d{5}-of-\d{5}\.")  # one part of a sharded checkpoint, which no file field can load
 
 
-def resolve(text: str) -> str:
-    """A pasted page URL, a branch name or a bare Civitai id, as the pinned reference a field stores."""
+@dataclass(frozen=True)
+class Choice:
+    value: str  # the pinned reference a field stores
+    name: str  # the file, as a person picks it
+    size: int  # bytes; 0 when the source does not say
+
+
+def resolve(text: str, file: bool = False) -> list[Choice]:
+    """A pasted page URL, a branch name or a bare Civitai id, as the pinned references it can mean: one, or,
+    when `file` and the page names none, every weights file a repo or a Civitai version holds."""
     text = text.strip().split("#", 1)[0]
     if text.startswith("civitai:") and "@" not in text:
         return _civitai_ref(int(text.removeprefix("civitai:").split(":", 1)[0]), None)
@@ -244,12 +255,27 @@ def resolve(text: str) -> str:
                 HfApi(token=token(HUGGINGFACE)).model_info(repo, revision=urllib.parse.unquote(revision)).sha
                 or revision
             )
-        return f"{repo}@{revision}" + (f":{urllib.parse.unquote(path)}" if path else "")
+        if path or not file:
+            pinned = f"{repo}@{revision}" + (f":{urllib.parse.unquote(path)}" if path else "")
+            return [Choice(pinned, urllib.parse.unquote(path or repo), 0)]
+        return _hub_files(repo, revision)
     check(text)
-    return text
+    return [Choice(text, text, 0)]
 
 
-def _civitai_url(url: str) -> str:
+def _hub_files(repo: str, revision: str) -> list[Choice]:
+    tree = HfApi(token=token(HUGGINGFACE)).list_repo_tree(repo, revision=revision, recursive=True)
+    found = [
+        Choice(f"{repo}@{revision}:{entry.path}", entry.path, entry.size or 0)
+        for entry in tree
+        if isinstance(entry, RepoFile) and entry.path.endswith(WEIGHTS) and not _SHARD.search(entry.path)
+    ]
+    if not found:
+        raise ValueError(f"{repo} holds no single weights file: paste the link to the file itself")
+    return found
+
+
+def _civitai_url(url: str) -> list[Choice]:
     parsed = urllib.parse.urlparse(url)
     query = urllib.parse.parse_qs(parsed.query)
     file_id = int(query["fileId"][0]) if "fileId" in query else None
@@ -262,17 +288,25 @@ def _civitai_url(url: str) -> str:
     raise ValueError(f"{url!r}: not a Civitai model or version page")
 
 
-def _civitai_ref(version: int, file_id: int | None) -> str:
+def _civitai_ref(version: int, file_id: int | None) -> list[Choice]:
+    """The file a link names, else every weights file of the version, its primary one first."""
     files = [f for f in _civitai(f"/api/v1/model-versions/{version}")["files"] if f.get("hashes", {}).get("SHA256")]
-    chosen = next((f for f in files if f["id"] == file_id), None) if file_id is not None else None
-    chosen = (
-        chosen
-        or next((f for f in files if f.get("primary")), None)
-        or next((f for f in files if f.get("type") == "Model"), None)
+    named = [f for f in files if f["id"] == file_id]
+    weights = sorted(
+        (f for f in files if f["name"].endswith(WEIGHTS) and f.get("type") not in ("Training Data", "Config")),
+        key=lambda f: not f.get("primary"),
     )
-    if chosen is None:
+    chosen = named or weights
+    if not chosen:
         raise ValueError(f"Civitai version {version} lists no model file with a hash")
-    return str(CivitaiFile(version, chosen["hashes"]["SHA256"].lower(), chosen["name"]))
+    return [
+        Choice(
+            str(CivitaiFile(version, f["hashes"]["SHA256"].lower(), f["name"])),
+            f["name"],
+            int(f.get("sizeKB", 0) * 1024),
+        )
+        for f in chosen
+    ]
 
 
 def _civitai(path: str, key: str | None = None) -> dict[str, Any]:

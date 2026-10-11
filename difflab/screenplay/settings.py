@@ -155,6 +155,22 @@ def _shots_in(connection: Any, production_id: int | None) -> list[store.Shot]:
     ]
 
 
+def takes_file(role: str) -> bool:
+    """Whether a model field of `role` names one file, as its code default does, rather than a whole repo."""
+    for tool in tools.TOOLS:
+        for field in dataclasses.fields(tool.settings) if tool.settings is not None else ():
+            if field.metadata.get("role") == role:
+                first = str(field.default).strip().split("\n")[0].split("*")[0]
+                if not first:
+                    return True
+                try:
+                    hub.parse_file(first)
+                except ValueError:
+                    return False
+                return True
+    return True
+
+
 def models() -> dict[str, list[str]]:
     """Per role, the models chosen before, newest first; the code default is not among them."""
     with store.connect() as connection:

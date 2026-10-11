@@ -11,6 +11,7 @@ There is no authentication. That is a deliberate choice for now and a bad one to
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import sqlite3
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -690,13 +691,18 @@ def list_models() -> dict[str, list[str]]:
 
 
 @app.post("/api/models/resolve")
-async def resolve_model(request: Request) -> dict[str, str]:
-    """`{"text": ...}`: a pasted Hugging Face or Civitai page, pinned as a model field stores it."""
+async def resolve_model(request: Request) -> dict[str, Any]:
+    """`{"text": ..., "role": ...}`: a pasted Hugging Face or Civitai page, pinned as a model field of `role`
+    stores it - `value` when it means one file, `choices` to pick from when the page holds several."""
     body = await request.json()
+    file = settings.takes_file(str(body.get("role", "")))
     try:
-        return {"value": await asyncio.to_thread(hub.resolve, str(body.get("text", "")))}
+        found = await asyncio.to_thread(hub.resolve, str(body.get("text", "")), file)
     except (ValueError, KeyError, OSError) as problem:
         raise HTTPException(400, str(problem)) from problem
+    if len(found) == 1:
+        return {"value": found[0].value}
+    return {"choices": [dataclasses.asdict(choice) for choice in found]}
 
 
 @app.delete("/api/models")

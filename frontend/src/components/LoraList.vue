@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import ModelPicker from './ModelPicker.vue'
 
-const props = defineProps<{ value: string; remembered: string[] }>()
+const props = defineProps<{ value: string; remembered: string[]; role: string }>()
 const emit = defineEmits<{ pick: [value: string]; forget: [value: string] }>()
 
 type Row = { ref: string; strength: string }
@@ -29,7 +29,7 @@ const add = (ref: string) => write([...rows.value, { ref, strength: '1' }])
 <template>
   <div class="loras">
     <div v-for="(r, i) in rows" :key="i" class="lora" :class="{ off: Number(r.strength) === 0 }">
-      <ModelPicker :value="r.ref" :fallback="r.ref" code-default="" :remembered="remembered" @pick="(v) => change(i, { ref: v })" @forget="(v) => emit('forget', v)" />
+      <ModelPicker :value="r.ref" :fallback="r.ref" code-default="" :role="role" :remembered="remembered" @pick="(v) => change(i, { ref: v })" @forget="(v) => emit('forget', v)" />
       <input
         :value="r.strength"
         type="number"
@@ -41,7 +41,7 @@ const add = (ref: string) => write([...rows.value, { ref, strength: '1' }])
       />
       <button class="link" title="remove" @click="remove(i)">✕</button>
     </div>
-    <ModelPicker :value="''" fallback="" code-default="" empty="+ add a LoRA" :remembered="remembered" @pick="add" @forget="(v) => emit('forget', v)" />
+    <ModelPicker :value="''" fallback="" code-default="" empty="+ add a LoRA" :role="role" :remembered="remembered" @pick="add" @forget="(v) => emit('forget', v)" />
   </div>
 </template>
 

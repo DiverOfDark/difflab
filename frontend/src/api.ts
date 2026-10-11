@@ -785,7 +785,10 @@ export const settingsImpact = (tool: string, scopeKind: string, scopeId: string,
     post({ scope_kind: scopeKind, scope_id: scopeId, tool, overrides }),
   )
 export const listModels = () => json<Record<string, string[]>>('/api/models')
-export const resolveModel = (text: string) => json<{ value: string }>('/api/models/resolve', post({ text }))
+export type ModelChoice = { value: string; name: string; size: number }
+/** `value` when the link means one file; `choices` when a repo or a Civitai version holds several and the role takes one. */
+export const resolveModel = (text: string, role: string) =>
+  json<{ value?: string; choices?: ModelChoice[] }>('/api/models/resolve', post({ text, role }))
 export const forgetModel = (role: string, value: string) =>
   json<Record<string, string[]>>('/api/models', send('DELETE', { role, value }))
 export type Account = { source: string; account: string; tail: string }

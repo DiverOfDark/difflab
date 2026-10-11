@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
-import { resolveModel } from '../api'
+import { resolveModel, type ModelChoice } from '../api'
 
 const props = defineProps<{
   value: string | null
   fallback: string
   codeDefault: string
   remembered: string[]
+  role: string
   empty?: string
 }>()
 const emit = defineEmits<{ pick: [value: string]; forget: [value: string] }>()
@@ -46,27 +47,37 @@ function choose(value: string) {
 }
 
 const resolving = ref(false)
+/** The files a pasted repo or Civitai version holds, while one is being picked. */
+const files = ref<ModelChoice[]>([])
 
 async function useCustom() {
-  let value = custom.value.trim()
+  const value = custom.value.trim()
   problem.value = ''
-  if (!REF.test(value)) {
-    resolving.value = true
-    try {
-      value = (await resolveModel(value)).value
-    } catch (error) {
-      problem.value = `${String(error).replace(/^Error: /, '')} — paste a Hugging Face or Civitai link, or org/repo@<commit>[:file]`
-      return
-    } finally {
-      resolving.value = false
-    }
+  files.value = []
+  if (REF.test(value)) return take(value)
+  resolving.value = true
+  try {
+    const found = await resolveModel(value, props.role)
+    if (found.choices?.length) files.value = found.choices
+    else if (found.value) take(found.value)
+  } catch (error) {
+    problem.value = `${String(error).replace(/^Error: /, '')} — paste a Hugging Face or Civitai link, or org/repo@<commit>[:file]`
+  } finally {
+    resolving.value = false
   }
+}
+
+function take(value: string) {
   custom.value = ''
+  files.value = []
   choose(value)
 }
 
+const size = (bytes: number) => (!bytes ? '' : bytes >= 2 ** 30 ? `${(bytes / 2 ** 30).toFixed(1)} GB` : `${Math.max(1, Math.round(bytes / 2 ** 20))} MB`)
+
 async function toggle() {
   open.value = !open.value
+  files.value = []
   if (open.value) {
     await nextTick()
     field.value?.focus()
@@ -109,6 +120,16 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', outside))
         <input ref="field" v-model="custom" placeholder="a Hugging Face or Civitai link, or org/repo@commit[:file]" spellcheck="false" />
         <button type="submit" :disabled="!custom.trim() || resolving">{{ resolving ? 'Pinning…' : 'Use' }}</button>
       </form>
+      <div v-if="files.length" class="files">
+        <p class="pick">{{ files.length }} files here — pick one</p>
+        <div v-for="f in files" :key="f.value" class="option" :title="f.value" @click="take(f.value)">
+          <div>
+            <span class="name">{{ f.name.split('/').pop() }}</span>
+            <span class="where">{{ f.name.includes('/') ? f.name.slice(0, f.name.lastIndexOf('/')) : parts(f.value).where }}</span>
+          </div>
+          <span class="tag">{{ size(f.size) }}</span>
+        </div>
+      </div>
       <p v-if="problem" class="problem">{{ problem }}</p>
     </div>
   </div>
@@ -228,6 +249,19 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', outside))
 .custom input {
   font-size: var(--text-xs);
   text-align: left;
+}
+
+.files {
+  max-height: 320px;
+  overflow-y: auto;
+  margin-top: 4px;
+  border-top: 1px solid var(--border);
+}
+
+.pick {
+  margin: 6px 8px 2px;
+  font-size: 11px;
+  color: var(--dim);
 }
 
 .problem {

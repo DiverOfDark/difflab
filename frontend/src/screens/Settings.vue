@@ -268,6 +268,7 @@ const describe = (f: SettingField) =>
           <LoraList
             v-if="r.uses[0].field.multiple"
             :value="roleValue(r.uses) ?? ''"
+            :role="r.role"
             :remembered="remembered[r.role] ?? []"
             @pick="(v) => pickRole(r.uses, v)"
             @forget="(v) => forget(r.role, v)"
@@ -277,6 +278,7 @@ const describe = (f: SettingField) =>
             :value="roleValue(r.uses)"
             :fallback="String(r.uses[0].field.default)"
             :code-default="String(r.uses[0].field.default)"
+            :role="r.role"
             :remembered="remembered[r.role] ?? []"
             @pick="(v) => pickRole(r.uses, v)"
             @forget="(v) => forget(r.role, v)"
