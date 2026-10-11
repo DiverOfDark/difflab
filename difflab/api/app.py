@@ -23,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 
 from difflab import config
 from difflab.api import assets, runs
-from difflab.core import hub
+from difflab.core import hub, profiling
 from difflab.core.settings import Continuity, IngestSettings
 from difflab.models.minimax_h3.settings import VideoSettings
 from difflab.screenplay import (
@@ -843,6 +843,26 @@ def restart() -> dict[str, str]:
 
     worker.RESTART.set()
     return {"restart": "when the queue is idle"}
+
+
+@app.get("/api/profile")
+def read_profile() -> dict[str, Any]:
+    return profiling.state()
+
+
+@app.post("/api/profile")
+async def arm_profile(request: Request) -> dict[str, Any]:
+    """torch.profiler over the next `steps` sampler steps; `stack` adds Python stacks at several times the cost."""
+    asked = await request.json()
+    steps = asked.get("steps", 2)
+    if not isinstance(steps, int) or steps < 1:
+        raise HTTPException(400, "steps is a whole number of at least 1")
+    return profiling.arm(steps, bool(asked.get("stack", False)))
+
+
+@app.delete("/api/profile")
+def disarm_profile() -> dict[str, Any]:
+    return profiling.disarm()
 
 
 @app.get("/api/runs/{run_id}/events")

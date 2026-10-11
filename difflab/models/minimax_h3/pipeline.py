@@ -28,7 +28,7 @@ from diffusers.modular_pipelines.minimax_h3.before_denoise import (
 )
 
 from difflab import config as app_config
-from difflab.core import ui
+from difflab.core import profiling, ui
 from difflab.models import offload
 from difflab.models.minimax_h3 import config
 from difflab.models.minimax_h3.text_encoder import Conditioning
@@ -649,6 +649,7 @@ def sample(
     for index, (timestep, audio_timestep) in enumerate(
         zip(video_scheduler.timesteps, audio_scheduler.timesteps, strict=True)
     ):
+        profiling.step()
         unique, row_indices = build_row_timesteps(
             sequence_length,
             video_indices,
@@ -696,6 +697,7 @@ def sample(
                 )[0]
         if on_step is not None:
             on_step(index, *estimate)
+    profiling.done()
 
     # Both streams carry their conditioning rows at the front; only the generated tail comes back.
     video = unpatchify(latents[condition_rows:].float().cpu(), geometry)

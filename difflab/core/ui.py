@@ -21,7 +21,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import Any
 
-from difflab.core import context, events, protocol
+from difflab.core import context, events, profiling, protocol
 
 _LABEL_WIDTH = 34
 _DETAIL_WIDTH = 30
@@ -433,6 +433,7 @@ class EditProgress:
     def on_step_end(self, pipe: Any, step: int, timestep: Any, callback_kwargs: dict[str, Any]) -> dict[str, Any]:
         """Pipeline `callback_on_step_end`: one denoising step done."""
         self._denoised = step + 1
+        profiling.step()
         if self._throttle(final=self._denoised == self._steps):
             events.emit(
                 protocol.StageProgress(
@@ -452,6 +453,7 @@ class EditProgress:
     ) -> None:
         if self._hook is not None:
             self._hook.remove()
+        profiling.done()
         self._finish_denoising()  # only does something if denoising was interrupted
         self._end_phase(success=exc_type is None)
 
