@@ -1,4 +1,4 @@
-"""A production's idea rewritten by the director round by round, each round a run of one job."""
+"""A production's one-chapter story rewritten by the director round by round, each round a run of one job."""
 
 from __future__ import annotations
 
@@ -22,8 +22,11 @@ def improve(
         made = store.production(connection, production_id)
         if made is None:
             raise LookupError(f"no production {production_id}")
-        if made.story_kind != "idea":
-            raise ValueError("only a production begun from an idea has one to improve")
+        if made.story_kind != "text":
+            raise ValueError("only a production begun from a story has one to improve")
+        chapters = len(store.chapters_of(connection, production_id))
+        if chapters != 1:
+            raise ValueError(f"the story runs {chapters} chapters: only a one-chapter story is rewritten whole")
         running = live_run(connection, production_id)
         if running is not None:
             raise ValueError(f"the director is already rewriting this idea, in run {running.id}")

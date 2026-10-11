@@ -51,8 +51,11 @@ class Chapter:
 
 
 def chapters_of(text: str, level: int = 1) -> list[Chapter]:
-    """A chapter per heading of `level` or above; text with no such heading over it, every 600 words."""
+    """A chapter per heading of `level` or above; text with no such heading over it, every 600 words.
+    A text with no heading that fits one chapter keeps its lines: a refined story numbers its beats."""
     found = [m for m in HEADING.finditer(text) if len(m.group(1)) <= level]
+    if not HEADING.search(text) and 0 < len(text.split()) <= WORDS_PER_CHAPTER:
+        return [Chapter("", production.lines(text), True)]
     parts: list[tuple[str, str]] = [("", text[: found[0].start()] if found else text)]
     for index, match in enumerate(found):
         end = found[index + 1].start() if index + 1 < len(found) else len(text)
@@ -173,7 +176,6 @@ def slug_for(title: str) -> str:
 # --- a production from a story ----------------------------------------------------------------------
 def from_story(
     slug: str,
-    kind: str,
     story: str,
     references: list[Reference],
     target_seconds: float,
@@ -184,15 +186,10 @@ def from_story(
     continuity: Continuity | None = None,
     ingesting: IngestSettings | None = None,
 ) -> store.Production:
-    """`kind` idea is one chapter; text is split by `ingesting.heading_level`. The first location
-    photograph, or the first photograph, is where chapter 1 opens."""
+    """The story split by `ingesting.heading_level`. The first location photograph, or the first
+    photograph, is where chapter 1 opens."""
     chosen = ingesting or IngestSettings()
-    if kind == "idea":
-        parts = [Chapter("", production.lines(story), True)] if story.strip() else []
-    elif kind == "text":
-        parts = chapters_of(story, chosen.heading_level)
-    else:
-        raise ValueError(f"a story is an idea or a text, not {kind!r}")
+    parts = chapters_of(story, chosen.heading_level)
     if not parts:
         raise ValueError("a story, in your own words or as a file: what happens")
     if target_seconds < knobs.DIRECTOR_CLIP_MIN:
@@ -226,7 +223,7 @@ def from_story(
         "photos": photos, "labels": labels, "references": rows, "target_seconds": target_seconds,
         "shortest": shortest, "aspect": aspect,
     }  # fmt: skip
-    return _begun(made.id, kind, production.lines(story) if kind == "idea" else story.strip(), manifest)
+    return _begun(made.id, "text", production.lines(story), manifest)
 
 
 def _photos(references: list[Reference], rows: list[dict[str, Any]]) -> tuple[list[str], dict[str, dict[str, str]]]:

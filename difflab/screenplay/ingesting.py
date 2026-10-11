@@ -172,7 +172,10 @@ def _split(production: store.Production, chapters: list[store.Chapter]) -> list[
             for n, part in enumerate(parts, 1)
             if not part.headed
         ]
-        out.insert(1, ("on", f"h{chosen.heading_level} headings" if any(p.headed for p in parts) else "no headings"))
+        out.insert(
+            1,
+            ("on", f"h{chosen.heading_level} headings" if any(p.title and p.headed for p in parts) else "no headings"),
+        )
     return out
 
 

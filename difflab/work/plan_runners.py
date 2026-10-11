@@ -481,7 +481,7 @@ def run_tidy(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]
     identities |= {
         slug: {"traits": [], "lights": [], "photographed": True, **identity} for slug, identity in pinned.items()
     }
-    told = production is not None and production.story_kind in ("idea", "text")
+    told = production is not None and production.story_kind == "text"
     # A video's story is its captions' change, not a description: nothing in it argues with a photograph.
     texts = {
         slug: ruling.novel(idea, card, aliases.get(slug, ""))
@@ -516,7 +516,7 @@ def run_describe_member(inputs: dict[str, Any], settings: dict[str, Any]) -> dic
     seen = cards.identify(frames, [[asked]] * len(frames))
     merged, conflicts = cards.merge(story, {member.slug: asked}, seen, found, [(member.slug,)] * len(frames))
     card = merged[member.slug]
-    told = production.story_kind in ("idea", "text") and card.photographed
+    told = production.story_kind == "text" and card.photographed
     texts = ruling.novel(story, card, member.aliases) if told else []
     with store.connect() as connection, store.transaction(connection):
         store.update_member(connection, member.id, identity=_identity(card), appearance="", pinned=False)

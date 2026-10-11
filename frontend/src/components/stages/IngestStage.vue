@@ -16,10 +16,6 @@ const props = defineProps<{
 const router = useRouter()
 const route = useRoute()
 
-const PLACEHOLDER: Record<string, string> = {
-  idea: 'What happens, in your own words. The director plans one chapter from it.',
-  text: '# A heading per chapter\n\nor plain text, split every 600 words',
-}
 
 // --- while the plan builds the bible ------------------------------------------------------------
 /** Asked for by the form that began it, or found: a plan whose bible is still being built. */
@@ -196,11 +192,11 @@ const discard = () => {
       <div class="body">
         <label class="field"><span class="eyebrow">title</span><input v-model="title" /></label>
         <textarea
-          v-if="production.story_kind === 'idea' || production.story_kind === 'text'"
+          v-if="production.story_kind === 'text'"
           v-model="story"
-          :rows="production.story_kind === 'text' ? 12 : 10"
+          :rows="production.chapters.length > 1 ? 12 : 10"
           class="prose"
-          :placeholder="PLACEHOLDER[production.story_kind]"
+          placeholder="What happens, in your own words. # A heading per chapter, or plain text split every 600 words."
         />
         <p v-else class="story">{{ production.story || 'No story: the shots were added by hand.' }}</p>
         <div class="saving">
@@ -215,7 +211,7 @@ const discard = () => {
       </div>
     </section>
 
-    <IdeaPanel v-if="production.story_kind === 'idea'" :production="production" :busy="busy" :act="act" />
+    <IdeaPanel v-if="production.story_kind === 'text' && production.chapters.length === 1" :production="production" :busy="busy" :act="act" />
 
     <section class="card">
       <div class="head">
@@ -247,7 +243,7 @@ const discard = () => {
             <span class="mono">{{ i === 0 ? 'opens · ' : '' }}{{ name(p) }}</span>
           </a>
         </div>
-        <div v-if="production.story_kind === 'idea' || production.story_kind === 'text'" class="aspect ruled">
+        <div v-if="production.story_kind === 'text'" class="aspect ruled">
           <div class="saving">
             <label class="field">
               <span class="eyebrow">aspect · canvas {{ canvasNow ? `${canvasNow.width}×${canvasNow.height}` : 'not cut yet' }}</span>

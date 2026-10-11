@@ -506,7 +506,7 @@ function showAffected(ids: number[]) {
 const meta = computed(() => {
   const p = production.value
   if (!p) return fresh.value ? 'nothing ingested yet' : ''
-  const kind = { idea: 'idea', text: 'story', video: 'video' }[p.story_kind] ?? 'by hand'
+  const kind = { text: 'story', video: 'video' }[p.story_kind] ?? 'by hand'
   const aim = typeof p.manifest.target_seconds === 'number' ? (p.manifest.target_seconds as number) : 0
   return `${kind} · ${plural(p.chapters.length, 'chapter')} · ${aim ? `target ${length(aim)}` : length(p.chapters.reduce((t, c) => t + c.shots.reduce((u, s) => u + s.seconds, 0), 0))}`
 })

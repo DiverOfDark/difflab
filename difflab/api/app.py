@@ -487,7 +487,7 @@ async def guess_references(request: Request) -> dict[str, Any]:
 
 @app.post("/api/ingest")
 async def ingest_story(request: Request) -> dict[str, Any]:
-    """A production from a story and its references: `kind` idea or text, `story`, `references` ({path,
+    """A production from a story and its references: `story`, `references` ({path,
     kind, entity, guess}), `title`, `target_seconds` for the whole film, `shortest` shot, `aspect`, and
     partial `video`, `continuity` and `ingest` settings over the code defaults. The bible is built at once;
     `plan` plans every chapter too, stopping before render."""
@@ -501,7 +501,6 @@ async def ingest_story(request: Request) -> dict[str, Any]:
             raise ValueError("a title, in words")
         made = ingest.from_story(
             str(body.get("slug") or "").strip() or ingest.slug_for(title),
-            str(body.get("kind", "")),
             str(body.get("story", "")),
             ingest.references_of(list(body.get("references") or [])),
             float(body.get("target_seconds") or 0),

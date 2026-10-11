@@ -16,7 +16,7 @@ import {
   type RefKind,
   type Timings,
 } from '../../api'
-import { ASPECTS, CLIP_MIN, SHOT_MAX, chaptersOf, length, pad, parseLength, parseRange, words } from '../../production'
+import { ASPECTS, CLIP_MIN, SHOT_MAX, chaptersOf, length, pad, parseLength, parseRange } from '../../production'
 
 const props = defineProps<{
   busy: string
@@ -24,30 +24,23 @@ const props = defineProps<{
 }>()
 const router = useRouter()
 
-type StoryKind = 'file' | 'text' | 'idea' | 'video'
+type StoryKind = 'file' | 'text' | 'video'
 const KINDS: { id: StoryKind; label: string }[] = [
   { id: 'file', label: 'UPLOAD' },
-  { id: 'text', label: 'PASTE TEXT' },
-  { id: 'idea', label: 'IDEA' },
+  { id: 'text', label: 'STORY' },
   { id: 'video', label: 'REDO VIDEO' },
 ]
 const storyKind = ref<StoryKind>('file')
 const title = ref('')
 const text = ref('')
-const idea = ref('')
 const file = ref<{ name: string; text: string; words: number } | null>(null)
-const target = ref('2 h')
+const target = ref('')
 const shot = ref('6–8 s')
 const aspect = ref<number | null>(16 / 9)
 const autoPlan = ref(true)
 const knobs = reactive({ heading_level: 1, frames: 12, min_sharpness: 50 })
 const problem = ref('')
 const reading = ref(false)
-
-watch(storyKind, (kind, was) => {
-  if (kind === 'idea' && target.value === '2 h') target.value = '60 s'
-  if (was === 'idea' && kind !== 'video' && target.value === '60 s') target.value = '2 h'
-})
 
 onMounted(async () => {
   const tools = await listTools().catch(() => [])
@@ -72,14 +65,11 @@ async function pickStory(files: File[]) {
     reading.value = false
   }
 }
-const storyText = computed(() => (storyKind.value === 'file' ? file.value?.text ?? '' : storyKind.value === 'text' ? text.value : idea.value))
-const chapters = computed(() => {
-  if (storyKind.value === 'video') return []
-  if (storyKind.value === 'idea') return idea.value.trim() ? [{ title: '', words: words(idea.value), headed: true }] : []
-  return chaptersOf(storyText.value, knobs.heading_level)
-})
+const storyText = computed(() => (storyKind.value === 'file' ? file.value?.text ?? '' : text.value))
+const chapters = computed(() => (storyKind.value === 'video' ? [] : chaptersOf(storyText.value, knobs.heading_level)))
 const totalWords = computed(() => chapters.value.reduce((n, c) => n + c.words, 0))
-const targetSeconds = computed(() => parseLength(target.value))
+const targetDefault = computed(() => (chapters.value.length > 1 ? '2 h' : '60 s'))
+const targetSeconds = computed(() => parseLength(target.value || targetDefault.value))
 const range = computed(() => parseRange(shot.value))
 /** Mirrors `production.take_seconds`: the target spread by words, none under one shot. */
 const chapterSeconds = computed(() =>
@@ -91,7 +81,8 @@ const totalShots = computed(() => chapterSeconds.value.reduce((n, s) => n + shot
 const untitled = computed(() => chapters.value.map((c, i) => ({ ...c, n: i + 1 })).filter((c) => !c.headed))
 const splitNote = computed(() => {
   if (!chapters.value.length) return 'Add a story to see how it splits.'
-  if (storyKind.value === 'idea') return 'An idea is one chapter of one scene; the director plans it whole.'
+  if (chapters.value.length === 1 && chapters.value[0].headed && !chapters.value[0].title)
+    return 'One chapter, planned whole. Once begun, the director can rewrite it into a story it renders well.'
   const loose = untitled.value.length
     ? ` ${untitled.value.length === chapters.value.length ? 'No heading' : `Chapter${untitled.value.length > 1 ? 's' : ''} ${untitled.value.map((c) => pad(c.n, 2)).join(', ')} ha${untitled.value.length > 1 ? 've' : 's'} no heading`}: split every 600 words.`
     : ''
@@ -301,7 +292,6 @@ const begin = () =>
       return
     }
     const made = await ingestStory({
-      kind: storyKind.value === 'idea' ? 'idea' : 'text',
       title: title.value,
       story: storyText.value,
       references: rows.value.map((row) => ({ path: row.path, kind: row.kind, entity: row.entity, guess: row.kind === 'style' ? row.look || row.about : row.about })),
@@ -357,14 +347,7 @@ const onPick = (event: Event, take: (files: File[]) => void) => {
           v-model="text"
           rows="10"
           class="prose"
-          placeholder="Paste the full text. Chapters are split on headings, or every ~600 words if there are none."
-        />
-        <textarea
-          v-else-if="storyKind === 'idea'"
-          v-model="idea"
-          rows="3"
-          class="prose"
-          placeholder="A few sentences. The bible and shot list are written from this alone; short films only."
+          placeholder="A few sentences of what happens, or the full text. Chapters split on headings, or every ~600 words if there are none."
         />
         <template v-else>
           <div
@@ -383,7 +366,7 @@ const onPick = (event: Event, take: (files: File[]) => void) => {
         </template>
 
         <div class="three ruled">
-          <label v-if="storyKind !== 'video'" class="field"><span class="eyebrow">TARGET LENGTH</span><input v-model="target" placeholder="2 h" /></label>
+          <label v-if="storyKind !== 'video'" class="field"><span class="eyebrow">TARGET LENGTH</span><input v-model="target" :placeholder="targetDefault" /></label>
           <label class="field" :title="`the director plans shots inside this range; ${CLIP_MIN} s is the shortest it can hold`">
             <span class="eyebrow">{{ storyKind === 'video' ? 'LONGEST SHOT' : 'SHOT LENGTH' }}</span><input v-model="shot" placeholder="6–8 s" />
           </label>
@@ -403,7 +386,7 @@ const onPick = (event: Event, take: (files: File[]) => void) => {
               v-for="(c, i) in chapters.slice(0, 60)"
               :key="i"
               :class="{ loose: !c.headed }"
-              :title="`${c.title || 'the idea'} · ${c.words} words · ${length(chapterSeconds[i])} · ~${shotsOf(chapterSeconds[i])} shots${c.headed ? '' : ' · no heading, split at 600 words'}`"
+              :title="`${c.title || 'the story'} · ${c.words} words · ${length(chapterSeconds[i])} · ~${shotsOf(chapterSeconds[i])} shots${c.headed ? '' : ' · no heading, split at 600 words'}`"
               :style="{ flex: c.words }"
               >{{ pad(i + 1, 2) }}</span
             >

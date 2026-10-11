@@ -413,7 +413,7 @@ def _opening_frame(connection: Any, production_id: int) -> str | None:
 
 
 def update(production_id: int, **changes: Any) -> dict[str, int]:
-    """`title`; `story`, the idea or text it is planned from; `opening`, the first frame in words with
+    """`title`; `story`, the text it is planned from; `opening`, the first frame in words with
     each member as {id} ("" gives it back to what the planner reads off the first photo); `aspect`, the
     canvas's width over height (None: the first photo's). A changed story, opening or aspect makes every
     prompt, composed keyframe and clip stale until a re-plan."""
@@ -435,14 +435,12 @@ def update(production_id: int, **changes: Any) -> dict[str, int]:
             story = str(changes["story"])
             if production.story_kind == "video":
                 raise ValueError("a video production's story is its captions' one change: begin it again to change it")
-            if production.story_kind == "text":
-                _resplit(connection, production_id, story)
-                story = story.strip()
-            else:
-                story = lines(story)
+            story = lines(story)
             if not story:
                 raise ValueError("a story, in your own words: what happens")
             if story != production.story:
+                if production.story_kind == "text":
+                    _resplit(connection, production_id, story)
                 store.update_production(connection, production_id, story=story)
                 replan = True
         if "opening" in changes:
@@ -492,12 +490,15 @@ def lines(text: str) -> str:
 
 
 def _resplit(connection: Any, production_id: int, text: str) -> None:
-    from difflab.screenplay.ingest import chapters_of  # ingest begins productions through this module
+    from difflab.screenplay.ingest import Chapter, chapters_of  # ingest begins productions through this module
 
     chosen, _ = settings.effective("ingest", production_id)
     assert isinstance(chosen, IngestSettings)
     parts = chapters_of(text, chosen.heading_level)
     chapters = store.chapters_of(connection, production_id)
+    # A refined story can run past 600 words; one chapter splits only at a heading.
+    if len(chapters) == 1 and len(parts) > 1 and not any(p.headed for p in parts):
+        parts = [Chapter("", text, True)]
     if len(parts) < len(chapters):
         raise ValueError(f"the text makes {len(parts)} chapter(s) and the production has {len(chapters)}")
     for position, part in enumerate(parts):

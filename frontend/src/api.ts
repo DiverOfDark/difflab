@@ -453,7 +453,6 @@ export interface IngestRef {
 }
 
 export interface IngestStory {
-  kind: 'idea' | 'text'
   title: string
   story: string
   references: IngestRef[]

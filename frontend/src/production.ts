@@ -99,6 +99,8 @@ export interface SplitChapter {
   headed: boolean
 }
 export function chaptersOf(text: string, level: number): SplitChapter[] {
+  const all = words(text)
+  if (!text.match(HEADING) && all && all <= WORDS_PER_CHAPTER) return [{ title: '', words: all, headed: true }]
   const found = [...text.matchAll(HEADING)].filter((m) => m[1].length <= level)
   const parts: [string, string][] = [['', found.length ? text.slice(0, found[0].index) : text]]
   found.forEach((m, i) => parts.push([m[2].trim(), text.slice(m.index! + m[0].length, found[i + 1]?.index ?? text.length)]))
