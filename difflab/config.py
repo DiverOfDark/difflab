@@ -38,8 +38,9 @@ VLM_CONTEXT_TOKENS = 65536
 # asks for, keeps accepting further out; prose stops gaining at 3. Each draft is another
 # linear-attention state held per slot, ~150 MB.
 VLM_DRAFT_TOKENS = 4
-# The template's default is xhigh; low keeps the many one-question rulings cheap. Thinking is spent on
-# top of each caller's answer cap, so a cut-off thought leaves an empty answer, not a short one.
+# The template's default is xhigh; low keeps the many one-question rulings cheap. A thought that reaches
+# VLM_THINK_TOKENS is closed there: asked for 60-80 words, it counted its draft word by word past 4,096
+# tokens and never answered (production 16's opening, 2026-10-11).
 VLM_REASONING_EFFORT = "low"
 VLM_THINK_TOKENS = 4096
 VLM_RECURRENT_CACHE_BYTES = 1024**3  # host RAM, for reusing a prefix's linear-attention state

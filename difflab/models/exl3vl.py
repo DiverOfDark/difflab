@@ -1,7 +1,6 @@
 """Qwen3.8-27B as turboderp's EXL3 on ExLlamaV3, its MTP head (kept at `mtp_bits: 4`) drafting."""
 
 import gc
-import json
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
@@ -25,9 +24,6 @@ IMAGE_SLOT = "<|vision_start|><|image_pad|><|vision_end|>"
 # prefix `"members":[` being one it never writes unthinking; forced `": "`, a model that had thought "let
 # me format the JSON on one line" wrote `{"traits [{": ...`, its `":[{"` masked out (2026-10-11).
 ANY_JSON = {"type": ["object", "array"], "x-guidance": {"whitespace_pattern": " ?"}}
-
-# The template opens `<think>` itself; </think> is one special token, so the free-text lexeme cannot eat it.
-THEN_JSON = "start: /(?s:.*)/ </think> /\\s*/ answer\nanswer: %json "
 
 
 class Exl3VL:
@@ -81,6 +77,7 @@ class Exl3VL:
             "template": AutoTokenizer.from_pretrained(path, local_files_only=True),
             "generator": generator,
             "stops": [tokenizer.eos_token_id, tokenizer.single_id("<|im_end|>")],
+            "thought": tokenizer.single_id("</think>"),
         }
 
     def ask(
@@ -122,35 +119,36 @@ class Exl3VL:
             ComboSampler(temperature=temperature, top_p=top_p, top_k=top_k) if temperature > 0 else ArgmaxSampler()
         )
         masked = schema or ANY_JSON
-        shape = (
-            [LLGuidanceFilter(tokenizer, eos_after_completed=True, lark_grammar=THEN_JSON + json.dumps(masked))]
-            if as_json
-            else None
-        )
-        job = Job(
-            input_ids=tokenizer.encode(prompt, encode_special_tokens=True, embeddings=embeddings),
-            max_new_tokens=max_new_tokens + config.VLM_THINK_TOKENS,
-            stop_conditions=parts["stops"],
-            sampler=sampler,
-            seed=seed,
-            embeddings=embeddings,
-            filters=shape,
-            decode_special_tokens=True,
-        )
         generator = parts["generator"]
-        generator.enqueue(job)
-        text = ""
-        with ui.live_answer(title, echo) as show:
+
+        def run(text: str, cap: int, stops: list[int], shape: list[Any] | None, show: Callable[[str], None]) -> str:
+            generator.enqueue(
+                Job(
+                    input_ids=tokenizer.encode(text, encode_special_tokens=True, embeddings=embeddings),
+                    max_new_tokens=cap,
+                    stop_conditions=stops,
+                    sampler=sampler,
+                    seed=seed,
+                    embeddings=embeddings,
+                    filters=shape,
+                )
+            )
+            said = ""
             while generator.num_remaining_jobs():
                 for result in generator.iterate():
                     if chunk := result.get("text"):
-                        text += chunk
-                        show(text)
-            _, closed, answer = text.partition("</think>")
-            answer = answer.strip() if closed else ""
-            if closed:
-                show(answer)  # the finished line keeps the answer; a thought cut off is kept whole
-        return answer
+                        said += chunk
+                        show(said)
+            return said
+
+        with ui.live_answer(title, echo) as show:
+            thought = run(prompt, config.VLM_THINK_TOKENS, [*parts["stops"], parts["thought"]], None, show)
+            # Closed here whether the model closed it or the budget ran out, so the answer always has its own cap.
+            prompt += f"{thought.strip()}\n</think>\n\n"
+            shape = [LLGuidanceFilter(tokenizer, eos_after_completed=True, json_schema=masked)] if as_json else None
+            answer = run(prompt, max_new_tokens, parts["stops"], shape, lambda said: show(f"{thought}\n\n{said}"))
+            show(answer.strip())
+        return answer.strip()
 
     def unload(self) -> None:
         if self._parts is not None:
