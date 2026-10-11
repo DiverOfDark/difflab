@@ -70,6 +70,11 @@ class Registry:
         self._touch(key)
         return model
 
+    def roomy(self, spec: ModelSpec, work: Callable[[], Any]) -> Any:
+        """`work` with `spec`'s model, given the heavy models' room if it runs out: a judge's VLM (17.4 GB)
+        left resident beside the video VAE (4.85 GB) fits, and then encoding a reference clip did not."""
+        return self._roomy(work, spec)
+
     def evict(self, key: str) -> None:
         if key not in self._resident:
             return

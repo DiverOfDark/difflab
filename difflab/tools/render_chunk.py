@@ -420,7 +420,10 @@ def cached_latents(
         # previous chunk's motion follows it. A caption written for one chunk then means the same thing
         # in every chunk, which is what `Reel.check` refuses to let drift.
         held = [*clips, *([tail] if tail else [])]
-        encoded, presented = encode_references(references, settings, geometry, held, clip_scale=clip_scale)
+        encoded, presented = models.registry.roomy(
+            video_vae_spec(settings),
+            lambda: encode_references(references, settings, geometry, held, clip_scale=clip_scale),
+        )
         last_latent, last_canvas = condition_last(closing, settings, geometry) if closing is not None else (None, None)
         conditioning = encode(prompt, canvas, presented, settings, last_canvas)
         sampled = sample(conditioning, first_latent, geometry, settings, prompt, encoded, on_step, last_latent)
