@@ -4,11 +4,16 @@ Neither big model fits beside the rest of a 24 GB card: the text encoder is 22.7
 bf16, and the DiT is 19.5 GB int8 with roughly 6 GB of activations at full size. Every block keeps its
 CPU copy, resident or not, so releasing one is a pointer swap and nothing is reallocated per step.
 
-Measured at 15 ms per 385 MB block (25.6 GB/s over PCIe), i.e. ~0.8 s per step for all 50 DiT blocks,
-paid in full: the copy is not overlapped with compute. From pageable memory that copy also held the
+Measured at 15 ms per 385 MB block (25.6 GB/s over PCIe). From pageable memory that copy also held the
 worker thread: py-spy found it in 73% of a 30-minute H3 render (2026-10-11), so a streamed block's CPU copy
-is pinned. Each block is one exact-size buffer pinned in place: `pin_memory()` rounds every allocation up to
-a power of two, which turns a 37 MB weight into 64 MB of locked RAM on a 58 GB host.
+is pinned, and the next streamed block is copied on a side stream while this one computes. Each block is
+one exact-size buffer pinned in place: `pin_memory()` rounds every allocation up to a power of two, which
+turns a 37 MB weight into 64 MB of locked RAM on a 58 GB host.
+
+The prefetched block is allocated on the compute stream, not the copy stream: the CPU runs blocks ahead of
+the GPU, and memory a side stream allocated cannot be reused until the compute stream is done with it, so
+each block ahead would hold another 385 MB. On the compute stream the extra is one block, which `fit`
+leaves room for.
 """
 
 import weakref
@@ -41,16 +46,45 @@ class BlockStreamer:
         self.handles: list[RemovableHandle] = []
         self.resident = False
         self.pinned = False
+        self.following: BlockStreamer | None = None
+        self.fetched: list[torch.Tensor | None] | None = None
         self._hook()
 
     def onload(self, module: nn.Module, args: tuple[object, ...]) -> None:
         if not self.pinned:
             self._pin()
-        self._place()
+        if self.fetched is None:
+            self._place([None] * len(self.cpu))
+        else:
+            torch.cuda.current_stream(self.device).wait_stream(_copier(self.device))
+            self._place(self.fetched)
+            self.fetched = None
+        following = self.following
+        while following is not None and following.resident:
+            following = following.following
+        if following is not None and following.fetched is None:
+            following.prefetch()
 
-    def _place(self) -> None:
-        for (owner, name, is_parameter), cpu in zip(self.slots, self.cpu, strict=True):
-            resident = cpu.to(self.device, non_blocking=True)
+    def prefetch(self) -> None:
+        if not self.pinned:
+            self._pin()
+        copier = _copier(self.device)
+        copier.wait_stream(torch.cuda.current_stream(self.device))
+        fetched = [torch.empty_like(cpu, device=self.device) if type(cpu) is torch.Tensor else None for cpu in self.cpu]
+        with torch.cuda.stream(copier):
+            for cpu, gpu in zip(self.cpu, fetched, strict=True):
+                if gpu is not None:
+                    gpu.copy_(cpu, non_blocking=True)
+        self.fetched = fetched
+
+    def drop(self) -> None:
+        if self.fetched is not None:
+            torch.cuda.current_stream(self.device).wait_stream(_copier(self.device))
+            self.fetched = None
+
+    def _place(self, fetched: list[torch.Tensor | None]) -> None:
+        for (owner, name, is_parameter), cpu, gpu in zip(self.slots, self.cpu, fetched, strict=True):
+            resident = cpu.to(self.device, non_blocking=True) if gpu is None else gpu
             if is_parameter:
                 parameter = owner._parameters[name]
                 if parameter is not None:
@@ -71,7 +105,8 @@ class BlockStreamer:
         for handle in self.handles:
             handle.remove()
         self.handles = []
-        self._place()
+        self.drop()
+        self._place([None] * len(self.cpu))
         self.resident = True
 
     def unsettle(self) -> None:
@@ -114,20 +149,26 @@ class BlockStreamer:
 
 
 _streamers: "weakref.WeakSet[BlockStreamer]" = weakref.WeakSet()
+_copiers: dict[torch.device, torch.cuda.Stream] = {}
 
 
 def stream_blocks(blocks: Iterable[nn.Module], device: str | torch.device) -> None:
     target = torch.device(device)
+    previous: BlockStreamer | None = None
     for block in blocks:
         streamer = BlockStreamer(block, target)
         setattr(block, _ATTRIBUTE, streamer)
         _streamers.add(streamer)
+        if previous is not None:
+            previous.following = streamer
+        previous = streamer
 
 
 def fit(blocks: Iterable[nn.Module], reserve: int) -> int:
     """Settle blocks in order while `reserve` bytes stay free, releasing from the end if they do not;
     returns how many are resident."""
     streamers: list[BlockStreamer] = [getattr(block, _ATTRIBUTE) for block in blocks]
+    reserve += max((streamer.size for streamer in streamers), default=0)
     for streamer in reversed(streamers):
         if _room(streamer.device) >= reserve:
             break
@@ -141,12 +182,20 @@ def fit(blocks: Iterable[nn.Module], reserve: int) -> int:
 
 def release() -> int:
     """Stream every resident block again, for a stage that needs the card; returns how many were."""
+    for streamer in _streamers:
+        streamer.drop()
     resident = [streamer for streamer in _streamers if streamer.resident]
     for streamer in resident:
         streamer.unsettle()
     if resident:
         torch.cuda.empty_cache()
     return len(resident)
+
+
+def _copier(device: torch.device) -> torch.cuda.Stream:
+    if device not in _copiers:
+        _copiers[device] = torch.cuda.Stream(device)  # type: ignore[no-untyped-call]
+    return _copiers[device]
 
 
 def _unpin(flat: torch.Tensor) -> None:
