@@ -5,7 +5,10 @@ bf16, and the DiT is 19.5 GB int8 with roughly 6 GB of activations at full size.
 CPU copy, resident or not, so releasing one is a pointer swap and nothing is reallocated per step.
 
 Measured at 15 ms per 385 MB block (25.6 GB/s over PCIe), i.e. ~0.8 s per step for all 50 DiT blocks,
-paid in full: the copy is not overlapped with compute.
+paid in full: the copy is not overlapped with compute. From pageable memory that copy also held the
+worker thread: py-spy found it in 73% of a 30-minute H3 render (2026-10-11), so a streamed block's CPU copy
+is pinned. Each block is one exact-size buffer pinned in place: `pin_memory()` rounds every allocation up to
+a power of two, which turns a 37 MB weight into 64 MB of locked RAM on a 58 GB host.
 """
 
 import weakref
@@ -16,6 +19,7 @@ from torch import nn
 from torch.utils.hooks import RemovableHandle
 
 _ATTRIBUTE = "_difflab_streamer"
+_ALIGNMENT = 256
 
 
 class BlockStreamer:
@@ -36,9 +40,15 @@ class BlockStreamer:
         self.size = sum(tensor.numel() * tensor.element_size() for tensor in self.cpu)
         self.handles: list[RemovableHandle] = []
         self.resident = False
+        self.pinned = False
         self._hook()
 
     def onload(self, module: nn.Module, args: tuple[object, ...]) -> None:
+        if not self.pinned:
+            self._pin()
+        self._place()
+
+    def _place(self) -> None:
         for (owner, name, is_parameter), cpu in zip(self.slots, self.cpu, strict=True):
             resident = cpu.to(self.device, non_blocking=True)
             if is_parameter:
@@ -61,7 +71,7 @@ class BlockStreamer:
         for handle in self.handles:
             handle.remove()
         self.handles = []
-        self.onload(self.block, ())
+        self._place()
         self.resident = True
 
     def unsettle(self) -> None:
@@ -74,6 +84,33 @@ class BlockStreamer:
             self.block.register_forward_pre_hook(self.onload),
             self.block.register_forward_hook(self.offload),
         ]
+
+    def _pin(self) -> None:
+        self.pinned = True
+        # Subclasses (quantized wrappers) and strided views stay pageable: a flat copy would lose their layout.
+        movable = [i for i, tensor in enumerate(self.cpu) if type(tensor) is torch.Tensor and tensor.is_contiguous()]
+        offsets, total = [], 0
+        for i in movable:
+            offsets.append(total)
+            total += -(-self.cpu[i].numel() * self.cpu[i].element_size() // _ALIGNMENT) * _ALIGNMENT
+        if not total:
+            return
+        flat = torch.empty(total, dtype=torch.uint8)
+        for i, offset in zip(movable, offsets, strict=True):
+            tensor = self.cpu[i]
+            view = flat[offset : offset + tensor.numel() * tensor.element_size()].view(tensor.dtype).view(tensor.shape)
+            view.copy_(tensor)
+            owner, name, is_parameter = self.slots[i]
+            if is_parameter:
+                parameter = owner._parameters[name]
+                if parameter is not None:
+                    parameter.data = view
+            else:
+                owner._buffers[name] = view
+            self.cpu[i] = view
+        cudart = torch.cuda.cudart()  # type: ignore[no-untyped-call]
+        torch.cuda.check_error(cudart.cudaHostRegister(flat.data_ptr(), total, 0))
+        weakref.finalize(self, _unpin, flat)
 
 
 _streamers: "weakref.WeakSet[BlockStreamer]" = weakref.WeakSet()
@@ -110,6 +147,11 @@ def release() -> int:
     if resident:
         torch.cuda.empty_cache()
     return len(resident)
+
+
+def _unpin(flat: torch.Tensor) -> None:
+    cudart = torch.cuda.cudart()  # type: ignore[no-untyped-call]
+    torch.cuda.check_error(cudart.cudaHostUnregister(flat.data_ptr()))
 
 
 def _room(device: torch.device) -> int:
