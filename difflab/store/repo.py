@@ -142,6 +142,18 @@ def jobs_of(connection: sqlite3.Connection, run_id: str) -> list[Job]:
     return [Job.of(row) for row in rows]
 
 
+def job_counts(connection: sqlite3.Connection, run_ids: list[str]) -> dict[str, tuple[int, int]]:
+    """(done or skipped, all) per run."""
+    if not run_ids:
+        return {}
+    marks = ",".join("?" * len(run_ids))
+    rows = connection.execute(
+        f"SELECT run_id, sum(state IN (?, ?)), count(*) FROM jobs WHERE run_id IN ({marks}) GROUP BY run_id",
+        (DONE, SKIPPED, *run_ids),
+    ).fetchall()
+    return {str(row[0]): (int(row[1]), int(row[2])) for row in rows}
+
+
 def last_done_job(connection: sqlite3.Connection, tool: str, key: str) -> Job | None:
     """The newest finished job of this tool under this key: what a job with the same inputs may reuse."""
     row = connection.execute(
@@ -366,11 +378,11 @@ def newest_event(connection: sqlite3.Connection, run_id: str) -> float | None:
 def newest_events(connection: sqlite3.Connection, run_ids: list[str]) -> dict[str, float]:
     if not run_ids:
         return {}
-    marks = ",".join("?" * len(run_ids))
+    # One max() per run is an index probe; a GROUP BY over all of them scans every event (0.2 vs 23 ms).
     rows = connection.execute(
-        f"SELECT run_id, max(t) FROM events WHERE run_id IN ({marks}) GROUP BY run_id", run_ids
+        "SELECT value, (SELECT max(t) FROM events WHERE run_id = value) FROM json_each(?)", (json.dumps(run_ids),)
     ).fetchall()
-    return {str(row[0]): float(row[1]) for row in rows}
+    return {str(row[0]): float(row[1]) for row in rows if row[1] is not None}
 
 
 def named_events(connection: sqlite3.Connection, run_ids: list[str]) -> list[Event]:

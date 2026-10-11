@@ -499,6 +499,12 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
     # The looks a casting's shot hands H3 as pictures, picked by hand: a JSON list of "base" and look
     # (casting) ids. NULL is the compiler's own pick.
     ("ALTER TABLE castings ADD COLUMN pictured TEXT",),
+    # The run list, polled every 10 s, read max(t) and the titled events by scanning every event of every
+    # run: 63 + 61 ms at 475 runs and 324k events (2026-10-11). `t` is not monotonic in `id` (212 rows).
+    (
+        "CREATE INDEX events_by_time ON events(run_id, t)",
+        "CREATE INDEX events_named ON events(run_id, id) WHERE kind IN ('plan', 'panel')",
+    ),
 )
 
 SCHEMA_VERSION = len(MIGRATIONS)

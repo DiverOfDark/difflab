@@ -18,6 +18,7 @@ from difflab.core import protocol
 STALE_AFTER = 15.0  # seconds without an event (the worker's heartbeat is 2 s) before a run counts as gone
 # What a page may ask of the run itself, and what it asks of the job in flight.
 ON_RUN = (protocol.Pause, protocol.Resume, protocol.Cancel)
+DONE_STATES = (store.DONE, store.SKIPPED)
 
 
 def runs() -> list[dict[str, Any]]:
@@ -27,9 +28,10 @@ def runs() -> list[dict[str, Any]]:
         ids = [record.id for record in listed]
         heard = store.newest_events(connection, ids)
         titled = _named(store.named_events(connection, ids))
-        made = {record.id: store.jobs_of(connection, record.id) for record in listed}
+        counts = store.job_counts(connection, ids)
     return [
-        _summary(record, heard.get(record.id), titled.get(record.id, ("", 0)), made[record.id]) for record in listed
+        _summary(record, heard.get(record.id), titled.get(record.id, ("", 0)), counts.get(record.id, (0, 0)))
+        for record in listed
     ]
 
 
@@ -44,7 +46,9 @@ def one(run_id: str) -> dict[str, Any] | None:
         tasks = {job.id: store.tasks_of(connection, job.id) for job in jobs}
         artifacts = store.artifacts(connection, run_id)
     return {
-        **_summary(record, last, titled.get(run_id, ("", 0)), jobs),
+        **_summary(
+            record, last, titled.get(run_id, ("", 0)), (sum(job.state in DONE_STATES for job in jobs), len(jobs))
+        ),
         "spec": record.data(),
         "jobs": [_job(job, tasks[job.id]) for job in jobs],
         "artifacts": [{"path": a.path, "kind": a.kind, "seed": a.seed, "job": a.job_id} for a in artifacts],
@@ -178,8 +182,9 @@ def since(run_id: str, cursor: int) -> list[store.Event]:
 
 
 # --- what a listing needs of a run ----------------------------------------------------------------
-def _summary(record: store.Run, last: float | None, titled: tuple[str, int], jobs: list[store.Job]) -> dict[str, Any]:
+def _summary(record: store.Run, last: float | None, titled: tuple[str, int], counts: tuple[int, int]) -> dict[str, Any]:
     title, items = titled
+    done, total = counts
     return {
         "id": record.id,
         "title": title or record.title or record.id,
@@ -194,8 +199,8 @@ def _summary(record: store.Run, last: float | None, titled: tuple[str, int], job
         "started": record.started_at,
         "ended": record.ended_at,
         "last": last,
-        "jobs_done": sum(1 for job in jobs if job.state in (store.DONE, store.SKIPPED)),
-        "jobs_total": len(jobs),
+        "jobs_done": done,
+        "jobs_total": total,
     }
 
 
