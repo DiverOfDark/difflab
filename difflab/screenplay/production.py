@@ -30,6 +30,7 @@ OPENING_NOTE = "the opening frame"  # what the planner writes on the keyframe it
 CUT_NOTE = "the plan's cut"  # on a keyframe the planner composes for a "new" cut
 LAND_NOTE = "the plan's landing"  # on a keyframe the planner composes every DIRECTOR_LAND_EVERY shots
 ASPECTS = (0.25, 4.0)  # width over height a canvas may be given
+FITS = ("crop", "extend")  # the first photo cut to the canvas, or kept whole and drawn out to it by the editor
 
 
 def take_seconds(manifest: dict[str, Any], longest: float, stories: list[str] | None = None, index: int = 0) -> float:
@@ -402,10 +403,11 @@ def _shots_of(connection: Any, production_id: int, casting: str | None = None) -
 
 
 def _opening_frame(connection: Any, production_id: int) -> str | None:
-    """The opening frame the last plan run cut from the first photo."""
+    """The opening frame the last plan run cut, or drew out, from the first photo."""
     row = connection.execute(
-        "SELECT outputs FROM jobs WHERE tool = 'cut_crops' AND state IN (?, ?) "
-        "AND json_extract(inputs, '$.production') = ? ORDER BY id DESC LIMIT 1",
+        "SELECT outputs FROM jobs WHERE state IN (?, ?) AND json_extract(inputs, '$.production') = ? "
+        "AND (tool = 'extend_opening' OR (tool = 'cut_crops' AND NOT coalesce(json_extract(outputs, '$.extend'), 0))) "
+        "ORDER BY id DESC LIMIT 1",
         (store.DONE, store.SKIPPED, production_id),
     ).fetchone()
     return None if row is None else json.loads(row[0]).get("opening")
@@ -414,9 +416,10 @@ def _opening_frame(connection: Any, production_id: int) -> str | None:
 def update(production_id: int, **changes: Any) -> dict[str, int]:
     """`title`; `story`, the text it is planned from; `opening`, the first frame in words with
     each member as {id} ("" gives it back to what the planner reads off the first photo); `aspect`, the
-    canvas's width over height (None: the first photo's). A changed story, opening or aspect makes every
-    prompt, composed keyframe and clip stale until a re-plan. `keep` spares it from the cleanup."""
-    unknown = set(changes) - {"title", "story", "opening", "aspect", "keep"}
+    canvas's width over height (None: the first photo's); `fit`, how the first photo meets it (FITS). A
+    changed story, opening, aspect or fit makes every prompt, composed keyframe and clip stale until a
+    re-plan. `keep` spares it from the cleanup."""
+    unknown = set(changes) - {"title", "story", "opening", "aspect", "fit", "keep"}
     if unknown:
         raise ValueError(f"a production has no {', '.join(sorted(unknown))} to edit")
     moved = {"prompts": 0, "keyframes": 0, "clips": 0}
@@ -477,6 +480,15 @@ def update(production_id: int, **changes: Any) -> dict[str, int]:
                     for r in store.refs_of(connection, m.id)
                     if r.generated and r.artifact
                 )
+                replan = True
+        if "fit" in changes:
+            fit = str(changes["fit"] or FITS[0])
+            if fit not in FITS:
+                raise ValueError(f"a fit of {' or '.join(FITS)}")
+            now = store.production(connection, production_id)
+            assert now is not None
+            if fit != (now.manifest.get("fit") or FITS[0]):
+                store.update_production(connection, production_id, manifest={**now.manifest, "fit": fit})
                 replan = True
         if replan:
             moved = _stale(connection, _shots_of(connection, production_id))

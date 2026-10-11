@@ -467,6 +467,8 @@ export interface IngestStory {
   shortest: number
   /** Width over height of the canvas; null takes the first photo's own. */
   aspect: number | null
+  /** How the first photo meets the canvas: cut to it, or kept whole with the sides drawn by the editor. */
+  fit: 'crop' | 'extend'
   video: { duration: number; megapixels: number; steps: number }
   ingest: { heading_level: number; frames: number; min_sharpness: number }
   /** Queue every chapter's plan run, stopping before render. */
@@ -562,7 +564,7 @@ export const listProductions = () => json<ProductionSummary[]>('/api/productions
 export const readProduction = (id: number) => json<Production>(`/api/productions/${id}`)
 export const deleteProduction = (id: number) => json<unknown>(`/api/productions/${id}`, { method: 'DELETE' })
 /** `title`, `story`, `opening` (the first frame in words, `{id}` per member; empty gives it back to the photo),
- *  `aspect` (width over height; null takes the first photo's), `keep` (never deleted by the cleanup). */
+ *  `aspect` (width over height; null takes the first photo's), `fit` ('crop' or 'extend'), `keep` (never deleted by the cleanup). */
 export const patchProduction = (id: number, body: Record<string, unknown>) =>
   json<Production & { stale: Stale }>(`/api/productions/${id}`, send('PATCH', body))
 export const addMember = (id: number, body: Record<string, unknown>) =>

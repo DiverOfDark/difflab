@@ -491,6 +491,25 @@ def run_plate_ref(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str,
     return outputs
 
 
+def run_extend_opening(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
+    if not inputs.get("extend"):
+        return Skipped({"opening": str(inputs["opening"])})
+    chosen = EditSettings(**settings)
+    padded = _frame(inputs["opening"])
+    sides = "left and right" if float(inputs["cut"][0]) < 0 else "top and bottom"
+    said = words.COMPOSE_EXTEND_OPENING.format(sides=sides)
+    made = key("extend_opening", 1, padded=padded.pixels, said=said, settings=chosen)
+    target = cache.path(made, ".png")
+    outputs = {"opening": store.relative(target)}
+    if target.is_file():
+        ui.note(f"already extended as {made}")
+        return Skipped(outputs)
+    edited = edit_image.edit(padded, said, chosen, size=edit_image.vae_reference_size(padded))
+    edited.resized(padded.width, padded.height).pil().save(target)
+    record.artifact_made(target, store.IMAGE, chosen.seed, key=str(made))
+    return outputs
+
+
 def run_draw_reference(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
     with store.connect() as connection:
         member = store.member(connection, int(inputs["member"]))
@@ -646,6 +665,7 @@ RUNNERS: dict[str, Runner] = {
     "draw_reference": run_draw_reference,
     "draw_look": run_draw_look,
     "plate_ref": run_plate_ref,
+    "extend_opening": run_extend_opening,
     "judge": run_judge,
     **PLAN_RUNNERS,
 }

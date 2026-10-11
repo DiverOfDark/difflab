@@ -182,6 +182,7 @@ def from_story(
     shortest: float,
     title: str = "",
     aspect: float | None = None,
+    fit: str = "crop",
     video: VideoSettings | None = None,
     continuity: Continuity | None = None,
     ingesting: IngestSettings | None = None,
@@ -204,6 +205,8 @@ def from_story(
     photos, labels = _photos(references, rows)
     if not photos:
         raise ValueError("at least one photograph, or a video with a sharp frame: chapter 1 opens on one")
+    if fit not in production.FITS:
+        raise ValueError(f"a fit of {' or '.join(production.FITS)}")
     made = production.create(slug, title, video, continuity)
     if ingesting is not None:
         overrides = {k: v for k, v in ingesting.data().items() if v != IngestSettings().data()[k]}
@@ -221,7 +224,7 @@ def from_story(
         _styles(connection, made.id, [r for r in references if r.kind == "style"])
     manifest = {
         "photos": photos, "labels": labels, "references": rows, "target_seconds": target_seconds,
-        "shortest": shortest, "aspect": aspect,
+        "shortest": shortest, "aspect": aspect, **({"fit": fit} if fit != "crop" else {}),
     }  # fmt: skip
     return _begun(made.id, "text", production.lines(story), manifest)
 

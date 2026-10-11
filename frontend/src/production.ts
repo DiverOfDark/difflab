@@ -78,6 +78,13 @@ export const ASPECTS: { label: string; value: number | null }[] = [
   { label: '2.39:1', value: 2.39 },
 ]
 
+/** Mirrors `production.FITS`: the first photo cut to the canvas, or kept whole and drawn out to it. */
+export type Fit = 'crop' | 'extend'
+export const FITS: { label: string; value: Fit }[] = [
+  { label: 'crop', value: 'crop' },
+  { label: 'extend', value: 'extend' },
+]
+
 /** Mirrors `pipeline.canvas_size`: the pixel budget at this aspect, each side rounded to 32. */
 export function canvasFor(aspect: number, megapixels: number): [number, number] {
   const area = megapixels * 1024 * 1024

@@ -348,18 +348,20 @@ def run_cut_crops(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str,
     found = [_found(listed) for listed in inputs["found"]]
     kinds = {m.id: m.kind for m in members.values()}
     aspect = None if inputs.get("aspect") in (None, "") else float(inputs["aspect"])
+    fit = str(inputs.get("fit") or "crop")
     video = VideoSettings(**settings["video"])
     _, manifest = _by_hand(production_id)
     detached = [list(map(str, entry)) for entry in manifest.get("detached", [])]
     made = key(
         "cut_crops", 3, production=production_id, photos=[f.pixels for f in frames], shows=inputs["shows"],
         found=inputs["found"], kinds=kinds, aspect=aspect, video=video,
-        **({"detached": detached} if detached else {}), **_fingerprint(),
+        **({"detached": detached} if detached else {}),
+        **({"fit": fit, "beyond": knobs.OPENING_EXTEND_BEYOND} if fit != "crop" else {}), **_fingerprint(),
     )  # fmt: skip
     if (previous := _start("cut_crops", made)) is not None:
         _keep_cut(production_id, photos, previous, str(made))
         return previous
-    cut = cut_crops.opening_and_crops(frames, found, shows, kinds, aspect, video)
+    cut = cut_crops.opening_and_crops(frames, found, shows, kinds, aspect, video, fit)
     cut = dataclasses.replace(cut, crops=[c for c in cut.crops if [c.member, photos[c.photo], c.role] not in detached])
     lost = {(member, role) for member, _, role in detached}
     gaps = crops.gaps(cut.crops, cut.dropped, found, shows, kinds, lost)
@@ -381,6 +383,7 @@ def run_cut_crops(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str,
         "seconds": cut.canvas.duration,
         "crops": listed,
         "gaps": [dataclasses.asdict(gap) for gap in gaps],
+        "extend": cut.extend,
     }
     _keep_cut(production_id, photos, outputs, str(made))
     return outputs

@@ -707,6 +707,9 @@ COMPOSE_LOOK_ALLOWED = "These may differ as the change needs: {allowed}."
 # runs at cfg 1 and drops the negative prompt.
 COMPOSE_PLATE = """\
 Replace everything behind the {noun} with a flat, even mid-grey studio backdrop. Keep the {noun} exactly as it is: {traits}, the same pose, framing and light. Keep it an unretouched real photograph with natural skin texture and visible pores."""
+# The opening photo whole, fitted into the canvas over a blurred stretch of itself (`cut_crops.padded`).
+COMPOSE_EXTEND_OPENING = """\
+The sharp photograph in the middle is part of a wider scene. Replace the blurred bands at its {sides} with the rest of that scene, continuing its walls, ground, furniture, light and perspective out to the edges. Keep everything in the sharp photograph exactly as it is: every person, face, pose and object, in the same place and size. No borders, frames or seams. One unretouched real photograph."""
 # Told in words, a robe's colour and embroidery overrode the picture it came with: production 13's retry
 # (2026-10-04), noted "the dark green one with gold floral embroidery", came back with gold flowers a
 # hand wide. A redo is pointed back at the picture instead.

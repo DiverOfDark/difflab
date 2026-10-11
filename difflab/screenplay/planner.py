@@ -559,6 +559,7 @@ def _plan_chapter(
     photos = [str(p) for p in manifest.get("photos", [])]
     labels = {str(k): dict(v) for k, v in (manifest.get("labels") or {}).items()}
     aspect = manifest.get("aspect")
+    fit = manifest.get("fit") or "crop"
     continuity, _ = settings.effective("handoff", production_id)
     assert isinstance(continuity, Continuity)
     idea = chapter.story or production.story
@@ -616,8 +617,9 @@ def _plan_chapter(
     ]
     found = [_output(job, "found") for job in grounds]
     cut = add(
-        "cut_crops", {"photos": photos, "found": found, "aspect": aspect, **cast}, "cut the references",
-        {"video": video.data()},
+        "cut_crops",
+        {"photos": photos, "found": found, "aspect": aspect, **({"fit": fit} if fit != "crop" else {}), **cast},
+        "cut the references", {"video": video.data()},
     )  # fmt: skip
     carded = [
         add("cards", {"photo": photo, "index": i, **cast}, f"read the cast in {name(photo)}")
@@ -631,10 +633,18 @@ def _plan_chapter(
     )
     if not shots:
         return run_id
+    opening = _output(cut, "opening")
+    if fit == "extend":
+        extended = add(
+            "extend_opening",
+            {"opening": opening, "extend": _output(cut, "extend"), "cut": _output(cut, "cut")},
+            "draw the first photo out to the canvas", settings.for_job("edit_image", production_id),
+        )  # fmt: skip
+        opening = _output(extended, "opening")
     described_opening = add(
         "describe_opening",
         {
-            "opening": _output(cut, "opening"),
+            "opening": opening,
             "found": found[0],
             "cut": _output(cut, "cut"),
             "card": _output(carded[0], "card"),
@@ -662,7 +672,7 @@ def _plan_chapter(
             "cards": _output(tidied, "cards"),
             "arrangement": _output(arranged, "arrangement"),
             "seconds": _output(cut, "seconds"),
-            "opening": _output(cut, "opening"),
+            "opening": opening,
             "tail": continuity.tail_frames > 0,
             "budget": knobs.DIRECTOR_REFERENCE_ROWS,
             **({"shortest": shortest} if shortest != knobs.DIRECTOR_CLIP_MIN else {}),

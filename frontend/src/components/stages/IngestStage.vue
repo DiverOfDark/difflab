@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { deleteProduction, listTools, outputUrl, patchProduction, patchShot, putSettings, readIngesting, type Production } from '../../api'
-import { ASPECTS, canvasFor, plural, runLive } from '../../production'
+import { ASPECTS, FITS, canvasFor, plural, runLive, type Fit } from '../../production'
 import { useDraft } from '../../draft'
 import IdeaPanel from '../IdeaPanel.vue'
 import IngestForm from './IngestForm.vue'
@@ -107,17 +107,20 @@ const aspects = computed(() => {
   return ASPECTS.some((a) => same(a.value, g)) ? ASPECTS : [...ASPECTS, { label: `${g!.toFixed(2)}:1`, value: g }]
 })
 const { draft: aspect, reset: resetAspect } = useDraft(() => aspects.value.find((a) => same(a.value, given.value))?.value ?? null)
+const givenFit = computed<Fit>(() => (props.production?.manifest.fit === 'extend' ? 'extend' : 'crop'))
+const { draft: fit, reset: resetFit } = useDraft(() => givenFit.value)
 watch(
   () => props.production?.id,
   () => {
     resetTitle()
     resetStory()
     resetAspect()
+    resetFit()
     saved.value = ''
     aspectNote.value = ''
   },
 )
-const aspectChanged = computed(() => !!props.production && !same(aspect.value, given.value))
+const aspectChanged = computed(() => !!props.production && (!same(aspect.value, given.value) || fit.value !== givenFit.value))
 const canvasNow = computed(() => {
   const c = props.production?.manifest.canvas as { width?: number; height?: number } | undefined
   return c?.width && c.height ? { width: c.width, height: c.height } : null
@@ -152,7 +155,7 @@ const cost = computed(() => {
 /** At an aspect far from the first photo's, the opening cut keeps a thin strip of it. */
 const strip = computed(() => {
   const photo = photoSize.value
-  if (!photo) return null
+  if (!photo || fit.value === 'extend') return null
   const own = photo.width / photo.height
   const target = aspect.value ?? own
   const width = own > target ? Math.round(photo.height * target) : photo.width
@@ -164,7 +167,10 @@ const firstShot = computed(() => props.production?.chapters[0]?.shots[0])
 const opensOnPhoto = computed(() => firstShot.value?.keyframe.source === 'provided' && firstShot.value.keyframe.note === 'the opening frame')
 const saveAspect = () =>
   props.act('aspect', async () => {
-    const { stale } = await patchProduction(props.production!.id, { aspect: aspect.value })
+    const changes: Record<string, unknown> = {}
+    if (!same(aspect.value, given.value)) changes.aspect = aspect.value
+    if (fit.value !== givenFit.value) changes.fit = fit.value
+    const { stale } = await patchProduction(props.production!.id, changes)
     aspectNote.value = stale.prompts
       ? `Saved. ${stale.prompts} prompts, ${stale.clips} clips and ${stale.references ?? 0} drawn places went stale: re-plan the chapter.`
       : 'Saved.'
@@ -253,9 +259,15 @@ const discard = () => {
                 <option v-for="a in aspects" :key="a.label" :value="a.value">{{ a.label }}</option>
               </select>
             </label>
-            <button class="primary" :disabled="!aspectChanged || !!busy" @click="saveAspect">{{ busy === 'aspect' ? 'saving…' : 'Change aspect' }}</button>
+            <label class="field" title="crop cuts the first photo to the canvas; extend keeps it whole and has the editor draw the sides">
+              <span class="eyebrow">fit</span>
+              <select v-model="fit">
+                <option v-for="f in FITS" :key="f.value" :value="f.value">{{ f.label }}</option>
+              </select>
+            </label>
+            <button class="primary" :disabled="!aspectChanged || !!busy" @click="saveAspect">{{ busy === 'aspect' ? 'saving…' : 'Change canvas' }}</button>
           </div>
-          <span class="note">{{ aspectNote || (aspectChanged ? cost : 'The canvas every shot renders at, cut from the first photo at this shape.') }}</span>
+          <span class="note">{{ aspectNote || (aspectChanged ? cost : fit === 'extend' ? 'The canvas every shot renders at: the first photo whole, its sides drawn out to this shape by the editor.' : 'The canvas every shot renders at, cut from the first photo at this shape.') }}</span>
           <p v-if="strip" class="band hint">
             At this aspect the opening is a {{ strip.width }}×{{ strip.height }} strip of the first photo, {{ strip.percent }}% of it.
             <template v-if="opensOnPhoto">

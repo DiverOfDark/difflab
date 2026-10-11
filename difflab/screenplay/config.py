@@ -61,6 +61,9 @@ DIRECTOR_OPENING_LIVING_WEIGHT = 2.0  # in the opening cut, a person's or animal
 # An object counts as kept once this much of it is inside, so a prop at the far edge does not push the
 # rest of the room (the table it is passed across) out of the frame.
 DIRECTOR_OPENING_KEEP = 0.8
+# Outside DIRECTOR_ so the plan fingerprint does not move with it; `cut_crops` keys it in extend mode.
+# Within this ratio of the canvas's aspect an extended opening crops instead: the crop loses under a tenth.
+OPENING_EXTEND_BEYOND = 1.1
 # What a chunk may hold, in reference rows: (width/32) * (height/32) per picture. The hand-cut shisha
 # cast used 1835 and 2579 and rendered at a 101k-row peak; ~115k did not fit.
 DIRECTOR_REFERENCE_ROWS = 3000

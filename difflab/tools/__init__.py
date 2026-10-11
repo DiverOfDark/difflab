@@ -63,6 +63,7 @@ TOOLS: tuple[Tool, ...] = (
     Tool("draw_reference", 1, ("load editor", "draw"), None, "a member no photo shows, drawn from its words"),
     Tool("draw_look", 1, ("load editor", "draw"), None, "a member's look: its source picture with one amendment"),
     Tool("plate_ref", 1, ("load editor", "plate"), None, "a member's photo on a flat backdrop, so H3 copies only it"),
+    Tool("extend_opening", 1, ("load editor", "extend"), None, "the first photo whole, drawn out to the canvas"),
     Tool(
         "refine_idea",
         1,

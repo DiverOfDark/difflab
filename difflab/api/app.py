@@ -488,7 +488,7 @@ async def guess_references(request: Request) -> dict[str, Any]:
 @app.post("/api/ingest")
 async def ingest_story(request: Request) -> dict[str, Any]:
     """A production from a story and its references: `story`, `references` ({path,
-    kind, entity, guess}), `title`, `target_seconds` for the whole film, `shortest` shot, `aspect`, and
+    kind, entity, guess}), `title`, `target_seconds` for the whole film, `shortest` shot, `aspect`, `fit`, and
     partial `video`, `continuity` and `ingest` settings over the code defaults. The bible is built at once;
     `plan` plans every chapter too, stopping before render."""
     body = await request.json()
@@ -507,6 +507,7 @@ async def ingest_story(request: Request) -> dict[str, Any]:
             float(body.get("shortest") or 0),
             title=title,
             aspect=None if body.get("aspect") in (None, "") else float(body["aspect"]),
+            fit=str(body.get("fit") or "crop"),
             video=video,
             continuity=continuity,
             ingesting=chosen,

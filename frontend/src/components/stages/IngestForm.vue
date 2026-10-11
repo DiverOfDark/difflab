@@ -16,7 +16,7 @@ import {
   type RefKind,
   type Timings,
 } from '../../api'
-import { ASPECTS, CLIP_MIN, SHOT_MAX, chaptersOf, length, pad, parseLength, parseRange } from '../../production'
+import { ASPECTS, CLIP_MIN, FITS, SHOT_MAX, chaptersOf, length, pad, parseLength, parseRange, type Fit } from '../../production'
 
 const props = defineProps<{
   busy: string
@@ -37,6 +37,7 @@ const file = ref<{ name: string; text: string; words: number } | null>(null)
 const target = ref('')
 const shot = ref('6–8 s')
 const aspect = ref<number | null>(16 / 9)
+const fit = ref<Fit>('crop')
 const autoPlan = ref(true)
 const knobs = reactive({ heading_level: 1, frames: 12, min_sharpness: 50 })
 const problem = ref('')
@@ -298,6 +299,7 @@ const begin = () =>
       target_seconds: targetSeconds.value,
       shortest: Math.max(CLIP_MIN, r[0]),
       aspect: aspect.value,
+      fit: fit.value,
       video,
       ingest: { ...knobs },
       plan: autoPlan.value,
@@ -374,6 +376,12 @@ const onPick = (event: Event, take: (files: File[]) => void) => {
             <span class="eyebrow">ASPECT</span>
             <select v-model="aspect">
               <option v-for="a in ASPECTS" :key="a.label" :value="a.value">{{ a.label }}</option>
+            </select>
+          </label>
+          <label v-if="storyKind !== 'video'" class="field" title="crop cuts the first photo to the canvas; extend keeps it whole and has the editor draw the sides">
+            <span class="eyebrow">FIT</span>
+            <select v-model="fit">
+              <option v-for="f in FITS" :key="f.value" :value="f.value">{{ f.label }}</option>
             </select>
           </label>
           <label v-else class="field"><span class="eyebrow">CLIP SCALE</span><input v-model.number="redo.clip_scale" type="number" min="0.1" max="1" step="0.1" /></label>
