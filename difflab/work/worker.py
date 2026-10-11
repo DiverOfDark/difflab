@@ -204,6 +204,7 @@ def _claim(connection: sqlite3.Connection) -> store.Job | None:
             states = [settled[dep] for dep in candidate.depends_on()]
             if any(state in (store.FAILED, store.CANCELLED) for state in states):
                 store.end_job(connection, candidate.id, store.CANCELLED, error="an input job did not finish")
+                _end_if_settled(connection, candidate.run_id)
                 continue
             if all(state in (store.DONE, store.SKIPPED) for state in states):
                 store.start_job(connection, candidate.id)
@@ -235,6 +236,8 @@ def _settle_orphans() -> None:
     try:
         with store.connect() as connection, store.transaction(connection):
             for run in store.runs(connection):
+                if run.state == store.QUEUED:
+                    _end_if_settled(connection, run.id)
                 if run.state != store.RUNNING:
                     continue
                 for job in store.jobs_of(connection, run.id):
@@ -245,6 +248,13 @@ def _settle_orphans() -> None:
                 print(f"difflab: run {run.id} was left running by a dead process and is now failed", flush=True)
     except sqlite3.Error as problem:
         print(f"difflab: the orphaned runs could not be settled ({problem})", flush=True)
+
+
+def _end_if_settled(connection: sqlite3.Connection, run_id: str) -> None:
+    """A run whose every job was cancelled for another run's failure: no job of its own will ever end it."""
+    jobs = store.jobs_of(connection, run_id)
+    if jobs and not any(one.state in (store.QUEUED, store.BLOCKED, store.RUNNING) for one in jobs):
+        store.end_run(connection, run_id, ok=False, error="an input job did not finish")
 
 
 def _cancel_rest(connection: sqlite3.Connection, run_id: str, why: str) -> None:
