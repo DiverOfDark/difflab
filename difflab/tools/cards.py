@@ -67,8 +67,8 @@ def _trait_problems(member: str, traits: Any) -> list[caption.Problem]:
     return out
 
 
-# Keys pinned: under ANY_JSON's forced ": " the prompt's minified `"traits":[{` is a sequence the model never
-# gets to write, and production 13's man came back as `{"traits [{": "part", ...}` on every seed.
+# Keys pinned: production 13's man came back as `{"traits [{": "part", ...}` on every seed, when ANY_JSON
+# still forced ": " against the prompt's minified `"traits":[{`.
 _TEXT = {"type": "string"}
 TIDY_SCHEMA = {
     **ANY_JSON,

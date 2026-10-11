@@ -21,12 +21,10 @@ IMAGE_SLOT = "<|vision_start|><|image_pad|><|vision_end|>"
 
 # Sampled free at 0.7, 3 to 6 answers in 20 ran on past their closing bracket with ", {" to the token
 # cap; masked to JSON, 0 in the same 20, since stopping is the only token left once the value closes.
-# The separators are the model's own: forced minified (no whitespace at all), every seed answered
-# `{"members":[]}`, the prefix `"members":[` being one it never writes and `]` its likeliest sequel.
-ANY_JSON = {
-    "type": ["object", "array"],
-    "x-guidance": {"whitespace_flexible": False, "item_separator": ", ", "key_separator": ": "},
-}
+# Either separator, as the model chooses: forced minified, every seed answered `{"members":[]}`, the
+# prefix `"members":[` being one it never writes unthinking; forced `": "`, a model that had thought "let
+# me format the JSON on one line" wrote `{"traits [{": ...`, its `":[{"` masked out (2026-10-11).
+ANY_JSON = {"type": ["object", "array"], "x-guidance": {"whitespace_pattern": " ?"}}
 
 # The template opens `<think>` itself; </think> is one special token, so the free-text lexeme cannot eat it.
 THEN_JSON = "start: /(?s:.*)/ </think> /\\s*/ answer\nanswer: %json "
