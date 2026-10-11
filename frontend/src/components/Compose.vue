@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /** A field a mode ignores is hidden rather than greyed: a disabled box still asks to be read. */
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import type { Job } from '../api'
 import PhotoPicker from './PhotoPicker.vue'
 
@@ -30,11 +30,26 @@ const USES: Record<string, string[]> = {
 const uses = computed(() => USES[job.value.mode] ?? [])
 const shows = (part: string) => uses.value.includes(part)
 
+// Its own state, not read off which box has text: an empty prompt has to be choosable, and the job may
+// carry only one of the two, so switching moves the words across rather than copying them.
+const chosen = ref<'idea' | 'prompt'>(job.value.prompt ? 'prompt' : 'idea')
+watch(
+  () => job.value.prompt,
+  (prompt) => {
+    if (prompt) chosen.value = 'prompt'
+  },
+)
 const words = computed<'idea' | 'prompt'>({
-  get: () => (job.value.prompt ? 'prompt' : 'idea'),
+  get: () => chosen.value,
   set: (kind) => {
-    if (kind === 'prompt') job.value.prompt ||= job.value.idea
-    else job.value.prompt = ''
+    chosen.value = kind
+    if (kind === 'prompt') {
+      job.value.prompt ||= job.value.idea
+      job.value.idea = ''
+    } else {
+      job.value.idea ||= job.value.prompt
+      job.value.prompt = ''
+    }
   },
 })
 
