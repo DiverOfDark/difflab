@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import dataclasses
+from dataclasses import dataclass
 from typing import Any
 
+from PIL import Image
+
+from difflab import store
 from difflab.core import ui
 from difflab.models.minimax_h3 import caption
 from difflab.models.minimax_h3 import config as model
@@ -13,6 +17,15 @@ from difflab.screenplay import compiler as compose
 from difflab.screenplay import config as h3
 from difflab.screenplay import words
 from difflab.tools import direct, ruling
+
+
+@dataclass(frozen=True)
+class Version:
+    """One look a member has had before the take: `name` "base" is its card's."""
+
+    name: str
+    words: str
+    picture: Image.Image | None
 
 
 def on_grid(seconds: float, longest: float) -> float:
@@ -55,6 +68,7 @@ def _take_from_plan(data: Any, base: compose.Take) -> compose.Take:
             if str(d.get("voice") or "").strip():
                 voices.setdefault(str(d["who"]), " ".join(str(d["voice"]).split()))
         changes = {str(m): _look(v) for m, v in (clip.get("looks") or {}).items()}
+        made = {m: change for m, change in changes.items() if change[0]}
         chunks.append(
             compose.Chunk(
                 purpose=str(clip["purpose"]),
@@ -69,8 +83,9 @@ def _take_from_plan(data: Any, base: compose.Take) -> compose.Take:
                 seconds=seconds,
                 cut=cut,
                 opening=str(clip.get("opening") or "").strip(),
-                looks={m: look for m, (look, _) in changes.items()},
-                look_names={m: name for m, (_, name) in changes.items()},
+                looks={m: look for m, (look, _, _) in made.items()},
+                look_names={m: name for m, (_, name, _) in made.items()},
+                look_from={m: start for m, (_, _, start) in changes.items() if start},
                 ambience=str(clip.get("ambience") or "").strip(),
                 scene=scene,
             )
@@ -78,11 +93,58 @@ def _take_from_plan(data: Any, base: compose.Take) -> compose.Take:
     return dataclasses.replace(base, ambience=str(data["ambience"]).strip(), chunks=tuple(chunks), voices=voices)
 
 
-def _look(given: Any) -> tuple[str, str]:
-    """A lasting change as (its look, its name); a bare string is a look the planner left unnamed."""
-    if isinstance(given, dict):
-        return " ".join(str(given.get("look") or "").split()), " ".join(str(given.get("name") or "").split())
-    return " ".join(str(given).split()), ""
+def _look(given: Any) -> tuple[str, str, str]:
+    """A version as (its look, its name, the version it starts from); a bare string is a look left unnamed."""
+    if not isinstance(given, dict):
+        return " ".join(str(given).split()), "", ""
+
+    def said(field: str) -> str:
+        return " ".join(str(given.get(field) or "").split())
+
+    if said("use"):
+        return "", "", said("use")
+    return said("look"), said("name"), said("from")
+
+
+def _versions(take: compose.Take, known: dict[str, list[Version]]) -> list[caption.Problem]:
+    """Every version a clip starts from is one its member has by then, and every new one has a name of its own."""
+    have = {m: {store.BASE, *(v.name for v in known.get(m, []))} for m in take.members}
+    out = []
+    for number, chunk in enumerate(take.chunks, 1):
+        for member, start in chunk.look_from.items():
+            names = have.setdefault(member, {store.BASE})
+            if member not in chunk.cast:
+                out.append(direct.problem(f"clip {number}: 'looks' changes {{{member}}}, who is not in its cast"))
+            elif start not in names:
+                listed = ", ".join(f'"{n}"' for n in sorted(names))
+                out.append(direct.problem(f'clip {number}: {{{member}}} has no version "{start}" by then: name one '
+                                          f"of {listed}, or make a new one (rule 15)"))  # fmt: skip
+        for member, name in chunk.look_names.items():
+            names = have.setdefault(member, {store.BASE})
+            if name in names:
+                out.append(direct.problem(f'clip {number}: {{{member}}} has a version "{name}" already: give '
+                                          f'{{"use": "{name}"}} to show it again, or name the new one '
+                                          "otherwise"))  # fmt: skip
+            names.add(name)
+    return out
+
+
+def _state(
+    known: dict[str, list[Version]], now: dict[str, str], opening: Image.Image | None
+) -> tuple[str, list[Image.Image]]:
+    """The VERSIONS block and its pictures, Picture 1 the opening photograph."""
+    images = [] if opening is None else [opening]
+    lines = []
+    for member, versions in known.items():
+        said = []
+        for version in versions:
+            if version.picture is not None:
+                images.append(version.picture)
+            shown = f" (Picture {len(images)})" if version.picture is not None else " (no picture yet)"
+            mark = ", now" if now.get(member, store.BASE) == version.name else ""
+            said.append(f'"{version.name}"' + (f": {version.words}" if version.words else "") + shown + mark)
+        lines.append(f"- {member}: " + "; ".join(said))
+    return "\n".join(lines), images
 
 
 def plan(
@@ -92,6 +154,9 @@ def plan(
     aliases: dict[str, str] | None = None,
     shortest: float = h3.DIRECTOR_CLIP_MIN,
     wardrobe: dict[str, list[str]] | None = None,
+    versions: dict[str, list[Version]] | None = None,
+    now: dict[str, str] | None = None,
+    opening: Image.Image | None = None,
 ) -> compose.Take:
     """The whole take in one call, so the model sees every join while it decides where beats end.
 
@@ -100,7 +165,8 @@ def plan(
 
     Members are then numbered by when they first appear, so a <Subject N> keeps its number from the
     chunk it enters to the end, and the sentences that name it stay the same words. `aliases` are what the
-    IDEA calls a member, so its mentions are found under any of its names.
+    IDEA calls a member, so its mentions are found under any of its names. `versions` are each member's
+    looks before the take, base first, and `now` names the one it enters with.
     """
     aliases = {m: a for m, a in (aliases or {}).items() if a.strip()}
     cast = "\n".join(
@@ -120,6 +186,10 @@ def plan(
     worn = "\n".join(f"- {m}: {', '.join(names)}" for m, names in (wardrobe or {}).items() if names)
     if worn:
         question += "\n\n" + words.PLAN_WARDROBE.format(wardrobe=worn)
+    known = versions or {}
+    listed, images = _state(known, now or {}, opening)
+    if listed:
+        question += "\n\n" + words.PLAN_VERSIONS.format(versions=listed)
     system = words.PLAN_SYSTEM.format(
         longest=longest, look_words=h3.DIRECTOR_LOOK_WORDS, name_words=h3.DIRECTOR_LOOK_NAME_WORDS,
         airlock=h3.DIRECTOR_AIRLOCK[0], airlock_min=h3.DIRECTOR_AIRLOCK[1], settle=h3.DIRECTOR_SETTLE[0],
@@ -155,13 +225,14 @@ def plan(
         # Never returned alone: an answer stopped here counted one problem and was kept over answers that
         # broke fewer rules, unchecked - a 72 s plan whose closings named members missing from the next cast.
         take = _take_from_plan(data, base)
-        out += lint.plan_rules(take) + ruling.mouths(take) + ruling.leaving(take)
+        out += lint.plan_rules(take) + _versions(take, known) + ruling.mouths(take) + ruling.leaving(take)
+        out += ruling.changed(take)
         if not story(data):
             out.append(direct.problem('"story" lists every action of the IDEA with the clip that shows it'))
         return out + ruling.story(idea, list(story(data)), take)
 
     data = direct.ask_json(
-        system, question, [], gate, "plan", h3.DIRECTOR_TOKENS["plan"], repairs=h3.DIRECTOR_PLAN_REPAIRS
+        system, question, images, gate, "plan", h3.DIRECTOR_TOKENS["plan"], repairs=h3.DIRECTOR_PLAN_REPAIRS
     )
     take = dataclasses.replace(_take_from_plan(data, base), story=story(data))
     ui.panel("plan · the idea, clip by clip", {event: f"clip {clip}" for event, clip in take.story})

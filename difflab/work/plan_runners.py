@@ -560,7 +560,30 @@ def run_plan_shots(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str
     _castings(inputs, outputs)
     _voices(int(inputs["production"]), dict(outputs.get("voices") or {}))
     _write_and_compile(inputs, len(outputs["chunks"]))
+    _draw_looks(int(inputs["production"]), int(inputs["chapter"]))
     return outputs
+
+
+def _draw_looks(production_id: int, chapter_id: int) -> None:
+    """The chapter's looks with no picture, and each undrawn look one starts from, drawn in a run of their own."""
+    with store.connect() as connection:
+        production, chapter = store.production(connection, production_id), store.chapter(connection, chapter_id)
+        assert production is not None and chapter is not None
+        resolved = looks.resolve(connection, production)
+    wanted = production_module.undrawn_looks_of(production_id, chapter.position)
+    for casting_id in list(wanted):
+        source = resolved.looks[casting_id].source
+        while source is not None and (parent := resolved.looks[source].casting) is not None and not parent.artifact:
+            wanted += [] if source in wanted else [source]
+            source = resolved.looks[source].source
+    if not wanted:
+        return
+    try:
+        run_id = looks.draw(production_id, wanted, asked_by="planner")
+    except (LookupError, ValueError) as error:
+        ui.note(f"the chapter's looks are not drawn: {error}")
+        return
+    ui.note(f"drawing the chapter's {len(wanted)} looks in run {run_id}")
 
 
 def _castings(inputs: dict[str, Any], outputs: dict[str, Any]) -> None:
@@ -578,6 +601,7 @@ def _castings(inputs: dict[str, Any], outputs: dict[str, Any]) -> None:
         before = looks.resolve(connection, production)
         shots = store.shots_of(connection, chapter_id)
         said: dict[str, str] = {}
+        made: dict[tuple[str, str], int] = {}  # (member, a look's name) -> its casting, for a later clip to start from
         for shot, plan, changed in zip(shots, outputs["chunks"], outputs["looks"], strict=False):
             if shot.pinned:
                 continue
@@ -586,6 +610,11 @@ def _castings(inputs: dict[str, Any], outputs: dict[str, Any]) -> None:
             for position, slug in enumerate(cast):
                 amend = " ".join(str((changed.get(slug) or {}).get("amend") or "").split())
                 label = " ".join(str((changed.get(slug) or {}).get("label") or "").split())
+                start = str((changed.get(slug) or {}).get("parent") or "")
+                if start.startswith("@"):
+                    parent = str(made[slug, start[1:]]) if (slug, start[1:]) in made else None
+                else:
+                    parent = start or None
                 # Said again word for word in a later clip, a change is that clip carrying it, not a new look.
                 amend = "" if amend and amend == said.get(slug) else amend
                 said[slug] = amend or said.get(slug, "")
@@ -593,13 +622,17 @@ def _castings(inputs: dict[str, Any], outputs: dict[str, Any]) -> None:
                 origin = f"from text · ch {chapter.position + 1}" + (f" ¶{where}" if where else "") if amend else ""
                 found = existing.pop(members[slug], None)
                 if found is None:
-                    found = store.add_casting(connection, shot.id, members[slug], amend=amend, origin=origin)
-                elif found.amend != amend or found.parent is not None:
+                    found = store.add_casting(
+                        connection, shot.id, members[slug], parent=parent, amend=amend, origin=origin
+                    )
+                elif found.amend != amend or found.parent != parent:
                     store.set_made(connection, "casting", found.id, store.STALE if found.artifact else store.MISSING)
-                    store.update_casting(connection, found.id, parent=None, amend=amend)
+                    store.update_casting(connection, found.id, parent=parent, amend=amend)
                 store.update_casting(
                     connection, found.id, position=position, origin=origin, label=label if amend else ""
                 )
+                if amend and label:
+                    made[slug, label] = found.id
             for gone in existing.values():
                 production_module.restale_looks(connection, gone.id)
                 store.delete_casting(connection, gone.id)
@@ -673,16 +706,18 @@ def _plan_shots(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, A
         assert production is not None
         references = store.refs_of_production(connection, production_id)
         rows = store.members_of(connection, production_id)
+        catalogue, entered = _versions_before(connection, production, chapter_id, members)
     photos = [str(p) for p in production.manifest.get("photos", [])]
     refs = compiler.refs_of(references, rows, photos)
     aliases = {m.slug: m.aliases for m in rows if m.aliases.strip() and m.slug in members}
     wardrobe = {m.slug: [g["name"] for g in m.wardrobe] for m in rows if m.wardrobe and m.slug in members}
     made = key(
-        "plan_shots", 2, production=production_id, chapter=chapter_id, idea=idea, take_seconds=total,
+        "plan_shots", 3, production=production_id, chapter=chapter_id, idea=idea, take_seconds=total,
         members=inputs["members"],
         cards=identities, refs={k: dataclasses.asdict(r) for k, r in refs.items()}, arrangement=arrangement,
         seconds=seconds, tail=tail, budget=budget, **({"aliases": aliases} if aliases else {}), **_taken(inputs),
-        **({"wardrobe": wardrobe} if wardrobe else {}),
+        **({"wardrobe": wardrobe} if wardrobe else {}), versions=catalogue, now=entered,
+        opening=str(inputs["opening"]),
         **({"shortest": shortest} if shortest != knobs.DIRECTOR_CLIP_MIN else {}),
         **_fingerprint(),
     )  # fmt: skip
@@ -700,12 +735,26 @@ def _plan_shots(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, A
         budget=budget,
     )
     with _take(inputs):
-        planned = plan_shots.plan(base, idea, total, aliases, shortest, wardrobe)
+        planned = plan_shots.plan(
+            base, idea, total, aliases, shortest, wardrobe,
+            versions={m: [plan_shots.Version(v["name"], v["words"], _small(v["picture"])) for v in vs]
+                      for m, vs in catalogue.items()},
+            now=entered, opening=_small(inputs["opening"]),
+        )  # fmt: skip
     chunks = [compiler.plan_of(chunk) for chunk in planned.chunks]
+    ids = {(m, v["name"]): v["id"] for m, vs in catalogue.items() for v in vs if v["id"] is not None}
+
+    def parent(member: str, start: str) -> str:
+        """A version a clip starts from: "base", an earlier chapter's look by id, or "@" and this plan's name."""
+        if not start or start == store.BASE:
+            return start
+        return str(ids[member, start]) if (member, start) in ids else f"@{start}"
+
     changed = [
-        {m: {"amend": look, "label": chunk.look_names.get(m, "")} for m, look in chunk.looks.items()}
+        {m: {"amend": chunk.looks.get(m, ""), "label": chunk.look_names.get(m, ""),
+             "parent": parent(m, chunk.look_from.get(m, ""))} for m in {**chunk.looks, **chunk.look_from}}
         for chunk in planned.chunks
-    ]
+    ]  # fmt: skip
     with store.connect() as connection, store.transaction(connection):
         now = store.production(connection, production_id)
         assert now is not None
@@ -761,6 +810,49 @@ def _plan_shots(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, A
         "looks": changed,
         "voices": dict(planned.voices),
     }
+
+
+def _small(path: Any) -> Any:
+    return None if not path else direct.shrink(_frame(path), knobs.DIRECTOR_SURVEY_PIXELS)
+
+
+def _versions_before(
+    connection: Any, production: store.Production, chapter_id: int, members: dict[str, Any]
+) -> tuple[dict[str, list[dict[str, Any]]], dict[str, str]]:
+    """Each member's looks made before this chapter, base first, and the name of the one it enters it with.
+
+    A look of this chapter or a later one is left out: `looks.resolve` drops a parent not yet made in film
+    order, and the chapter's own looks are what this plan decides again."""
+    chapter = store.chapter(connection, chapter_id)
+    assert chapter is not None
+    earlier = {
+        s.id
+        for c in store.chapters_of(connection, production.id)
+        if c.position < chapter.position
+        for s in store.shots_of(connection, c.id)
+    }
+    catalogue: dict[str, list[dict[str, Any]]] = {}
+    for member in store.members_of(connection, production.id):
+        if member.slug in members:
+            base = looks.base_picture(connection, member)
+            picture = member.picture(base) if base is not None else None
+            catalogue[member.slug] = [{"name": store.BASE, "words": "", "picture": picture, "id": None}]
+    resolved = looks.resolve(connection, production)
+    for look in resolved.looks.values():
+        assert look.casting is not None
+        if look.casting.shot_id not in earlier or look.member not in catalogue:
+            continue
+        taken, name, count = {v["name"] for v in catalogue[look.member]}, look.label, 2
+        while name in taken:
+            name, count = f"{look.label} {count}", count + 1
+        picture = look.casting.artifact if look.approved else None
+        catalogue[look.member].append({"name": name, "words": look.text, "picture": picture, "id": look.id})
+    last: dict[str, int | None] = {}
+    for shot_id in resolved.order:
+        if shot_id in earlier:
+            last |= {member: placed.look for member, placed in resolved.placed[shot_id].items()}
+    names = {m: {v["id"]: v["name"] for v in vs} for m, vs in catalogue.items()}
+    return catalogue, {m: names[m].get(last.get(m), store.BASE) for m in catalogue}
 
 
 def _bare(plan: dict[str, Any]) -> dict[str, Any]:

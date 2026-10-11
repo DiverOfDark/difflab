@@ -155,6 +155,7 @@ class Chunk:
     opening: str = ""  # a "new" cut's first frame, {id} placeholders
     looks: dict[str, str] = dataclasses.field(default_factory=dict)  # the planner's: member -> its look from here on
     look_names: dict[str, str] = dataclasses.field(default_factory=dict)  # the planner's: member -> that look's name
+    look_from: dict[str, str] = dataclasses.field(default_factory=dict)  # member -> the version it starts from
     ambience: str = ""  # the sound of a place other than the take's first; "" is `Take.ambience`
     scene: str = ""  # the slug line the chunk plays under, "INT lantern room · dusk"
     states: dict[str, Now] = dataclasses.field(default_factory=dict)  # the castings' looks; never stored in a plan
@@ -779,9 +780,12 @@ def chunk_of(plan: dict[str, Any]) -> Chunk:
     )
 
 
+_PLANNER_ONLY = ("looks", "look_names", "look_from", "states")
+
+
 def plan_of(chunk: Chunk) -> dict[str, Any]:
     """The chunk as the shot row keeps it: its looks are its castings'."""
-    return {k: v for k, v in dataclasses.asdict(chunk).items() if k not in ("looks", "look_names", "states")}
+    return {k: v for k, v in dataclasses.asdict(chunk).items() if k not in _PLANNER_ONLY}
 
 
 def ref_keys(references: list[store.Reference], slugs: dict[int, str]) -> list[str]:

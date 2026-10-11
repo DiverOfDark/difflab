@@ -231,7 +231,8 @@ You are the director and script supervisor of ONE unbroken live-action take that
 WHAT YOU RECEIVE
 - IDEA: what should happen over the whole take. When it is a numbered story, its first paragraph describes the place and the first frame, its numbered lines are the events, and its Sound line is sound: only the numbered lines are events.
 - CAST: every member with an id, what it is and its visible traits, taken from reference photographs or, for a member no photograph shows, decided from the IDEA. Use only these members; add no people, animals or props. A member of kind "environment" is a place; every clip happens in exactly one place.
-- OPENING: the exact arrangement of the first frame, which is a real photograph. Clip 1 starts on it; a member it does not name is outside the frame at the start.
+- OPENING: the exact arrangement of the first frame, which is a real photograph (Picture 1). Clip 1 starts on it; a member it does not name is outside the frame at the start.
+- VERSIONS: every look each member has had so far, with the picture that shows it, and the one it has when the take starts.
 - TAKE: the longest the whole take may last, and how short and how long one clip may be.
 
 HOW A CHAINED TAKE BREAKS, AND THE RULES THAT PREVENT IT
@@ -250,7 +251,7 @@ HOW A CHAINED TAKE BREAKS, AND THE RULES THAT PREVENT IT
 13. Cuts. A clip continues from the clip before ("cut": ""), except where the IDEA jumps: "cut": "back" returns to the OPENING photograph exactly as it was, the way waking returns to the bed a dream started in; "cut": "new" jumps to a new framing or another place, and its "opening" is a snapshot of its own first frame, written like a closing. A cut clip begins with an airlock. Never cut inside one continuous action.
 14. Travel and chases. A chase, a flight or a run covers distance: the one chased starts far ahead, small in the frame, the gap changes over the clip, and the camera moves with them ("follow"). A carry is never the main event: the leap or the swipe is the clip's primary beat, and a carry only keeps a motion going for at most {quiet_max:g} seconds.
 16. Leaving. A member that flies, runs or walks off goes away from the camera: it grows smaller in the frame while the camera stays behind ("stay"), and the closing says how small it has become and where (a small dark shape high in the upper right of the sky). It shows its back as it goes. The camera follows it only in a later clip.
-15. Changes that last. When a member's look changes and stays changed (wings grow, a shirt gets soaked), the clip where it happens gives "looks": {{"cat": {{"name": "feathered wings", "look": "two large grey-and-white feathered wings on its back"}}}}: "look" is the member's look from the end of that clip on, in at most {look_words} words, and "name" names that look in {name_words[0]} to {name_words[1]} plain words ("blue robe", "soaked shirt", "torn left sleeve"). The program says it in every later clip, so a later clip does not repeat it; a "back" cut returns each member to the look it had in the opening scene.
+15. Versions. A member's look is one of its VERSIONS: "base" is its look in the CAST, and the pictures show what each version is made of and wears. Decide from them what each clip's action does to every member it touches: a glass vase dropped on stone breaks, a steel pot does not; a jacket the picture shows can come off. When a member's look changes and stays changed (wings grow, a shirt gets soaked, a vase breaks), the clip where it happens makes a new version: "looks": {{"vase": {{"name": "broken vase", "look": "the vase in two jagged halves, shards scattered around them", "from": ""}}}}. "look" is what the new version has beyond the one it is made from, in at most {look_words} words; "name" names it in {name_words[0]} to {name_words[1]} plain words ("blue robe", "soaked shirt", "torn left sleeve"), a name that member has for no other version; "from" is "" for the version the member has at that moment, or the name of another of its versions ("base" included) when the change undoes an earlier one first. When a member returns to a version it had (takes the robe off, puts the mended jacket back on), the clip gives "looks": {{"man": {{"use": "base"}}}}, or the name of that version: it is shown again as it was, never drawn anew. The program carries each version into every later clip, so a later clip neither repeats it nor gives the version a member already has; a "back" cut returns each member to the version it had in the opening scene.
 
 FIELDS
 - "ambience": one noun phrase, starting in lowercase, of the room sound heard through the whole take ("quiet lounge room tone with a low ventilation hum and a faint clink of glassware from the bar").
@@ -266,7 +267,7 @@ FIELDS
   - "mouths": every way a mouth opens in this clip, as short plain phrases with possessives and no braces ("his slow draw on the mouthpiece", "her giggle", "the two meows of the cat"); [] when every mouth stays closed.
   - "closing": one snapshot sentence of at most {closing_words} words, as rule 1 says.
   - "irreversible_change": at most 20 words.
-  - "looks": {{}} unless a member's look changes for good in this clip (rule 15).
+  - "looks": {{}} unless a member changes to another version in this clip (rule 15).
   - "ambience": "" in the first place; in another place, one noun phrase of the sound heard there ("wind rushing past and distant birdsong high above the trees").
   - "dialogue": [] unless the IDEA gives exact words; then {{"who": id, "start": seconds, "language": "English", "line": "...", "voice": "a bright, amused young female voice"}} per line; "voice" is how that member sounds, the same words in every line it speaks.
 - In "action" and "closing", write members as their id in braces: {{man}}, {{woman}}, {{cat}}. Never put a possessive after the braces: write "the hand of {{woman}}" or "her hand", never "{{woman}}'s hand".
@@ -292,8 +293,12 @@ CAMERA MOVES:
 # as objects, handed the green robe's picture to every clip after he took it off, and drew the blue one from
 # words beside the photo of it that was given.
 PLAN_WARDROBE = """\
-WARDROBE (garments a member can change into, each shown in a picture the program hands over). A clip in which a member puts one on gives "looks" for that member with "name" exactly as listed here; a garment taken off is described in words, never cast:
+WARDROBE (garments a member can change into, each shown in a picture the program hands over). A clip in which a member first puts one on makes a version with "name" exactly as listed here, and later puts it on again with "use"; a garment taken off returns the member to the version it had before ("use"), and is never cast:
 {wardrobe}"""
+
+PLAN_VERSIONS = """\
+VERSIONS (each member's looks so far and the picture that shows each: "base" is its look in the CAST, any other is "base" with the words given; "now" is the one it has when the take starts):
+{versions}"""
 
 WRITE_SYSTEM = """\
 You are the prose writer for ONE clip of an unbroken live-action take rendered by MiniMax H3. A program has already written everything that must be exact: the style, the opening arrangement, the place and its light, the camera move, the rule for mouths, the closing arrangement and every reference label. You write only the motion in between, as JSON.
@@ -634,6 +639,21 @@ PROSE
 SOUNDS
 {sounds}"""
 
+RULING_CHANGED_SYSTEM = """\
+You are the script supervisor of a live-action video. A clip ends with a CHANGE, a fact true at its end that was not at its start, and the clip's last frame in words. You say which members of the clip look different from here on because of it, as JSON.
+
+RULES
+- A member looks different when its own body, clothes or material is changed and stays so: a garment put on, taken off, torn, soaked or stained; a thing broken, bent, burnt, opened for good, filled or emptied; wings or a wound that stay. Where a member is, how it stands or sits, what it holds or where it was put, a door or a lid that can simply be closed again, an expression, light, smoke and the camera change nothing about its look.
+- "changed" lists the id of each member that looks different from here on, [] when none does.
+
+Answer only JSON, in this shape:
+{"changed":[]}"""
+
+RULING_CHANGED_USER = """\
+MEMBERS: {members}
+CHANGE: {change}
+LAST FRAME: {closing}"""
+
 # Production 10 wrote its cat "a small shape high in the sky, moving away from the camera" over a crane_up,
 # and the camera rising with it rendered the cat filling the frame.
 RULING_LEAVING_SYSTEM = """\
@@ -694,7 +714,7 @@ Keep the {noun} in this picture exactly as it is: {kept}, and the same pose, fra
 COMPOSE_LOOK_KEEP = {
     "person": "the same face, hair and build, and every piece of clothing the change does not name, in every colour, pattern and fold",
     "animal": "the same face, coat, markings and build",
-    "object": "the same shape, size, colours and material",
+    "object": "the same size, colours and material, and its shape wherever the change does not reach",
     "environment": "the same walls, ground, furniture, colours and light",
 }
 COMPOSE_LOOK_FACE = "The face is exactly the face in Picture 2: the same features, skin and hair."

@@ -207,6 +207,26 @@ def leaving(take: compose.Take) -> list[Problem]:
     return out
 
 
+def changed(take: compose.Take) -> list[Problem]:
+    """A clip's change that leaves a member looking otherwise, with no version given for it."""
+    out = []
+    for index, chunk in enumerate(take.chunks):
+        cast = [m for m in chunk.cast if m in take.cards and take.cards[m].kind != "environment"]
+        if not cast or not chunk.irreversible_change.strip():
+            continue
+        question = words.RULING_CHANGED_USER.format(
+            members=", ".join(f"{{{m}}}, the {take.cards[m].noun}" for m in cast),
+            change=chunk.irreversible_change, closing=chunk.closing,
+        )  # fmt: skip
+        data = ask("changed", words.RULING_CHANGED_SYSTEM, question, _object(changed=_array({"enum": cast})))
+        for member in dict.fromkeys(str(m) for m in data["changed"]):
+            if member in cast and member not in chunk.looks and member not in chunk.look_from:
+                out.append(_fail("looks", f'clip {index + 1}: its change ("{chunk.irreversible_change}") leaves '
+                                 f'{{{member}}} looking different from here on: give it a new version in "looks", '
+                                 f'or "use" one it had (rule 15)'))  # fmt: skip
+    return out
+
+
 SENTENCE = {"type": "string", "maxLength": 400}
 NOVEL_LINES = 8  # sentences one conflict rewrites at most; at RULING_TOKENS a pair of 400-character ones is ~200
 
