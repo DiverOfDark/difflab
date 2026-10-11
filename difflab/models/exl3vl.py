@@ -1,6 +1,7 @@
 """Qwen3.8-27B as turboderp's EXL3 on ExLlamaV3, its MTP head (kept at `mtp_bits: 4`) drafting."""
 
 import gc
+import json
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
@@ -26,6 +27,9 @@ ANY_JSON = {
     "type": ["object", "array"],
     "x-guidance": {"whitespace_flexible": False, "item_separator": ", ", "key_separator": ": "},
 }
+
+# The template opens `<think>` itself; </think> is one special token, so the free-text lexeme cannot eat it.
+THEN_JSON = "start: /(?s:.*)/ </think> /\\s*/ answer\nanswer: %json "
 
 
 class Exl3VL:
@@ -110,7 +114,8 @@ class Exl3VL:
             messages,
             tokenize=False,
             add_generation_prompt=True,
-            enable_thinking=False,
+            enable_thinking=True,
+            reasoning_effort=config.VLM_REASONING_EFFORT,
             add_vision_id=len(shown) > 1,
         )
         for embedding in embeddings:
@@ -119,15 +124,20 @@ class Exl3VL:
             ComboSampler(temperature=temperature, top_p=top_p, top_k=top_k) if temperature > 0 else ArgmaxSampler()
         )
         masked = schema or ANY_JSON
-        shape = [LLGuidanceFilter(tokenizer, eos_after_completed=True, json_schema=masked)] if as_json else None
+        shape = (
+            [LLGuidanceFilter(tokenizer, eos_after_completed=True, lark_grammar=THEN_JSON + json.dumps(masked))]
+            if as_json
+            else None
+        )
         job = Job(
             input_ids=tokenizer.encode(prompt, encode_special_tokens=True, embeddings=embeddings),
-            max_new_tokens=max_new_tokens,
+            max_new_tokens=max_new_tokens + config.VLM_THINK_TOKENS,
             stop_conditions=parts["stops"],
             sampler=sampler,
             seed=seed,
             embeddings=embeddings,
             filters=shape,
+            decode_special_tokens=True,
         )
         generator = parts["generator"]
         generator.enqueue(job)
@@ -138,7 +148,11 @@ class Exl3VL:
                     if chunk := result.get("text"):
                         text += chunk
                         show(text)
-        return text.strip()
+            _, closed, answer = text.partition("</think>")
+            answer = answer.strip() if closed else ""
+            if closed:
+                show(answer)  # the finished line keeps the answer; a thought cut off is kept whole
+        return answer
 
     def unload(self) -> None:
         if self._parts is not None:

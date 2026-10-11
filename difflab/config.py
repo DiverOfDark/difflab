@@ -31,6 +31,10 @@ VLM_CONTEXT_TOKENS = 32768
 # asks for, keeps accepting further out; prose stops gaining at 3. Each draft is another
 # linear-attention state held per slot, ~150 MB.
 VLM_DRAFT_TOKENS = 4
+# The template's default is xhigh; low keeps the many one-question rulings cheap. Thinking is spent on
+# top of each caller's answer cap, so a cut-off thought leaves an empty answer, not a short one.
+VLM_REASONING_EFFORT = "low"
+VLM_THINK_TOKENS = 4096
 VLM_RECURRENT_CACHE_BYTES = 1024**3  # host RAM, for reusing a prefix's linear-attention state
 
 # ComfyUI Image Saver Simple.
