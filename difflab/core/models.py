@@ -26,6 +26,7 @@ from typing import Any
 import torch
 
 from difflab.core import ui
+from difflab.models import offload
 
 
 @dataclass(frozen=True)
@@ -112,6 +113,12 @@ class Registry:
         try:
             return make()
         except torch.OutOfMemoryError:
+            if offload.release():
+                ui.note(f"releasing resident blocks to make room for {spec.name}")
+                try:
+                    return make()
+                except torch.OutOfMemoryError:
+                    pass
             heavy = [k for k in self._order if self._specs[k].heavy]
             if spec.heavy or not heavy:
                 raise

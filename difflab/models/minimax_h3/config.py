@@ -35,6 +35,10 @@ AUDIO_SAMPLE_RATE = 32000
 # configuration that has now rendered twice is noise. Deliberately not DIRECTOR_-prefixed: that
 # prefix is a fingerprint.
 MAX_ROWS = 114_000
+# What sampling keeps free beside the DiT blocks it holds resident, per packed row: the third
+# measurement's 17.3 GB peak over its rows. That peak was taken with every block streaming, so it also
+# counts the non-block weights and errs high by them.
+SAMPLE_RESERVE_PER_ROW = int(17.3 * 1024**3 / 113_500)
 
 # Both fixed when a model is built, and a built model is shared by every call after it.
 MATMUL_CHUNK_TOKENS = 8192  # token chunk for the int8 linears and the SwiGLU intermediate

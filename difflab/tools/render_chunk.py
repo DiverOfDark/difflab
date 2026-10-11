@@ -28,6 +28,7 @@ from difflab.core.cache import cache as default_cache
 from difflab.core.hub import HubFile, parse_file
 from difflab.core.keys import Key, key
 from difflab.core.types import Clip, Frame
+from difflab.models import offload
 from difflab.models.minimax_h3 import config as h3_config
 from difflab.models.minimax_h3 import pipeline, text_encoder, transformer, vae
 from difflab.models.minimax_h3.settings import VideoSettings
@@ -248,34 +249,48 @@ def sample(
             on_step(index, video, audio)
 
     blocks = dit.transformer_blocks
-    with ui.sampling("Sampling", steps, len(blocks)) as tick:
-        hooks = [block.register_forward_hook(lambda *_: tick()) for block in blocks]
+
+    def run(resident: bool) -> tuple[torch.Tensor, torch.Tensor]:
+        with ui.sampling("Sampling", steps, len(blocks)) as tick:
+            hooks = [block.register_forward_hook(lambda *_: tick()) for block in blocks]
+            try:
+                return pipeline.sample(
+                    dit,
+                    conditioning,
+                    first_latent,
+                    geometry,
+                    steps=steps,
+                    seed=settings.seed,
+                    shift_video=settings.shift_video,
+                    shift_audio=settings.shift_audio,
+                    sampler=settings.sampler,
+                    schedule=settings.schedule,
+                    references=references,
+                    on_step=step_done if previewer is not None or on_step is not None else None,
+                    last_frame_latent=last_latent,
+                    resident=resident,
+                )
+            finally:
+                for hook in hooks:
+                    hook.remove()
+
+    try:
         try:
-            video, audio = pipeline.sample(
-                dit,
-                conditioning,
-                first_latent,
-                geometry,
-                steps=steps,
-                seed=settings.seed,
-                shift_video=settings.shift_video,
-                shift_audio=settings.shift_audio,
-                sampler=settings.sampler,
-                schedule=settings.schedule,
-                references=references,
-                on_step=step_done if previewer is not None or on_step is not None else None,
-                last_frame_latent=last_latent,
-            )
-        finally:
-            for hook in hooks:
-                hook.remove()
-            if previewer is not None:
-                previewer.close()
+            video, audio = run(resident=True)
+        except torch.OutOfMemoryError:
+            if not offload.release():
+                raise
+            ui.note("out of memory with DiT blocks resident: sampling again with every block streaming")
+            video, audio = run(resident=False)
+    finally:
+        if previewer is not None:
+            previewer.close()
     return Latents(video, audio, geometry, settings, prompt)
 
 
 def decode(latents: Latents) -> Clip:
     ui.stage("decoding")
+    offload.release()
     video_model = models.registry.acquire(video_vae_spec(latents.settings))
     clips = vae.decode_clip_count(video_model, int(latents.video.shape[2]))
     # From the latent itself rather than the geometry: an enlarged latent decodes bigger than it sampled.

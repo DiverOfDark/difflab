@@ -2,15 +2,17 @@
 
 import gc
 from collections.abc import Sequence
+from typing import Any, cast
 
 import torch
 from diffusers import QwenImageEditPlusPipeline
-from diffusers.hooks.group_offloading import apply_group_offloading
 from PIL import Image
+from torch import nn
 
 from difflab import config, prompts
 from difflab.core import ui
 from difflab.core.hub import HubFile
+from difflab.models import offload
 from difflab.models import qwen_edit_aio as aio
 
 
@@ -45,20 +47,33 @@ class Editor:
         """`image` is already at the target size; the output is that size floored to /16. `donors` follow it
         as Picture 2, 3, ...: the prompt names them, the output keeps `image`'s geometry."""
         pipe = self.pipe
-        with ui.EditProgress(pipe.transformer, steps) as progress:
-            result = pipe(
-                image=[image, *donors] if donors else image,
-                prompt=prompt,
-                # CFG off at cfg<=1: the negative prompt would be ignored anyway (ComfyUI skips it too).
-                negative_prompt=negative_prompt if cfg > 1 else None,
-                true_cfg_scale=cfg,
-                num_inference_steps=steps,
-                height=image.height,
-                width=image.width,
-                # CPU generator: identical noise regardless of where offloading puts the weights.
-                generator=torch.Generator("cpu").manual_seed(seed),
-                callback_on_step_end=progress.on_step_end,
-            )
+        blocks = pipe.transformer.transformer_blocks
+
+        def run() -> Any:
+            with ui.EditProgress(pipe.transformer, steps) as progress:
+                return pipe(
+                    image=[image, *donors] if donors else image,
+                    prompt=prompt,
+                    # CFG off at cfg<=1: the negative prompt would be ignored anyway (ComfyUI skips it too).
+                    negative_prompt=negative_prompt if cfg > 1 else None,
+                    true_cfg_scale=cfg,
+                    num_inference_steps=steps,
+                    height=image.height,
+                    width=image.width,
+                    # CPU generator: identical noise regardless of where offloading puts the weights.
+                    generator=torch.Generator("cpu").manual_seed(seed),
+                    callback_on_step_end=progress.on_step_end,
+                )
+
+        settled = offload.fit(blocks, config.EDIT_RESERVE_BYTES)
+        ui.line(f"{settled}/{len(blocks)} transformer blocks resident")
+        try:
+            result = run()
+        except torch.OutOfMemoryError:
+            if not offload.release():
+                raise
+            ui.note("out of memory with transformer blocks resident: editing again with every block streaming")
+            result = run()
         edited: Image.Image = result.images[0]
         return edited
 
@@ -78,23 +93,18 @@ class Editor:
             processor=processor,
             transformer=aio.load_transformer(weights),
         )
-        # Fits a 24 GB GPU next to the resident 4-bit VLM: the transformer streams block by block and the
-        # text encoder layer by layer from pinned RAM (CUDA-stream prefetch); the small VAE stays on the GPU.
-        onload = torch.device(self.device)
-        pipe.transformer.enable_group_offload(
-            onload_device=onload,
-            offload_type="block_level",
-            num_blocks_per_group=1,  # CUDA-stream prefetch requires one block per group
-            use_stream=True,
-            low_cpu_mem_usage=True,
-        )
-        apply_group_offloading(
-            pipe.text_encoder,
-            onload_device=onload,
-            offload_type="leaf_level",
-            use_stream=True,
-            low_cpu_mem_usage=True,
-        )
+        device = torch.device(self.device)
+        for name, child in pipe.transformer.named_children():
+            if name != "transformer_blocks":
+                child.to(device)
+        offload.stream_blocks(pipe.transformer.transformer_blocks, device)
+        inner = cast(nn.Module, pipe.text_encoder.model)
+        language_model = cast(nn.Module, inner.language_model)
+        for name, child in language_model.named_children():
+            if name != "layers":
+                child.to(device)
+        cast(nn.Module, inner.visual).to(device)
+        offload.stream_blocks(cast(nn.ModuleList, language_model.layers), device)
         pipe.vae.to(self.device)
         pipe.set_progress_bar_config(disable=True)  # difflab.ui draws the progress
         return pipe

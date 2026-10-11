@@ -28,6 +28,8 @@ from diffusers.modular_pipelines.minimax_h3.before_denoise import (
 )
 
 from difflab import config as app_config
+from difflab.core import ui
+from difflab.models import offload
 from difflab.models.minimax_h3 import config
 from difflab.models.minimax_h3.text_encoder import Conditioning
 
@@ -543,6 +545,7 @@ def sample(
     on_step: Callable[[int, torch.Tensor, torch.Tensor], None] | None = None,
     references: Sequence[Reference] = (),
     last_frame_latent: torch.Tensor | None = None,
+    resident: bool = True,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Run the loop and return `(video latents [1, 24, T, h, w], audio latents [1, 32, 2, T40])`.
 
@@ -607,6 +610,10 @@ def sample(
         audio_condition_rows,
     ) = layout
     sequence_length = position_ids.shape[0]
+    if resident:
+        blocks = transformer.transformer_blocks
+        settled = offload.fit(blocks, sequence_length * config.SAMPLE_RESERVE_PER_ROW)
+        ui.line(f"{settled}/{len(blocks)} DiT blocks resident for {sequence_length} rows")
 
     # Noise is drawn in latent shape and then packed, the way the reference does: packing is a
     # permutation, so drawing straight into rows would scatter the seed's values differently.

@@ -17,6 +17,11 @@ DEVICE = "cuda"
 # model that ever wants coarser rounds again in its own pipeline.
 CANVAS_ALIGN = 32
 
+# What an edit keeps free beside the transformer blocks it holds resident: the highest card use seen
+# across 25 edits run with every block streaming (2026-10-10/11), 7.41 GB in the VAE decode against
+# 4.4-6.3 GB while denoising. CUDA context and VAE weights included, so it errs high by those.
+EDIT_RESERVE_BYTES = int(7.5 * 1024**3)
+
 FINISH_FPS = 60  # what RIFE retimes a finished chapter to; H3 draws 24
 FINISH_MEGAPIXELS = 3840 * 2160 / 1e6  # what the ESRGAN enlarges it to
 
