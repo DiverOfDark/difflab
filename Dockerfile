@@ -52,9 +52,11 @@ ENV PYTHONUNBUFFERED=1 \
     HF_HOME=/app/output/.models \
     XDG_CACHE_HOME=/app/output/.cache \
     DIFFLAB_HOST=0.0.0.0
-# Triton compiles its CUDA driver shim with a C compiler at first use, and the CMD runs the environment's
-# python without pixi's activation, which is what sets CC on a workstation.
-ENV CC=/app/.pixi/envs/prod/bin/x86_64-conda-linux-gnu-gcc
+
+# pixi's activation, written out once so the container needs no pixi at run time: PATH to the
+# environment's ffmpeg, CC for the C shim triton compiles on first use, CUDA_HOME. Without it these are
+# missing, not wrong, and fail only on the job that first reaches them.
+RUN pixi shell-hook -e prod --as-is --change-ps1 false > /app/activate.sh && echo 'exec "$@"' >> /app/activate.sh
 
 # --link: the code is a layer of its own that does not need the environment under it unpacked. Without
 # it a code-only build pulled and extracted the 4.9 GB environment layer to put 1 MB on top (5.4 of its
@@ -68,4 +70,5 @@ VOLUME ["/app/output"]
 
 EXPOSE 8765
 # DIFFLAB_HOST above makes it reachable from outside, with no authentication: see README, "Serving it".
-CMD ["/app/.pixi/envs/prod/bin/python", "-m", "difflab.api"]
+ENTRYPOINT ["/bin/bash", "/app/activate.sh"]
+CMD ["python", "-m", "difflab.api"]

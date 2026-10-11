@@ -56,6 +56,7 @@ nodejs = ">=22.12"  # vite 8
 setuptools = "*"
 wheel = "*"
 packaging = "*"
+ffmpeg = ">=9.0.2,<10"  # assembling runs it; the image has no system one
 
 # The PyPI comfy-kitchen wheel carries cubins for sm_75/80/89/90a/100/120 but not sm_86, so the 3090
 # runs its sm_80 code: every int->float in the int8 attention loop compiles to I2F, which Ampere's
