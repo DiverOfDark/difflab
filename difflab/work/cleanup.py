@@ -1,4 +1,5 @@
-"""What the worker deletes between jobs: blobs nobody has used lately, quick runs past their age, old backups.
+"""What the worker deletes between jobs: idle productions, blobs nobody has used lately, quick runs past their age,
+old backups.
 
 A blob a production's made thing points at goes like any other; the thing drops back to `missing`
 with its seed kept, so rendering it again lands where it was. What a person gave is never a blob
@@ -35,6 +36,7 @@ _GIVEN = (
 
 @dataclass
 class Swept:
+    productions: list[str] = field(default_factory=list)
     files: int = 0
     bytes: int = 0
     runs: int = 0
@@ -43,8 +45,9 @@ class Swept:
 
     def line(self) -> str:
         reset = ", ".join(f"{n} {kind}s" for kind, n in self.reset.items() if n) or "nothing"
+        gone = ", ".join(self.productions) or "none"
         return (
-            f"cleanup: {self.bytes / 1024**3:.1f} G in {self.files} blobs, {self.runs} runs, "
+            f"cleanup: productions {gone}; {self.bytes / 1024**3:.1f} G in {self.files} blobs, {self.runs} runs, "
             f"{self.backups} backups; back to missing: {reset}"
         )
 
@@ -53,12 +56,30 @@ def sweep(dry: bool = False) -> Swept:
     """Only from the worker's thread with nothing claimed: a job started mid-sweep could read a blob as it goes."""
     swept = Swept()
     with store.connect() as connection:
+        _productions(connection, swept, dry)
         kept = _given(connection)
         gone = _blobs(kept, swept, dry)
         _amend(connection, gone, swept, dry)
         _runs(connection, swept, dry)
     _backups(swept, dry)
     return swept
+
+
+def _productions(connection: sqlite3.Connection, swept: Swept, dry: bool) -> None:
+    """Idle since its last edit or run, whichever is later. Its runs go later with the orphans, its blobs
+    with their age; what it gave is no longer kept by it."""
+    rows = connection.execute(
+        "SELECT p.id, p.slug, p.keep, max(p.updated_at, coalesce(max(coalesce(r.ended_at, r.created_at)), 0)) AS at, "
+        f"count(CASE WHEN r.state NOT IN ({_marks(store.SETTLED)}) THEN 1 END) AS live "
+        "FROM productions p LEFT JOIN runs r ON r.production_id = p.id GROUP BY p.id ORDER BY at DESC",
+        store.SETTLED,
+    ).fetchall()
+    cutoff = time.time() - config.PRODUCTIONS_IDLE_DAYS * 86400
+    old = [row for row in rows[config.PRODUCTIONS_KEEP :] if not row["keep"] and not row["live"] and row["at"] < cutoff]
+    swept.productions = [row["slug"] for row in old]
+    if old and not dry:
+        with store.transaction(connection):
+            connection.execute(f"DELETE FROM productions WHERE id IN ({_marks(old)})", [row["id"] for row in old])
 
 
 def _given(connection: sqlite3.Connection) -> set[str]:

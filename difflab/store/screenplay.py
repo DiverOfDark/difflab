@@ -83,7 +83,7 @@ def add_production(
 
 
 def update_production(connection: sqlite3.Connection, production_id: int, **fields: Any) -> Production | None:
-    allowed = {"slug", "title", "story_kind", "story", "manifest"}
+    allowed = {"slug", "title", "story_kind", "story", "manifest", "keep"}
     unknown = set(fields) - allowed
     if unknown:
         raise ValueError(f"a production has no {', '.join(sorted(unknown))}")

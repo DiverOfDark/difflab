@@ -54,4 +54,6 @@ CLEANUP_EVERY_HOURS = 6
 BLOB_KEEP_DAYS = 7
 BLOB_KEEP_TOOLS = ("given", "director", "ruling")  # uploads, and VLM answers: small and slow to ask again
 RUNS_KEEP_DAYS = 14
+PRODUCTIONS_KEEP = 15  # newest by last edit or run, whatever their age
+PRODUCTIONS_IDLE_DAYS = 7
 BACKUPS_KEEP = 5

@@ -171,6 +171,8 @@ const saveAspect = () =>
   })
 const composeFirst = () => props.act('compose', () => patchShot(firstShot.value!.id, { keyframe: 'composed' }))
 
+const toggleKeep = () => props.act('keep', () => patchProduction(props.production!.id, { keep: !props.production!.keep }))
+
 const discard = () => {
   if (confirm('Delete this production, its cast and its shots? What was rendered stays on disk.'))
     props.act('discard', async () => {
@@ -289,8 +291,12 @@ const discard = () => {
     </section>
 
     <footer class="foot">
-      <span class="note">Deleting drops the production, its cast and its shots. What was rendered stays on disk.</span>
+      <span class="note">
+        Deleting drops the production, its cast and its shots. What was rendered stays on disk.
+        {{ production.keep ? 'Kept: the cleanup never deletes it.' : 'Past the 15 newest, a week untouched and the cleanup deletes it.' }}
+      </span>
       <div class="buttons">
+        <button :disabled="!!busy" @click="toggleKeep">{{ production.keep ? 'Stop keeping' : 'Keep' }}</button>
         <button class="danger" :disabled="!!busy" @click="discard">Delete production</button>
       </div>
     </footer>

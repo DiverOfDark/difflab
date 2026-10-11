@@ -409,6 +409,7 @@ export interface Production {
   manifest: Record<string, unknown>
   created: number
   updated: number
+  keep: boolean
   members: MemberInfo[]
   chapters: { id: number; position: number; title: string; shots: ShotInfo[] }[]
   runs: { id: string; title: string; state: string; scope: string; created: number }[]
@@ -557,7 +558,7 @@ export const listProductions = () => json<ProductionSummary[]>('/api/productions
 export const readProduction = (id: number) => json<Production>(`/api/productions/${id}`)
 export const deleteProduction = (id: number) => json<unknown>(`/api/productions/${id}`, { method: 'DELETE' })
 /** `title`, `story`, `opening` (the first frame in words, `{id}` per member; empty gives it back to the photo),
- *  `aspect` (width over height; null takes the first photo's). */
+ *  `aspect` (width over height; null takes the first photo's), `keep` (never deleted by the cleanup). */
 export const patchProduction = (id: number, body: Record<string, unknown>) =>
   json<Production & { stale: Stale }>(`/api/productions/${id}`, send('PATCH', body))
 export const addMember = (id: number, body: Record<string, unknown>) =>

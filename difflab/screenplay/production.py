@@ -415,8 +415,8 @@ def update(production_id: int, **changes: Any) -> dict[str, int]:
     """`title`; `story`, the text it is planned from; `opening`, the first frame in words with
     each member as {id} ("" gives it back to what the planner reads off the first photo); `aspect`, the
     canvas's width over height (None: the first photo's). A changed story, opening or aspect makes every
-    prompt, composed keyframe and clip stale until a re-plan."""
-    unknown = set(changes) - {"title", "story", "opening", "aspect"}
+    prompt, composed keyframe and clip stale until a re-plan. `keep` spares it from the cleanup."""
+    unknown = set(changes) - {"title", "story", "opening", "aspect", "keep"}
     if unknown:
         raise ValueError(f"a production has no {', '.join(sorted(unknown))} to edit")
     moved = {"prompts": 0, "keyframes": 0, "clips": 0}
@@ -429,6 +429,8 @@ def update(production_id: int, **changes: Any) -> dict[str, int]:
             if not title:
                 raise ValueError("a title, in words")
             store.update_production(connection, production_id, title=title)
+        if "keep" in changes:
+            store.update_production(connection, production_id, keep=int(bool(changes["keep"])))
         replan = False
         if "story" in changes:
             story = str(changes["story"])
@@ -1818,6 +1820,7 @@ def _production(production: store.Production) -> dict[str, Any]:
         "manifest": production.manifest,
         "created": production.created_at,
         "updated": production.updated_at,
+        "keep": production.keep,
     }
 
 

@@ -241,6 +241,7 @@ class Production:
     manifest: dict[str, Any]
     created_at: float
     updated_at: float
+    keep: bool
 
     @classmethod
     def of(cls, row: sqlite3.Row) -> Production:
@@ -253,6 +254,7 @@ class Production:
             manifest=_json(row["manifest"]),
             created_at=_number(row["created_at"]),
             updated_at=_number(row["updated_at"]),
+            keep=bool(row["keep"]),
         )
 
 

@@ -494,6 +494,8 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
     ("ALTER TABLE members ADD COLUMN wardrobe TEXT NOT NULL DEFAULT '[]'",),
     # An idea is a text of one chapter: the two kinds split and refine alike now.
     ("UPDATE productions SET story_kind = 'text' WHERE story_kind = 'idea'",),
+    # A production kept is one `work/cleanup.py` never deletes, however long it sits.
+    ("ALTER TABLE productions ADD COLUMN keep INTEGER NOT NULL DEFAULT 0",),
 )
 
 SCHEMA_VERSION = len(MIGRATIONS)
