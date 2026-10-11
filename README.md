@@ -515,6 +515,9 @@ is compiled for its own release list less Turing plus `86-real`, and exllamav3 f
 code built for it. `--build-arg COMFY_CUDA_ARCHS=89-real --build-arg TORCH_CUDA_ARCH_LIST=8.9` builds for one card only,
 in a sixth of the kernel compile.
 
+Everything persistent - weights, downloads, the database and every output - lives under one volume,
+`/data` (`-v difflab:/data`); without it each new pod downloads ~96 GB of weights again.
+
 ## Speed
 
 Attention is ~75% of a step at full length, and **comfy-kitchen's int8 attention** (`attention.py`)
