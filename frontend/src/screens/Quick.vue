@@ -8,10 +8,10 @@ import { live, queued, refresh, state } from '../store'
 
 /** The settings come from the server - the code defaults under this machine's overrides - so the form
  *  never carries a second copy of them. */
-async function blank(): Promise<Job> {
+async function blank(): Promise<{ made: Job; models: (job: Job) => Job }> {
   const tools = await listTools()
   const effective = (name: string) => ({ ...(tools.find((t) => t.name === name)?.effective ?? {}) })
-  return {
+  const made: Job = {
     mode: 'video',
     idea: '',
     prompt: '',
@@ -25,6 +25,18 @@ async function blank(): Promise<Job> {
     vlm: effective('write_instruction') as Job['vlm'],
     video_vlm: effective('write_video_prompt') as Job['video_vlm'],
   }
+  // A kept job brings its knobs along but never its models: those are what Settings says now, or a
+  // model picked there after the form was filled is silently not the one that runs.
+  const parts = { video: 'render_chunk', edit: 'edit_image', vlm: 'write_instruction', video_vlm: 'write_video_prompt' } as const
+  const models = (job: Job): Job => {
+    const out = { ...job }
+    for (const [part, tool] of Object.entries(parts) as [keyof typeof parts, string][]) {
+      const roles = tools.find((t) => t.name === tool)?.settings.filter((f) => f.role).map((f) => f.name) ?? []
+      out[part] = { ...job[part], ...Object.fromEntries(roles.map((name) => [name, made[part][name as keyof Job[typeof part]]])) } as never
+    }
+    return out
+  }
+  return { made, models }
 }
 
 const router = useRouter()
@@ -35,7 +47,7 @@ const failure = ref('')
 
 // A run's "again" may predate a part of the job; the server's defaults fill what it lacks.
 blank()
-  .then((made) => (job.value = { ...made, ...state.quick }))
+  .then(({ made, models }) => (job.value = models({ ...made, ...state.quick })))
   .catch((error) => (failure.value = `no settings from the server: ${error}`))
 
 const expand = (base: Job, item: string): Job =>
