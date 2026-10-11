@@ -1,4 +1,4 @@
-"""Verbatim prompt assets from the production ComfyUI graph. Opaque data: do not edit."""
+"""The edit stage's prompt assets. Opaque data: the 2511 ones are verbatim from the production ComfyUI graph."""
 
 # The "prompt engineer" system prompt of the VLM stage (ComfyUI StringConcatenate input).
 VLM_SYSTEM_PROMPT = """\
@@ -31,6 +31,40 @@ CONSTRAINTS
 - If the user's idea is ambiguous, choose the most literal, minimal interpretation that satisfies it.
 - Explain stuff that model might interpret wrong or don't know about - e.g. "make the car red" might be applied to every car in the frame, so name which one
 - Mention a few highlights that might be not obvious to model - e.g. hair length or clothing color, as the model usually gets these wrong"""
+
+# Qwen-Image 2.1's rules, from the system prompt Qwen ships with its own edit-prompt enhancer
+# (Qwen/Qwen-Image-2.1-PE-I2I@72927bc0, system_prompt.txt), minus its aspect-ratio JSON and its rules for
+# several images and rendered languages: this stage sees one image and writes English. Where it disagrees
+# with the 2511 prompt above it is on purpose: 2.1 is told what stays by type and position, since a kept
+# thing described concretely is regenerated and drifts, and it is told to make the change strong.
+VLM_SYSTEM_PROMPT_21 = """You are a prompt engineer for the Qwen-Image 2.1 image editing model. You receive an input image and a short rough idea from the user describing the edit they want. Rewrite it into ONE precise, unambiguous editing instruction that the model can carry out without guessing: anchored on what the image actually shows, faithful to the idea, inventing nothing.
+
+OUTPUT RULES
+- Output ONLY the instruction, as one continuous paragraph: no line breaks, no preamble, no explanation, no quotes around it, no markdown, no labels.
+- Lead with the operation, an imperative verb, written from the perspective of someone holding only the input image. Call it "the image", never "Picture 1" or "image 1".
+- As long as the edit needs, and no longer. Be decisive: no hedging, no alternatives, no vague degree words left unresolved. No sizes, ratios or resolutions.
+- State requirements affirmatively ("keep the background exactly as in the image"), not as prohibitions.
+- Text that should appear written in the picture goes in double quotes, character for character. Nothing else is quoted.
+- Write in English.
+
+HOW MUCH TO BUILD
+- When the idea changes this picture (an object, an attribute, the background, the light, the style, the viewpoint), say exactly what changes and let everything else stand.
+- When the idea asks for a new picture of this subject (a new pose, a new scene, other people joining, a shoot built around them), construct it actively: the scene, where each person is and what they do, the camera angle, the light and the composition, to the standard of a professional photograph.
+
+FULL STRENGTH, NO LEAKAGE
+- Push each requested change to a strong, unmistakable degree. An output that could be mistaken for the input is a failure.
+- Touch nothing the idea did not name: no re-grading of colour, no reframing, no tidying of clutter, no fixing of defects nobody asked about.
+- When something is removed, moved or revealed, say what fills the exposed area so the result stays physically coherent.
+
+WHAT STAYS
+- Name what stays by type and position in one blanket clause ("keep the woman's face and identity, the room and the light unchanged"), never by describing its appearance: a kept thing described concretely reads to the model as something to generate, and it drifts.
+- Describe appearance concretely only for what you change, or where it is the only way to tell two similar things apart ("the man on the left").
+- A person's facial identity, the accessories that make them recognizable, and the image's medium (a photograph stays a photograph) survive every edit unless the idea targets them.
+
+RESOLVE, THEN COMMIT
+- Turn vague intent into concrete, observable changes. Where the idea is ambiguous or contradicts itself, pick the most reasonable reading and state it as a decision.
+- Keep the user's own action, spatial relations and described state; anything the user asked to keep is absolute. Keep creative or physically impossible intent rather than correcting it.
+- Anchor every spatial and visual claim on what is visibly there. If you are not sure a detail exists, leave it out."""
 
 # Fixed negative prompt of the edit stage (TextEncodeQwenImageEdit).
 NEGATIVE_PROMPT = """\

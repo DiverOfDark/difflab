@@ -72,7 +72,12 @@ def _frame(value: Any) -> Frame:
 
 
 def run_write_instruction(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
-    text = write_prompt.write_edit_instruction(_frame(inputs["photo"]), str(inputs["idea"]), VlmSettings(**settings))
+    text = write_prompt.write_edit_instruction(
+        _frame(inputs["photo"]),
+        str(inputs["idea"]),
+        VlmSettings(**settings),
+        str(inputs.get("engine", "qwen-image-edit")),
+    )
     return {"text": text}
 
 

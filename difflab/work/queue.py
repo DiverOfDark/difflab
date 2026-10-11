@@ -35,7 +35,10 @@ def plan(job: Job) -> list[JobSpec]:
         if job.idea:
             jobs.append(
                 JobSpec(
-                    "write_instruction", {"photo": photo, "idea": job.idea}, "write the instruction", job.vlm.data()
+                    "write_instruction",
+                    {"photo": photo, "idea": job.idea, "engine": job.edit.engine},
+                    "write the instruction",
+                    job.vlm.data(),
                 )
             )
             instruction: Any = output_of(0, "text")

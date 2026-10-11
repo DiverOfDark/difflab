@@ -28,13 +28,15 @@ def write_video_prompt(frame: Frame, idea: str, settings: VlmSettings | None = N
     return written
 
 
-def write_edit_instruction(frame: Frame, idea: str, settings: VlmSettings | None = None) -> str:
-    """A rough idea plus the frame -> one finished Qwen-Image-Edit instruction."""
+def write_edit_instruction(
+    frame: Frame, idea: str, settings: VlmSettings | None = None, engine: str = "qwen-image-edit"
+) -> str:
+    """A rough idea plus the frame -> one finished instruction, in the words `engine` was trained on."""
     settings = settings or VlmSettings()
     written = _vlm(settings).ask(
         frame.pil(),
         idea,
-        system=edit_prompts.VLM_SYSTEM_PROMPT,
+        system=edit_prompts.VLM_SYSTEM_PROMPT_21 if engine == "qwen-image-2.1" else edit_prompts.VLM_SYSTEM_PROMPT,
         title="edit instruction",
         **settings.generation(),
     )

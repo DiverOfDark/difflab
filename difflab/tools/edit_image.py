@@ -7,6 +7,7 @@ back bit for bit, or every chunk holding it keys differently and the take is ren
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Sequence
 from typing import Any
 
@@ -24,6 +25,19 @@ from difflab.models.qwen_image21 import Editor21
 VAE_REFERENCE_AREA = 1024 * 1024
 """The pixel area QwenImageEditPlus encodes every input at for its VAE reference latents. Not a knob:
 a fact about the pipeline, which `vae_reference_size` exists only to agree with."""
+
+
+_PICTURE = re.compile(r"\bPicture (\d+)\b")
+
+
+def named(instruction: str, settings: EditSettings, pictures: int) -> str:
+    """Pictures as `engine` was trained to read them: Edit-2511's "Picture 2" is Qwen-Image 2.1's
+    `<image2>`, the tag its pipeline puts before each image, and a single image goes untagged."""
+    if settings.engine != "qwen-image-2.1":
+        return instruction
+    if pictures == 1:
+        return _PICTURE.sub("the image", instruction)
+    return _PICTURE.sub(lambda match: f"<image{match[1]}>", instruction)
 
 
 def spec(settings: EditSettings) -> models.ModelSpec:
@@ -69,7 +83,7 @@ def edit(
         resized = resize_to(frame.pil(), target)
         edited = model.edit(
             resized,
-            instruction,
+            named(instruction, settings, 1 + len(donors)),
             negative_prompt=negative_prompt,
             steps=settings.steps,
             cfg=settings.cfg,
