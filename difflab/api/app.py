@@ -889,11 +889,17 @@ def run_file(run_id: str, path: str) -> FileResponse:
     return _under(config.RUNS_DIR / Path(run_id).name, path)
 
 
+SERVED_OUTPUT = ("blobs", "images", "videos")  # every path a job delivers, or an event names, is under one
+
+
 @app.get("/output/{path:path}")
 def output_file(path: str) -> FileResponse:
-    if any(part.startswith(".") for part in Path(path).parts):  # the container's weights and caches
+    # Not the rest of output/: it holds the database, with the saved Hugging Face and Civitai tokens,
+    # and in the container the weights.
+    folder, _, rest = path.partition("/")
+    if folder not in SERVED_OUTPUT:
         raise HTTPException(404, "no such file")
-    return _under(config.OUTPUT_DIR, path)
+    return _under(config.OUTPUT_DIR / folder, rest)
 
 
 def _under(root: Path, relative: str) -> FileResponse:
