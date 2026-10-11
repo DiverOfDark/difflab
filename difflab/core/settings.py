@@ -242,7 +242,7 @@ class EditSettings(Settings):
         "Comfy-Org/Qwen-Image-2.1@df94239739eef7205973a145ffa6f441f7b64e84"
         ":diffusion_models/qwen_image_2.1_turbo_int8_convrot.safetensors",
         "model",
-        "the int8 ConvRot Qwen-Image 2.1 transformer: repo@commit:path",
+        "the int8 ConvRot Qwen-Image 2.1 transformer, a fine-tune's included: repo@commit:path or civitai:…",
         role="editor-21",
     )
     text_encoder_21: str = setting(
@@ -267,7 +267,8 @@ class EditSettings(Settings):
 
     @property
     def model_stem(self) -> str:
-        return Path(self.model_21 if self.engine == "qwen-image-2.1" else self.checkpoint).stem
+        reference = self.model_21 if self.engine == "qwen-image-2.1" else self.checkpoint
+        return Path(reference.rsplit(":", 1)[-1]).stem  # repo@commit:path and civitai:version@sha:file alike
 
     def loras_21(self) -> list[tuple[str, float]]:
         return lora_stack(self.loras)

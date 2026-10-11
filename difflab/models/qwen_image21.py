@@ -30,7 +30,7 @@ from transformers.models.qwen2_vl.image_processing_pil_qwen2_vl import Qwen2VLIm
 
 from difflab import config, prompts
 from difflab.core import ui
-from difflab.core.hub import Checkpoint, HubFile, ModelFile
+from difflab.core.hub import Checkpoint, ModelFile
 from difflab.models import lora, offload
 from difflab.models.convrot import dequantize, read_quant_meta
 from difflab.models.minimax_h3.weights import QuantSpec, swap_quantized_linears
@@ -106,6 +106,12 @@ def _apply_lora(model: nn.Module, file: str, strength: float) -> str:
         return underscored.get(key, key)
 
     adapter = lora.read(file, rename)
+    name = file.rsplit("/", 1)[-1]
+    if not adapter.pairs:
+        raise ValueError(
+            f"{name} holds no LoRA pairs: a whole model (a fine-tune is ~7 GB as int8 ConvRot, 14 GB as fp16) "
+            "goes in the Qwen-Image 2.1 model field, not among the LoRAs"
+        )
     applied = 0
     for module, (a, b) in adapter.pairs.items():
         scale = adapter.scales[module] * strength
@@ -123,7 +129,6 @@ def _apply_lora(model: nn.Module, file: str, strength: float) -> str:
             continue
         lora.attach(owner, a, b)
         applied += 1
-    name = file.rsplit("/", 1)[-1]
     if not applied:
         raise ValueError(f"{name} matches no layer of the Qwen-Image 2.1 transformer: a LoRA for another model?")
     skipped = len(adapter.pairs) - applied
@@ -191,8 +196,8 @@ class Editor21:
 
     def __init__(
         self,
-        weights: HubFile,
-        text_encoder: HubFile,
+        weights: ModelFile,
+        text_encoder: ModelFile,
         loras: Sequence[tuple[ModelFile, float]] = (),
         device: str = config.DEVICE,
     ) -> None:

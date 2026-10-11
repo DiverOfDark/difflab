@@ -29,7 +29,7 @@ a fact about the pipeline, which `vae_reference_size` exists only to agree with.
 def spec(settings: EditSettings) -> models.ModelSpec:
     """One registry entry per model file and LoRA stack, so two never share a slot."""
     if settings.engine == "qwen-image-2.1":
-        weights, text_encoder = HubFile.parse(settings.model_21), HubFile.parse(settings.text_encoder_21)
+        weights, text_encoder = parse_file(settings.model_21), parse_file(settings.text_encoder_21)
         loras = [(parse_file(ref), strength) for ref, strength in settings.loras_21()]
         stack = ",".join(f"{lora.filename}*{strength:g}" for lora, strength in loras)
         return models.ModelSpec(
