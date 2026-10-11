@@ -517,6 +517,7 @@ class Casting(Made):
     origin: str
     size: list[int]
     seed: int | None
+    pictured: list[str] | None
 
     @property
     def amended(self) -> bool:
@@ -535,6 +536,7 @@ class Casting(Made):
             origin=_text(row["origin"]),
             size=[int(v) for v in _list(row["size"])],
             seed=_whole(row["seed"]),
+            pictured=None if row["pictured"] is None else [str(v) for v in _list(row["pictured"])],
         )
 
 

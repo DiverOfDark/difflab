@@ -132,6 +132,9 @@ class Now:
     before: str  # what earlier shots changed, as the chunk starts; "" at the bible's look
     after: str  # what it has by the chunk's end: `before`, unless this chunk's casting amends it
     picture: str = ""  # the ref key of `after`'s own picture once approved; "" while it has none
+    start: str = ""  # the ref key of `before`'s own picture, when it was picked beside `after`'s
+    held: tuple[str, ...] = ()  # the look pictures handed over: `picture` alone unless picked by hand
+    bible: bool = True  # whether the bible's pictures, which show none of its looks, are handed over
 
 
 @dataclass(frozen=True)
@@ -319,17 +322,18 @@ def references(take: Take, index: int) -> tuple[str, ...]:
     chunk = take.chunks[index]
     budget = take.budget - (take.scene_rows if scened(take, index) else 0)
     on = set(chunk.cast)
-    looked = {m: now.picture for m, now in chunk.states.items() if now.picture and m in on}
+    looked = {m for m, now in chunk.states.items() if not now.bible and m in on}
+    picked = {m: now.held for m, now in chunk.states.items() if m in on}
 
     def kind(member: str) -> str:
         return take.cards[member].kind
 
     def held(ref: Ref) -> bool:
         if ref.look:
-            return looked.get(ref.member) == ref.key
+            return ref.key in picked.get(ref.member, ())
         if ref.role == "environment":
             return ref.member not in looked
-        amended = set(ref.shows) & looked.keys()
+        amended = set(ref.shows) & looked
         return not amended or (ref.role == "face" and amended == {ref.member})
 
     # A picture of a place the chunk is not in brings that place back: the room photo, which also shows
@@ -365,10 +369,10 @@ def references(take: Take, index: int) -> tuple[str, ...]:
     )
     chosen: list[Ref] = []
     for member in sorted(on, key=lambda m: (GUARANTEE_ORDER[kind(m)], take.members.index(m))):
+        chosen += [ref for ref in ranked if ref.look and ref.key in picked.get(member, ()) and ref not in chosen]
         if any(member in ref.shows for ref in chosen):
             continue
-        own = [ref for ref in ranked if ref.key == looked.get(member)]
-        own = own or [ref for ref in ranked if ref.member == member] or [ref for ref in ranked if member in ref.shows]
+        own = [ref for ref in ranked if ref.member == member] or [ref for ref in ranked if member in ref.shows]
         if own:
             chosen.append(own[0])
     rows = sum(ref.rows for ref in chosen)
@@ -530,14 +534,21 @@ def compile_chunk(take: Take, index: int) -> Compiled:
     now = {m: state.before for m, state in states.items() if state.before}
     changes = {m: state for m, state in states.items() if state.after != state.before}
 
-    def cited(state: Now) -> str:
-        return shown.picture(state.picture) if state.picture in shown.pictures else ""
+    def cited(state: Now, key: str | None = None) -> str:
+        key = state.picture if key is None else key
+        return shown.picture(key) if key and key in shown.pictures else ""
 
     # subject_definitions: identity-only pictures are cited inside the <Subject N> lines (ref-en 2.2)
     definitions = [definition(take, member, subject[member], shown) for member in cast]
     for m in cast:
         if m in now and m not in changes and cited(states[m]):
             definitions.append(say["look_pictured"].format(subject=subject[m], look=now[m], pictures=cited(states[m])))
+        elif m in now and m in changes and cited(states[m], states[m].start):
+            definitions.append(
+                say["look_start_pictured"].format(
+                    subject=subject[m], look=now[m], pictures=cited(states[m], states[m].start)
+                )
+            )
         elif m in now:
             definitions.append(say["look"].format(subject=subject[m], look=now[m]))
     for m, state in changes.items():
@@ -826,13 +837,25 @@ def look_refs(resolved: looks.Resolved, members: list[store.Member]) -> dict[str
 
 
 def states_of(resolved: looks.Resolved, shot_id: int) -> dict[str, Now]:
+    """`casting.pictured` names, by "base" or look id, the looks whose pictures the shot hands over."""
+
+    def key(look: looks.Look) -> str:
+        return look_key(look) if look.approved and look.casting is not None and look.casting.size else ""
+
     out: dict[str, Now] = {}
     for member, placed in resolved.placed.get(shot_id, {}).items():
-        if placed.source is None and placed.look is None:
+        picked = placed.casting.pictured
+        if placed.source is None and placed.look is None and picked is None:
             continue
-        after = resolved.look(member, placed.look)
-        picture = look_key(after) if after.approved and after.casting is not None and after.casting.size else ""
-        out[member] = Now(resolved.look(member, placed.source).text, after.text, picture)
+        before, after = resolved.look(member, placed.source), resolved.look(member, placed.look)
+        picture = key(after)
+        if picked is None:
+            out[member] = Now(before.text, after.text, picture, held=(picture,) if picture else (), bible=not picture)
+            continue
+        chosen = [look for look in (before, after) if look.id is not None and str(look.id) in picked]
+        held = tuple(dict.fromkeys(k for look in chosen if (k := key(look))))
+        start = key(before) if before.id != after.id and key(before) in held else ""
+        out[member] = Now(before.text, after.text, picture, start, held, store.BASE in picked)
     return out
 
 

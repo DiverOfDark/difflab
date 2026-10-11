@@ -1094,8 +1094,9 @@ def add_casting(shot_id: int, member: str, **changes: Any) -> int:
 
 
 def edit_casting(casting_id: int, **changes: Any) -> int:
-    """`parent` (None its last look, "base", or an earlier look's id), `amend`, `label`; restales its shots."""
-    unknown = set(changes) - {"parent", "amend", "label"}
+    """`parent` (None its last look, "base", or an earlier look's id), `amend`, `label`, `pictured` (None the
+    compiler's pick, or the looks whose pictures the shot hands over, as `parent` names them); restales its shots."""
+    unknown = set(changes) - {"parent", "amend", "label", "pictured"}
     if unknown:
         raise ValueError(f"a casting has no {', '.join(sorted(unknown))} to edit")
     with store.connect() as connection, store.transaction(connection):
@@ -1180,6 +1181,8 @@ def _recast(
             fields["amend"] = " ".join(str(changes["amend"] or "").split())
         if "label" in changes:
             fields["label"] = " ".join(str(changes["label"] or "").split())
+        if "pictured" in changes:
+            fields["pictured"] = _pictured(before, shot, member.slug, changes["pictured"])
         if "amend" in fields and fields["amend"] and casting.amend != fields["amend"] and not casting.origin:
             fields["origin"] = "by hand"
         store.update_casting(connection, casting.id, **fields)
@@ -1213,6 +1216,17 @@ def restage(
         chapter = store.chapter(connection, one.chapter_id)
         if chapter is not None and one.plan.get("beats"):
             recompile(connection, production, chapter, one.id, written_for="looks")
+
+
+def _pictured(resolved: looks.Resolved, shot: store.Shot, member: str, given: Any) -> list[str] | None:
+    if given is None:
+        return None
+    placed = resolved.placed[shot.id][member]
+    shown = {store.BASE} | {str(look) for look in (placed.source, placed.look) if look is not None}
+    picked = [str(one) for one in given]
+    if unknown := [one for one in picked if one not in shown]:
+        raise ValueError(f"{', '.join(unknown)}: not a look {member} starts from or ends on in this shot")
+    return list(dict.fromkeys(picked))
 
 
 def _parent(resolved: looks.Resolved, shot: store.Shot, member: str, given: Any) -> str | None:
@@ -1789,7 +1803,7 @@ def _hashes(
             [
                 [s[k] for k in _SHOTS]
                 + [s["prompt"]["text"], s["keyframe"]["key"]]
-                + [[c["member"], c["parent"], c["amend"], c["key"]] for c in s["castings"]]
+                + [[c["member"], c["parent"], c["amend"], c["key"], c["pictured"]] for c in s["castings"]]
                 for s in shots
             ]
         ),
@@ -1945,6 +1959,7 @@ def _castings(
                 "is_revert": placed.revert,
                 "back": placed.back,
                 "carried_into": list(placed.carried_into),
+                "pictured": casting.pictured,
             }
         )
     return out

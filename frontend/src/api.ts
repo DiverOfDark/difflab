@@ -235,6 +235,8 @@ export interface CastingInfo extends MadeThing {
   back: boolean
   /** Later shot ids that show this casting's look; only for an amended one. */
   carried_into: number[]
+  /** 'base' and look ids whose pictures the clip is handed; null is the compiler's own pick. */
+  pictured: string[] | null
 }
 
 export interface ShotInfo {
@@ -670,7 +672,7 @@ export const rewriteShot = (shotId: number) => json<{ run: string; runs: string[
 export const approveShot = (shotId: number) => json<Production & { left: string[] }>(`/api/shots/${shotId}/approve`, post({}))
 export const addCasting = (shotId: number, body: { member: string; parent?: string | null; amend?: string; label?: string }) =>
   json<Production>(`/api/shots/${shotId}/castings`, post(body))
-export const patchCasting = (castingId: number, body: { parent?: string | null; amend?: string; label?: string }) =>
+export const patchCasting = (castingId: number, body: { parent?: string | null; amend?: string; label?: string; pictured?: string[] | null }) =>
   json<Production>(`/api/castings/${castingId}`, send('PATCH', body))
 export const deleteCasting = (castingId: number) => json<Production>(`/api/castings/${castingId}`, { method: 'DELETE' })
 export const drawLook = (castingId: number) => json<{ run: string; runs: string[] }>(`/api/castings/${castingId}/draw`, post({}))

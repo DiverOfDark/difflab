@@ -374,6 +374,7 @@ SENTENCES = {
     "look_change": "During this shot {subject} changes: by its end it has {look}, which no reference picture shows.",
     # Once the look has a picture of its own, approved: it is cited instead.
     "look_pictured": "In this shot {subject} also has {look}, as {pictures} shows.",
+    "look_start_pictured": "{subject} starts this shot with {look}, as {pictures} shows.",
     "look_change_pictured": "During this shot {subject} changes: by its end it has {look}, as {pictures} shows.",
     "environment": "{subject} is the {noun} and its photographic look from {pictures}: {traits}, and the photo's natural color balance, contrast and skin tones.",
     "first_frame": "<Picture 1> is the first frame of [Shot 1]: {arrangement}.",

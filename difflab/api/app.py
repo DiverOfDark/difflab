@@ -365,7 +365,7 @@ async def add_casting(shot_id: int, request: Request) -> dict[str, Any]:
 
 @app.patch("/api/castings/{casting_id}")
 async def patch_casting(casting_id: int, request: Request) -> dict[str, Any]:
-    """`parent` (null its last look, "base", or an earlier look's casting id), `amend`, `label`; restales its shots."""
+    """`parent` (null its last look, "base", or an earlier look's casting id), `amend`, `label`, `pictured`."""
     body = dict(await request.json())
     return _staling(_casting_owner(casting_id), lambda: production.edit_casting(casting_id, **body))
 

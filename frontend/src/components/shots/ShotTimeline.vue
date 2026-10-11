@@ -139,14 +139,17 @@ const MARK: Record<string, { background: string; border: string; animation?: str
   pending: { background: 'var(--bg-surface)', border: '1.5px dashed var(--accent)' },
   failed: { background: 'var(--bg-surface)', border: '1.5px solid var(--status-error)' },
 }
+// An amended look changes during its shot, not at its cut: the mark and the run boundary sit at the shot's middle.
+const mid = (i: number) => props.starts[i] + props.shots[i].seconds / 2
 const rows = computed(() =>
   props.tracks.map((t) => {
     const { i0, i1 } = view.value
+    const changes = new Set(t.marks.map((m) => m.at))
     const runs = t.runs
       .filter((r) => r.b >= i0 && r.a <= i1)
       .map((r) => {
-        const left = props.starts[r.a] * z.value
-        const w = end(r.b) * z.value - left - 2
+        const left = (!r.gap && r.mark ? mid(r.a) : props.starts[r.a]) * z.value
+        const w = (changes.has(r.b + 1) ? mid(r.b + 1) : end(r.b)) * z.value - left - 2
         if (r.gap) return { key: `g${r.a}`, gap: true, title: `${t.member} off screen · look kept`, label: '', style: { left: px(left), width: px(w) } }
         const flagged = r.image === 'flag'
         return {
@@ -165,7 +168,7 @@ const rows = computed(() =>
       })
     const marks = t.marks
       .filter((m) => m.at >= i0 && m.at <= i1)
-      .map((m) => ({ key: m.at, title: `${t.member} · ${m.label} · ${m.words}`, style: { left: px(props.starts[m.at] * z.value + 3), ...MARK[m.image] } }))
+      .map((m) => ({ key: m.at, title: `${t.member} · ${m.label} · ${m.words}`, style: { left: px(mid(m.at) * z.value - 5), ...MARK[m.image] } }))
     return { member: t.member, meta: `${KIND[t.kind] ?? t.kind.toUpperCase()}${t.marks.length ? ` · ${t.marks.length} change${t.marks.length > 1 ? 's' : ''}` : ''}`, runs, marks }
   }),
 )

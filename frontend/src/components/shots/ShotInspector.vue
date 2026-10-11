@@ -118,7 +118,13 @@ const refs = computed(() =>
     else if (c.back) effect = `Returns to “${c.source.label}” with the cut back to the opening scene.`
     else if (c.is_revert) effect = `Reverts to “${c.source.label}”; the latest was “${c.latest.label}”.`
     else effect = `As it stands: ${c.source.shot === null ? 'the bible base' : `“${c.source.label}” from ${named(c.source.shot)}`}.`
-    return { c, kind: kindOf(c.kind), sources, look, effect, flagged: look?.image === 'flag', member }
+    const versions = [
+      { id: 'base', label: 'bible', drawn: true },
+      ...[c.source, c.look].filter((l, i, all) => l.id !== null && all.findIndex((o) => o.id === l.id) === i).map((l) => ({ id: String(l.id), label: l.label, drawn: l.image === 'done' })),
+    ]
+    const picked = c.pictured ?? [c.look.id !== null && c.look.image === 'done' ? String(c.look.id) : 'base']
+    const handed = versions.map((v) => ({ ...v, on: picked.includes(v.id) }))
+    return { c, kind: kindOf(c.kind), sources, look, effect, flagged: look?.image === 'flag', member, handed, picked }
   }),
 )
 const pickSource = (c: CastingInfo, id: number | null) => {
@@ -126,6 +132,11 @@ const pickSource = (c: CastingInfo, id: number | null) => {
   const parent = id === c.latest.id ? null : id === null ? 'base' : String(id)
   props.act(`casting ${c.id}`, () => patchCasting(c.id, { parent }))
 }
+const hand = (c: CastingInfo, picked: string[], id: string) => {
+  const pictured = picked.includes(id) ? picked.filter((p) => p !== id) : [...picked, id]
+  props.act(`casting ${c.id}`, () => patchCasting(c.id, { pictured }))
+}
+const handAuto = (c: CastingInfo) => props.act(`casting ${c.id}`, () => patchCasting(c.id, { pictured: null }))
 const setAmend = (c: CastingInfo, value: string) => {
   if (value.trim() === c.amend) return typed.drop(`amend ${c.id}`)
   save(`amend ${c.id}`, () => patchCasting(c.id, { amend: value }))
@@ -348,6 +359,14 @@ const approve = () =>
                 <button v-for="o in r.sources" :key="String(o.id)" :class="{ on: o.on }" :disabled="!!busy" @click="pickSource(r.c, o.id)">
                   {{ o.label }} <span v-if="o.latest" class="n">latest</span>
                 </button>
+              </div>
+              <div class="handed" title="the pictures of this member the clip is handed">
+                <span class="n">to H3</span>
+                <label v-for="v in r.handed" :key="v.id">
+                  <input type="checkbox" :checked="v.on" :disabled="!!busy" @change="hand(r.c, r.picked, v.id)" />{{ v.label }}<span v-if="!v.drawn" class="n">· no picture yet</span>
+                </label>
+                <button v-if="r.c.pictured" class="link" :disabled="!!busy" @click="handAuto(r.c)">auto</button>
+                <span v-else class="n">auto</span>
               </div>
               <input
                 class="amend"
@@ -755,6 +774,31 @@ const approve = () =>
 }
 
 .sources .n {
+  color: var(--text-tertiary);
+}
+
+.handed {
+  display: flex;
+  gap: 4px var(--space-2);
+  flex-wrap: wrap;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.handed label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.handed input {
+  width: auto;
+  margin: 0;
+}
+
+.handed .n {
   color: var(--text-tertiary);
 }
 

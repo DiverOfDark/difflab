@@ -496,6 +496,9 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
     ("UPDATE productions SET story_kind = 'text' WHERE story_kind = 'idea'",),
     # A production kept is one `work/cleanup.py` never deletes, however long it sits.
     ("ALTER TABLE productions ADD COLUMN keep INTEGER NOT NULL DEFAULT 0",),
+    # The looks a casting's shot hands H3 as pictures, picked by hand: a JSON list of "base" and look
+    # (casting) ids. NULL is the compiler's own pick.
+    ("ALTER TABLE castings ADD COLUMN pictured TEXT",),
 )
 
 SCHEMA_VERSION = len(MIGRATIONS)

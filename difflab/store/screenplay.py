@@ -428,12 +428,15 @@ def add_casting(
 
 
 def update_casting(connection: sqlite3.Connection, casting_id: int, **fields: Any) -> Casting | None:
-    """`parent`, `amend`, `label`, `origin`, `position`, `size`, `seed`; a `parent` of None is written as NULL."""
-    allowed = {"parent", "amend", "label", "origin", "position", "size", "seed"}
+    """`parent`, `amend`, `label`, `origin`, `position`, `size`, `seed`, `pictured`; None is written as NULL."""
+    allowed = {"parent", "amend", "label", "origin", "position", "size", "seed", "pictured"}
     unknown = set(fields) - allowed
     if unknown:
         raise ValueError(f"a casting has no {', '.join(sorted(unknown))}")
-    values = {name: (_dump(value) if name == "size" else value) for name, value in fields.items()}
+    values = {
+        name: (_dump(value) if name == "size" or (name == "pictured" and value is not None) else value)
+        for name, value in fields.items()
+    }
     if values:
         assignments = ", ".join(f"{name} = ?" for name in values)
         connection.execute(f"UPDATE castings SET {assignments} WHERE id = ?", (*values.values(), casting_id))
