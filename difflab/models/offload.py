@@ -5,10 +5,12 @@ bf16, and the DiT is 19.5 GB int8 with roughly 6 GB of activations at full size.
 CPU copy, resident or not, so releasing one is a pointer swap and nothing is reallocated per step.
 
 Measured at 15 ms per 385 MB block (25.6 GB/s over PCIe). From pageable memory that copy also held the
-worker thread: py-spy found it in 73% of a 30-minute H3 render (2026-10-11), so a streamed block's CPU copy
-is pinned, and the next streamed block is copied on a side stream while this one computes. Each block is
-one exact-size buffer pinned in place: `pin_memory()` rounds every allocation up to a power of two, which
-turns a 37 MB weight into 64 MB of locked RAM on a 58 GB host.
+worker thread: py-spy found it in 73% of a 30-minute H3 render (2026-10-11). Pinning every streamed block
+in place fixed that but locked 15-25 GB of a 58 GB host, and loading any other model then swapped the
+desktop out (memory PSI full 18%, video stuttered). So the CPU copies stay pageable and swappable; a
+background thread copies the next block into one of two pinned staging buffers per device, and the copy
+stream uploads it from there while this block computes. Each staging buffer is an exact-size allocation
+registered with cudaHostRegister: `pin_memory()` rounds up to a power of two, 385 MB into 512 MB.
 
 The prefetched block is allocated on the compute stream, not the copy stream: the CPU runs blocks ahead of
 the GPU, and memory a side stream allocated cannot be reused until the compute stream is done with it, so
@@ -18,6 +20,7 @@ leaves room for.
 
 import weakref
 from collections.abc import Iterable
+from concurrent.futures import Future, ThreadPoolExecutor
 
 import torch
 from torch import nn
@@ -44,21 +47,19 @@ class BlockStreamer:
                     self.cpu.append(buffer)
         self.size = sum(tensor.numel() * tensor.element_size() for tensor in self.cpu)
         self.handles: list[RemovableHandle] = []
+        self.offsets: list[int] = []
+        self.staged = 0
+        for tensor in self.cpu:
+            self.offsets.append(self.staged)
+            self.staged += -(-tensor.numel() * tensor.element_size() // _ALIGNMENT) * _ALIGNMENT
         self.resident = False
-        self.pinned = False
         self.following: BlockStreamer | None = None
         self.fetched: list[torch.Tensor | None] | None = None
+        self.pending: Future[torch.cuda.Event] | None = None
         self._hook()
 
     def onload(self, module: nn.Module, args: tuple[object, ...]) -> None:
-        if not self.pinned:
-            self._pin()
-        if self.fetched is None:
-            self._place([None] * len(self.cpu))
-        else:
-            torch.cuda.current_stream(self.device).wait_stream(_copier(self.device))
-            self._place(self.fetched)
-            self.fetched = None
+        self._place(self._take())
         following = self.following
         while following is not None and following.resident:
             following = following.following
@@ -66,21 +67,25 @@ class BlockStreamer:
             following.prefetch()
 
     def prefetch(self) -> None:
-        if not self.pinned:
-            self._pin()
-        copier = _copier(self.device)
-        copier.wait_stream(torch.cuda.current_stream(self.device))
+        compute = torch.cuda.current_stream(self.device)
+        # Subclasses (quantized wrappers) go through `_place` from pageable memory: a flat copy would lose their layout.
         fetched = [torch.empty_like(cpu, device=self.device) if type(cpu) is torch.Tensor else None for cpu in self.cpu]
-        with torch.cuda.stream(copier):
-            for cpu, gpu in zip(self.cpu, fetched, strict=True):
-                if gpu is not None:
-                    gpu.copy_(cpu, non_blocking=True)
+        allocated = torch.cuda.Event()  # type: ignore[no-untyped-call]
+        allocated.record(compute)
         self.fetched = fetched
+        self.pending = _stager.submit(_stage, self, fetched, _slot(self.device), allocated)
 
     def drop(self) -> None:
         if self.fetched is not None:
-            torch.cuda.current_stream(self.device).wait_stream(_copier(self.device))
-            self.fetched = None
+            self._take()
+
+    def _take(self) -> list[torch.Tensor | None]:
+        if self.fetched is None:
+            self.prefetch()
+        assert self.fetched is not None and self.pending is not None
+        torch.cuda.current_stream(self.device).wait_event(self.pending.result())
+        fetched, self.fetched, self.pending = self.fetched, None, None
+        return fetched
 
     def _place(self, fetched: list[torch.Tensor | None]) -> None:
         for (owner, name, is_parameter), cpu, gpu in zip(self.slots, self.cpu, fetched, strict=True):
@@ -105,8 +110,7 @@ class BlockStreamer:
         for handle in self.handles:
             handle.remove()
         self.handles = []
-        self.drop()
-        self._place([None] * len(self.cpu))
+        self._place(self._take())
         self.resident = True
 
     def unsettle(self) -> None:
@@ -120,36 +124,51 @@ class BlockStreamer:
             self.block.register_forward_hook(self.offload),
         ]
 
-    def _pin(self) -> None:
-        self.pinned = True
-        # Subclasses (quantized wrappers) and strided views stay pageable: a flat copy would lose their layout.
-        movable = [i for i, tensor in enumerate(self.cpu) if type(tensor) is torch.Tensor and tensor.is_contiguous()]
-        offsets, total = [], 0
-        for i in movable:
-            offsets.append(total)
-            total += -(-self.cpu[i].numel() * self.cpu[i].element_size() // _ALIGNMENT) * _ALIGNMENT
-        if not total:
-            return
-        flat = torch.empty(total, dtype=torch.uint8)
-        for i, offset in zip(movable, offsets, strict=True):
-            tensor = self.cpu[i]
-            view = flat[offset : offset + tensor.numel() * tensor.element_size()].view(tensor.dtype).view(tensor.shape)
-            view.copy_(tensor)
-            owner, name, is_parameter = self.slots[i]
-            if is_parameter:
-                parameter = owner._parameters[name]
-                if parameter is not None:
-                    parameter.data = view
-            else:
-                owner._buffers[name] = view
-            self.cpu[i] = view
-        cudart = torch.cuda.cudart()  # type: ignore[no-untyped-call]
-        torch.cuda.check_error(cudart.cudaHostRegister(flat.data_ptr(), total, 0))
-        weakref.finalize(self, _unpin, flat)
+
+class _Staging:
+    def __init__(self) -> None:
+        self.buffer: torch.Tensor | None = None
+        self.uploaded: torch.cuda.Event | None = None
+
+    def reserve(self, size: int) -> torch.Tensor:
+        if self.buffer is None or self.buffer.numel() < size:
+            if self.buffer is not None:
+                _unpin(self.buffer)
+            self.buffer = torch.empty(size, dtype=torch.uint8)
+            cudart = torch.cuda.cudart()  # type: ignore[no-untyped-call]
+            torch.cuda.check_error(cudart.cudaHostRegister(self.buffer.data_ptr(), size, 0))
+        return self.buffer
+
+
+def _stage(
+    streamer: BlockStreamer, fetched: list[torch.Tensor | None], slot: _Staging, allocated: torch.cuda.Event
+) -> torch.cuda.Event:
+    if slot.uploaded is not None:
+        slot.uploaded.synchronize()
+    flat = slot.reserve(streamer.staged)
+    views = []
+    for cpu, gpu, offset in zip(streamer.cpu, fetched, streamer.offsets, strict=True):
+        if gpu is None:
+            continue
+        view = flat[offset : offset + cpu.numel() * cpu.element_size()].view(cpu.dtype).view(cpu.shape)
+        view.copy_(cpu)
+        views.append((view, gpu))
+    copier = _copier(streamer.device)
+    copier.wait_event(allocated)
+    with torch.cuda.stream(copier):
+        for view, gpu in views:
+            gpu.copy_(view, non_blocking=True)
+    uploaded = torch.cuda.Event()  # type: ignore[no-untyped-call]
+    uploaded.record(copier)
+    slot.uploaded = uploaded
+    return uploaded
 
 
 _streamers: "weakref.WeakSet[BlockStreamer]" = weakref.WeakSet()
 _copiers: dict[torch.device, torch.cuda.Stream] = {}
+_slots: dict[torch.device, tuple[_Staging, _Staging]] = {}
+_turns: dict[torch.device, int] = {}
+_stager = ThreadPoolExecutor(1, thread_name_prefix="difflab-stage")
 
 
 def stream_blocks(blocks: Iterable[nn.Module], device: str | torch.device) -> None:
@@ -196,6 +215,13 @@ def _copier(device: torch.device) -> torch.cuda.Stream:
     if device not in _copiers:
         _copiers[device] = torch.cuda.Stream(device)  # type: ignore[no-untyped-call]
     return _copiers[device]
+
+
+def _slot(device: torch.device) -> _Staging:
+    if device not in _slots:
+        _slots[device] = (_Staging(), _Staging())
+    _turns[device] = 1 - _turns.get(device, 0)
+    return _slots[device][_turns[device]]
 
 
 def _unpin(flat: torch.Tensor) -> None:
