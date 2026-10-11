@@ -29,7 +29,9 @@ FINISH_MEGAPIXELS = 3840 * 2160 / 1e6  # what the ESRGAN enlarges it to
 # The VLM (`models/exl3vl.py`). 16 full-attention layers of 4 KV heads at 256 cost 64 KiB a token, so
 # this is 2 GiB on the card. Measured 2026-10-03: a plan repair peaks near 11k tokens on a 60 s take of
 # five clips, and its answer grows ~640 tokens a clip, so 16k ran out at about nine clips (~100 s).
-VLM_CONTEXT_TOKENS = 32768
+# 64k (4 GiB) is for the clip judge's frame every half second (`judge.SAMPLED_EVERY`). Unquantized: a
+# quantized cache would move every ruling measured against this one.
+VLM_CONTEXT_TOKENS = 65536
 # MTP proposals per step. Measured on the 3090 (tok/s, sampled at 0.7/0.8/20; a card call with one
 # photo, a survey with two, 2k tokens of prose): none 36 / 36 / 36, 2 drafts 71 / 75 / 67, 3 drafts
 # 80 / 88 / 74, 4 drafts 85 / 97 / 70, 5 drafts 96 / 114 / 68. JSON, which is all the director

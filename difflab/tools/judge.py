@@ -7,7 +7,6 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from difflab.core import media
 from difflab.core.settings import JudgeSettings
 from difflab.core.types import Clip, Frame
 from difflab.models.minimax_h3 import caption
@@ -15,7 +14,9 @@ from difflab.screenplay import checks, compiler, words
 from difflab.screenplay import config as h3
 from difflab.tools import direct
 
-SAMPLED_FRAMES = 4  # of a clip, evenly spaced, as one sheet: enough to see a gesture happen, cheap to look at
+# A glitch shorter than this can fall between two frames. At the largest canvas yet (1280x736, 920
+# vision tokens a frame) a 12.25 s clip is 26 frames, ~24k tokens: it needs the VLM's 64k context.
+SAMPLED_EVERY = 0.5
 
 
 @dataclass(frozen=True)
@@ -160,13 +161,7 @@ def _replaced(text: str, name: str, new: str) -> str:
     raise ValueError(f"the caption has no {name}: section")
 
 
-def sampled(clip: Clip, count: int = SAMPLED_FRAMES) -> list[Frame]:
-    """`count` frames spread over the clip, first and last included."""
-    if len(clip) <= count:
-        return [clip.frame(i) for i in range(len(clip))]
-    step = (len(clip) - 1) / (count - 1)
-    return [clip.frame(round(i * step)) for i in range(count)]
-
-
-def sheet(frames: list[Frame]) -> Frame:
-    return media.sheet([[frame] for frame in frames], height=540)
+def sampled(clip: Clip, every: float = SAMPLED_EVERY) -> list[Frame]:
+    """A frame every `every` seconds from the first, and the last."""
+    step = max(1, round(every * clip.fps))
+    return [clip.frame(i) for i in dict.fromkeys([*range(0, len(clip), step), len(clip) - 1])]
