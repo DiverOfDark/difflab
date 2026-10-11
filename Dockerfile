@@ -46,11 +46,11 @@ RUN --mount=type=cache,id=difflab-kernels-${COMFY_CUDA_ARCHS},target=/root/.cach
     && find /root/.cache/rattler/cache -mindepth 1 -maxdepth 1 ! -name uv-cache -exec rm -rf {} + \
     && find /root/.cache/rattler/cache/uv-cache -mindepth 1 -maxdepth 1 ! -name sdists-v9 ! -name git-v0 -exec rm -rf {} +
 
-# Everything that outlives a pod is under /data: Hugging Face weights, Civitai and URL downloads (and
-# triton's compiled kernels) under XDG_CACHE_HOME, and output/, which holds the database, blobs and finals.
+# Everything that outlives a pod is under output/: Hugging Face weights, Civitai and URL downloads (and
+# triton's compiled kernels) beside the database, blobs and finals.
 ENV PYTHONUNBUFFERED=1 \
-    HF_HOME=/data/models \
-    XDG_CACHE_HOME=/data/cache \
+    HF_HOME=/app/output/.models \
+    XDG_CACHE_HOME=/app/output/.cache \
     DIFFLAB_HOST=0.0.0.0
 
 # --link: the code is a layer of its own that does not need the environment under it unpacked. Without
@@ -58,13 +58,11 @@ ENV PYTHONUNBUFFERED=1 \
 # 6.5 minutes on the home runner); with it the environment stays in the registry, referred to, not moved.
 COPY --link difflab ./difflab
 COPY --link --from=page /app/difflab/api/static ./difflab/api/static
-RUN ln -s /data/output /app/output
 
 # Weights are fetched on first use; without a volume here the first render downloads ~96 GB again on
 # every new pod.
-VOLUME ["/data"]
+VOLUME ["/app/output"]
 
 EXPOSE 8765
 # DIFFLAB_HOST above makes it reachable from outside, with no authentication: see README, "Serving it".
-# The mkdir is for a bind mount or an empty network volume, where the symlink above would dangle.
-CMD ["sh", "-c", "mkdir -p /data/output && exec /app/.pixi/envs/prod/bin/python -m difflab.api"]
+CMD ["/app/.pixi/envs/prod/bin/python", "-m", "difflab.api"]

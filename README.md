@@ -516,7 +516,7 @@ code built for it. `--build-arg COMFY_CUDA_ARCHS=89-real --build-arg TORCH_CUDA_
 in a sixth of the kernel compile.
 
 Everything persistent - weights, downloads, the database and every output - lives under one volume,
-`/data` (`-v difflab:/data`); without it each new pod downloads ~96 GB of weights again.
+`/app/output` (`-v difflab:/app/output`), the weights and downloads in its `.models` and `.cache`; without it each new pod downloads ~96 GB of weights again.
 
 ## Speed
 

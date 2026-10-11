@@ -891,6 +891,8 @@ def run_file(run_id: str, path: str) -> FileResponse:
 
 @app.get("/output/{path:path}")
 def output_file(path: str) -> FileResponse:
+    if any(part.startswith(".") for part in Path(path).parts):  # the container's weights and caches
+        raise HTTPException(404, "no such file")
     return _under(config.OUTPUT_DIR, path)
 
 
