@@ -255,8 +255,9 @@ def _clip_judged(
     connection: sqlite3.Connection, job: store.Job, clip: store.Clip, outputs: dict[str, Any], verdict: dict[str, Any]
 ) -> None:
     """Below the gate, with auto-retry on, the clip's render job and this verdict run again in place on a new
-    seed, so the shots after it read the new take; out of takes, the best is put back and goes to review and
-    the run goes on. Every take seen stays in `review.takes`, each with its render's outputs."""
+    seed, from the prompt the judge rewrote to its fixes when it could, so the shots after it read the new
+    take; out of takes, the best is put back and goes to review and the run goes on. Every take seen stays
+    in `review.takes`, each with its render's outputs."""
     path = job.inputs.get("path")
     render = store.job(connection, int(path["from_job"])) if isinstance(path, dict) else None
     if render is None:
@@ -277,26 +278,29 @@ def _clip_judged(
     else:
         takes = [*earlier, take]
     name = job.label.split(":")[0]
+    compiled = store.prompt_of(connection, clip.shot_id).text
     if outputs.get("passed"):
         store.set_made(
-            connection, "clip", clip.id, store.APPROVED, review=json.dumps({**verdict, "takes": takes}),
-            reviewed_by=store.JUDGE,
+            connection, "clip", clip.id, store.APPROVED,
+            review=json.dumps({**verdict, "takes": takes, **_revised(compiled, take)}), reviewed_by=store.JUDGE,
         )  # fmt: skip
         return
     production_id = int(job.inputs.get("production") or 0)
-    retrying = _retrying(connection, production_id)
+    again = retrying(connection, production_id)
     issues = "; ".join(str(i) for i in verdict["issues"] or []) or "no issues named"
     said = f"{float(outputs.get('score') or 0):.2f} below the gate ({issues})"
-    if retrying and len(takes) < knobs.CLIP_TAKES:
+    if again and len(takes) < knobs.CLIP_TAKES:
         seed = random.randrange(2**32)
         store.set_clip_seed(connection, clip.shot_id, seed)
-        store.requeue_job(connection, render.id, {**render.inputs, "seed": seed, "retake": True})
+        revised = {"prompt": str(outputs["revised"])} if outputs.get("revised") else {}
+        store.requeue_job(connection, render.id, {**render.inputs, "seed": seed, "retake": True, **revised})
         store.requeue_job(connection, job.id)
         store.set_made(
             connection, "clip", clip.id, store.QUEUED, current_job=render.id,
             review=json.dumps({**verdict, "takes": takes}), reviewed_by=store.JUDGE,
         )  # fmt: skip
-        _notes.append(f"{name}: {said}; take {len(takes) + 1} of {knobs.CLIP_TAKES} on seed {seed}")
+        told = "; its prompt rewritten to the fixes" if revised else ""
+        _notes.append(f"{name}: {said}; take {len(takes) + 1} of {knobs.CLIP_TAKES} on seed {seed}{told}")
         return
     best = max(takes, key=lambda t: float(t.get("score") or 0))
     kept = best["outputs"]
@@ -304,12 +308,14 @@ def _clip_judged(
         store.set_job_outputs(connection, render.id, kept)
         store.set_clip_seed(connection, clip.shot_id, int(best["seed"]))
         _chain_forward(connection, clip.shot_id, kept.get("frame"), render.id)
-    review = {k: v for k, v in best.items() if k not in ("seed", "outputs")} | {"takes": takes}
+    review = (
+        {k: v for k, v in best.items() if k not in ("seed", "outputs")} | {"takes": takes} | _revised(compiled, best)
+    )
     store.set_made(
         connection, "clip", clip.id, store.NEEDS_REVIEW, wanted_key=kept.get("key"), artifact=kept.get("chunk"),
         review=json.dumps(review), reviewed_by=store.JUDGE, handoff=kept.get("cut"),
     )  # fmt: skip
-    if retrying:
+    if again:
         _notes.append(
             f"{name}: {said}; kept take {takes.index(best) + 1} of {len(takes)} ({float(best.get('score') or 0):.2f}) "
             "for review, and the shots after it are built on it"
@@ -322,7 +328,14 @@ def _clip_judged(
         )
 
 
-def _retrying(connection: sqlite3.Connection, production_id: int) -> bool:
+def _revised(compiled: str, take: dict[str, Any]) -> dict[str, Any]:
+    """The prompt a kept take was rendered from when the judge rewrote it, read by the next render of the
+    chapter (`production.revised`) so the take is found again by its key instead of rendered anew."""
+    rendered = take["outputs"].get("prompt")
+    return {"revised": {"from": compiled, "to": rendered}} if rendered and rendered != compiled else {}
+
+
+def retrying(connection: sqlite3.Connection, production_id: int) -> bool:
     """The judge's `clip_retry` as it stands now, not as the run was queued: the Render page flips it mid-run."""
     machine = store.overrides(connection, settings.MACHINE, "", "judge")
     own = store.overrides(connection, settings.PRODUCTION, str(production_id), "judge")

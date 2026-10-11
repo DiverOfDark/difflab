@@ -523,6 +523,35 @@ JUDGE_FIXES_SCENE = '"fixes" are the issues a painter is told, about who is ther
 # exactly what the editor must be told.
 JUDGE_FIXES_PICTURE = '"fixes" are what the editor redrawing this one picture is told, each a short instruction about the member\'s clothes, colours, hair, face, build, pose or backdrop that brings it to the description and the reference photo ("make the robe deep sapphire blue, not teal").'
 
+# A clip's retake is rendered from these on a new seed (`judge.revise`).
+CLIP_REVISE_SYSTEM = """\
+You are the director of a live-action video. A video model rendered one shot from the SUMMARY and DESCRIPTION below, and the continuity supervisor rejected the take: you are shown its frames, in order, with what the supervisor found wrong and wants fixed. You rewrite the SUMMARY and the DESCRIPTION so the next take, rendered from them on a new seed, shows the shot as it was meant, as JSON.
+
+RULES
+- Change only what the issues and fixes need: who is in the frame, where each stands, what each holds and does, how the action runs. Keep every other sentence word for word, in its order, with its timing words ("For the first two seconds", "In the final two seconds").
+- An action the take skipped or blurred is said plainer and earlier, as its own sentence; one it got wrong is said again the way it should happen.
+- Say what is there and what happens, never what is not: a model renders a thing it is told is absent. A person who should not be there is fixed by saying who fills the frame ("only <Subject 1> and <Subject 3> are on the beach").
+- Keep every <Subject N>, <Picture N>, <Video N> and <Audio N> label as it is written, and add none. Add nothing about faces, hair or clothes: those come from the pictures.
+- The SUMMARY keeps its square-bracketed task list first; the DESCRIPTION keeps its style sentences before [Shot 1] and stays about as long as it is.
+
+Answer only JSON, in this shape:
+{"summary": "...", "description": "..."}"""
+
+CLIP_REVISE_USER = """\
+The take: {count} frame(s), in order.
+
+WHAT THE SUPERVISOR FOUND WRONG
+{issues}
+
+WHAT THE SUPERVISOR WANTS FIXED
+{fixes}
+
+SUMMARY:
+{summary}
+
+DESCRIPTION:
+{description}"""
+
 # --- ruling: what a gate asks about meaning, answered by the model instead of a word list ---------------------
 RULING_EVENTS_SYSTEM = """\
 You are the script supervisor of a live-action video. You list the events of an IDEA, as JSON.

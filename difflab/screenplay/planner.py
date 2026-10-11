@@ -289,7 +289,7 @@ def _queue_chapter(connection: Any, chapter_id: int, asked_by: str, keyframes_on
             "opening": opening,
             "canvas": _canvas(production),
             "closing": openings[shot.position + 1] if lands[shot.position] else None,
-            "prompt": prompt.text,
+            "prompt": productions.revised(clip.review, prompt.text),
             "tail": tail,
             "anchor": anchor,
             "seed": clip.seed,
@@ -323,6 +323,7 @@ def _queue_chapter(connection: Any, chapter_id: int, asked_by: str, keyframes_on
             store.add_job(
                 connection, run_id, "judge",
                 {"production": production.id, "kind": "clip", "path": _output(job.id, "chunk"),
+                 "prompt": _output(job.id, "prompt"),
                  "purpose": shot.action, "arrangement": str(shot.plan.get("closing", "")), "cast": cast,
                  "pictures": pictures(connection, production, " ".join(f"{{{m}}}" for m in cast),
                                       worn=_worn(resolved, shot, end=True)),

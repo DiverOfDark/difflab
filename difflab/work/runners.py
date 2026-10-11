@@ -36,7 +36,7 @@ from difflab.core.types import Clip, Frame
 from difflab.models.minimax_h3 import config as h3_config
 from difflab.models.minimax_h3 import pipeline, vae
 from difflab.models.minimax_h3.settings import VideoPromptSettings, VideoSettings
-from difflab.screenplay import compiler, drawn, words
+from difflab.screenplay import compiler, drawn, made, words
 from difflab.screenplay import production as production_module
 from difflab.tools import (
     assemble,
@@ -155,6 +155,7 @@ def run_render_shot(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
     frame_file, tail_file, _ = handoff.files(at)
     outputs: dict[str, Any] = {
         "key": str(chunk),
+        "prompt": prompt,
         "latents": store.relative(latents_file),
         "chunk": store.relative(mp4),
         "audio": store.relative(soundtrack),
@@ -588,7 +589,21 @@ def run_judge(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any
         },
         color="green" if verdict.score >= chosen.gate else "yellow",
     )
-    return {**verdict.data(), "gate": chosen.gate, "retries": chosen.retries, "passed": verdict.score >= chosen.gate}
+    passed = verdict.score >= chosen.gate
+    out = {**verdict.data(), "gate": chosen.gate, "retries": chosen.retries, "passed": passed}
+    prompt = str(inputs.get("prompt") or "")
+    if kind != "clip" or passed or not prompt:
+        return out
+    with store.connect() as connection:
+        if not made.retrying(connection, production_id):
+            return out
+    # Here and not in its own job: the VLM is loaded for the verdict, and the retake waits on both.
+    try:
+        revised = judge.revise(frames, prompt, verdict)
+    except RuntimeError as problem:
+        ui.note(f"judge · clip: the retake keeps its prompt ({problem})")
+        return out
+    return {**out, "revised": revised} if revised != prompt else out
 
 
 def _write_chunk(clip: Clip, video: Path, soundtrack: Path) -> None:

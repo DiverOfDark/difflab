@@ -188,7 +188,7 @@ class JudgeSettings(Settings):
 
     checkpoint: str = setting(VLM, "model", "a Hugging Face repo at a pinned commit", role="vlm")
     # Measured on production 9's five clips (2026-10-04): 0.60-0.85, the same before and after its colour
-    # was fixed, and 0.6 for two clips that show their shots. Above that, a blind re-seed re-renders
+    # was fixed, and 0.6 for two clips that show their shots. Above that, a retake re-renders
     # good clips; this catches a broken one. Never 0: every render is judged.
     gate: float = setting(0.5, "gate", "the score a keyframe or clip needs before it is made again", low=0.1, high=1.0)
     retries: int = setting(

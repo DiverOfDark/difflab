@@ -3,6 +3,7 @@ the cast looking like their identities say?"""
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -10,7 +11,7 @@ from difflab.core import media
 from difflab.core.settings import JudgeSettings
 from difflab.core.types import Clip, Frame
 from difflab.models.minimax_h3 import caption
-from difflab.screenplay import compiler, words
+from difflab.screenplay import checks, compiler, words
 from difflab.screenplay import config as h3
 from difflab.tools import direct
 
@@ -64,8 +65,8 @@ def judge(
         restyle = [str(m["id"]) for m in data.get("cast", []) if m.get("outfit") is False and str(m["id"]) in given]
         changed = [f"{member}: clothes differ from their photo" for member in restyle]
         score = float(data["score"])
-        # Held in code as well as asked: the model rounds its own rule. Not on a clip, whose retry is a blind
-        # re-seed of minutes; a keyframe's retry is told what to fix (`made._judged`).
+        # Held in code as well as asked: the model rounds its own rule. Not on a clip, whose every retake
+        # costs minutes of render; a keyframe's retry costs seconds (`made._judged`).
         if (strangers or changed) and kind != "clip":
             score = min(score, 0.4)
         return Verdict(
@@ -109,6 +110,54 @@ def judge(
     images = [direct.shrink(frame, h3.DIRECTOR_PHOTO_PIXELS) for frame in [*frames, *given.values()]]
     data = direct.ask_json(words.JUDGE_SYSTEM, question, images, gate, f"judge · {kind}", settings.max_new_tokens)
     return parse(data)
+
+
+def revise(frames: list[Frame], prompt: str, verdict: Verdict) -> str:
+    """The clip's prompt with its summary and description rewritten to the verdict, for its retake."""
+    summary = caption.body(prompt, "summary")
+    definitions = caption.body(prompt, "subject_definitions")
+    presented = list(dict.fromkeys(re.findall(r"<(?:Picture|Video|Audio)\s+\d+>", definitions)))
+    directive = found.group(0) if (found := re.match(r"\[[^\]]+\]", summary)) else ""
+
+    def written(data: Any) -> str:
+        return _replaced(
+            _replaced(prompt, "summary", str(data["summary"])), "detailed_description", str(data["description"])
+        )
+
+    def broken(text: str) -> dict[str, str]:
+        problems = caption.ide_rules(text) + checks.chunk_rules(text, presented, directive)
+        # Keyed without digits, so a description already too long is not a new fault for being longer still.
+        return {re.sub(r"\d+", "#", p.message): p.message for p in caption.errors(problems)}
+
+    already, labelled = broken(prompt), set(caption.LABEL.findall(prompt))
+
+    def gate(data: Any) -> list[caption.Problem]:
+        text = written(data)
+        out = [direct.problem(message) for bare, message in sorted(broken(text).items()) if bare not in already]
+        out += [direct.problem(f"{label} is not in the prompt; keep its labels") for label in
+                sorted(set(caption.LABEL.findall(text)) - labelled)]  # fmt: skip
+        return out
+
+    question = words.CLIP_REVISE_USER.format(
+        count=len(frames),
+        issues="\n".join(f"- {issue}" for issue in verdict.issues) or "- none named",
+        fixes="\n".join(f"- {fix}" for fix in verdict.fixes) or "- none named",
+        summary=summary,
+        description=caption.body(prompt, "detailed_description"),
+    )
+    images = [direct.shrink(frame, h3.DIRECTOR_PHOTO_PIXELS) for frame in frames]
+    data = direct.ask_json(
+        words.CLIP_REVISE_SYSTEM, question, images, gate, "judge · revise the clip", h3.DIRECTOR_WRITE_TOKENS,
+        settle=False,
+    )  # fmt: skip
+    return written(data)
+
+
+def _replaced(text: str, name: str, new: str) -> str:
+    for section, _, content, end in caption.sections(text):
+        if section == name:
+            return text[:content] + new.strip() + "\n\n" + text[end:]
+    raise ValueError(f"the caption has no {name}: section")
 
 
 def sampled(clip: Clip, count: int = SAMPLED_FRAMES) -> list[Frame]:

@@ -2039,6 +2039,16 @@ def takes_of(review: str | None) -> list[dict[str, Any]]:
     return [t for t in takes if isinstance(t, dict)] if isinstance(takes, list) else []
 
 
+def revised(review: str | None, compiled: str) -> str:
+    """What the clip's kept take was rendered from, while the compiled prompt the judge rewrote still stands."""
+    try:
+        found = json.loads(review or "")
+    except ValueError:
+        return compiled
+    change = found.get("revised") if isinstance(found, dict) else None
+    return str(change["to"]) if isinstance(change, dict) and change.get("from") == compiled else compiled
+
+
 def judged(review: str | None) -> tuple[int, int, int]:
     """(takes judged, of them below the gate, takes rendered again) of one clip's verdict."""
     try:
