@@ -127,7 +127,7 @@ def current() -> Run:
     ctx = context.current()
     with ctx.lock:
         if ctx.run is None:
-            _prune(config.RUNS_DIR, config.RUNS_KEEP)
+            prune(config.RUNS_DIR, config.RUNS_KEEP)
             ctx.run = run = Run(config.RUNS_DIR)
             run.emit(protocol.RunStart(title=run.title, pid=os.getpid()))
             _install_exit_hooks(run)
@@ -228,7 +228,7 @@ def rss() -> float:
     return 0.0
 
 
-def _prune(root: Path, keep: int) -> None:
+def prune(root: Path, keep: int) -> None:
     """Runs hold previews and per-chunk videos; the final video lives elsewhere.
 
     A run still being written is skipped, however old it is: the worker's thumbnails and previews

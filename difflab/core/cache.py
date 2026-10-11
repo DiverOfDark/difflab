@@ -9,6 +9,7 @@ Only step boundaries are cached, never model weights - those are the registry's 
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -48,6 +49,7 @@ class Cache:
         target = self.path(key, suffix)
         if target.exists():
             ui.note(f"cached {key}")
+            os.utime(target)  # work/cleanup.py ages a blob from its last use
             return load(target)
         value = produce()
         save(value, target)

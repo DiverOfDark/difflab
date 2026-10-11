@@ -43,4 +43,11 @@ DASHBOARD = True  # serve it whenever something runs; runs are recorded under RU
 DASHBOARD_HOST = os.environ.get("DIFFLAB_HOST", "0.0.0.0")  # LAN-reachable; "127.0.0.1" for this machine only
 DASHBOARD_PORT = int(os.environ.get("DIFFLAB_PORT", "8765"))
 RUNS_DIR = OUTPUT_DIR / "runs"
-RUNS_KEEP = 10  # older run directories are deleted at startup; final images and videos are kept
+RUNS_KEEP = 10  # newest run directories kept whatever their age; final images and videos are kept
+# `work/cleanup.py`, run by the worker between jobs. Blobs on 2026-10-11 were 22 G, 12 G of it handoff
+# tails at ~37 MB a shot; a cache hit refreshes a blob's mtime, so the age is since last use.
+CLEANUP_EVERY_HOURS = 6
+BLOB_KEEP_DAYS = 7
+BLOB_KEEP_TOOLS = ("given", "director", "ruling")  # uploads, and VLM answers: small and slow to ask again
+RUNS_KEEP_DAYS = 14
+BACKUPS_KEEP = 5

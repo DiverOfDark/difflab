@@ -25,7 +25,7 @@ from difflab.core import context, events, protocol, ui
 from difflab.core.settings import DirectorSettings, JudgeSettings
 from difflab.screenplay import made
 from difflab.tools import TOOLS, direct
-from difflab.work import Skipped, plan_runners, runners
+from difflab.work import Skipped, cleanup, plan_runners, runners
 
 # The tools that ask through the director, which takes its model from the job rather than a parameter.
 _DIRECTED = {tool.name for tool in TOOLS if tool.settings in (DirectorSettings, JudgeSettings)}
@@ -42,6 +42,7 @@ class Worker(threading.Thread):
         super().__init__(name="difflab-worker", daemon=True)
         self.stopping = threading.Event()
         self.ctx: context.Context | None = None  # the job in flight, for the sampler and the commands
+        self.swept = 0.0
 
     def run(self) -> None:
         _settle_orphans()
@@ -53,6 +54,12 @@ class Worker(threading.Thread):
                     # `orig_argv`, not `argv`: under `-m` argv[0] is the module's file, which run as a
                     # script cannot import its own package.
                     os.execv(sys.executable, sys.orig_argv)
+                if time.time() - self.swept > config.CLEANUP_EVERY_HOURS * 3600:
+                    self.swept = time.time()
+                    try:
+                        print(cleanup.sweep().line(), flush=True)
+                    except (OSError, sqlite3.Error) as problem:
+                        print(f"difflab: cleanup stopped ({problem})", flush=True)
                 time.sleep(POLL)
 
     def step(self) -> bool:
