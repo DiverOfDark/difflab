@@ -212,7 +212,7 @@ def run_render_shot(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
         detail(f"frame {made.cut + 1} of {len(clip)}{carried}")
     if not (mp4.is_file() and soundtrack.is_file()):
         with ui.step("Writing chunk") as detail:
-            _write_chunk(clip, mp4, soundtrack)
+            _write_chunk(clip, mp4, soundtrack, carry.audio_late / h3_config.AUDIO_LATENT_FPS if carry else 0.0)
             detail(f"{len(clip)} frames · {clip.duration:.2f}s")
     record.artifact_made(mp4, store.VIDEO, video.seed, key=str(chunk))
     record.artifact_made(frame_file, store.IMAGE, key=str(at))
@@ -639,15 +639,20 @@ def run_judge(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any
     return {**out, "revised": revised} if revised != prompt else out
 
 
-def _write_chunk(clip: Clip, video: Path, soundtrack: Path) -> None:
-    """Near-lossless, since the chapter is joined from these; the audio beside it, since the mp4's is not."""
+def _write_chunk(clip: Clip, video: Path, soundtrack: Path, late: float = 0.0) -> None:
+    """Near-lossless, since the chapter is joined from these; the audio beside it, since the mp4's is not.
+    `late` seconds come off the soundtrack's start, so the carried sound meets the shot before's at the
+    join; the chunk's own sound then leads its picture by as much, at most 8 ms."""
     height, width = int(clip.frames.shape[1]), int(clip.frames.shape[2])
     writer = video_io.VideoWriter(video, width, height, clip.fps, clip.sample_rate, crf=16)
     writer.write(clip.frames)
     writer.close(clip.audio)
     samples = int(np.ceil(clip.sample_rate / clip.fps * len(clip)))
-    audio = clip.audio[:, :samples].clone() if clip.audio is not None else torch.zeros(2, samples)
-    torch.save(audio, soundtrack)
+    audio = clip.audio if clip.audio is not None else torch.zeros(2, samples)
+    shift = round(late * clip.sample_rate)
+    audio = audio[:, shift:] if shift >= 0 else torch.nn.functional.pad(audio, (-shift, 0))
+    audio = torch.nn.functional.pad(audio[:, :samples], (0, max(0, samples - audio.shape[1])))
+    torch.save(audio.clone(), soundtrack)
 
 
 def _thumbnail(frame: Frame, name: str) -> str:

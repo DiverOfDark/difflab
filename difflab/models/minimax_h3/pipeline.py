@@ -271,7 +271,8 @@ class Carry:
 
     video: torch.Tensor  # [1, 24, k, h, w], k latent steps from a cycle start
     audio: torch.Tensor  # [1, 32, 2, n]
-    audio_start: float  # where the first audio latent sits, in audio latents after the target's origin
+    audio_start: int  # where the first audio latent sits, in audio latents after the target's origin
+    audio_late: float = 0.0  # latents the carried sound lands after where its picture puts it, under 1/2
 
     @property
     def latent_frames(self) -> int:
@@ -286,8 +287,10 @@ def carry_of(video: torch.Tensor, audio: torch.Tensor, frames: int, audio_latent
     """The last `frames` pixel frames of a clip's latents (`n % 17 == 5`) and its last `audio_latents`.
 
     The window starts on a cycle's one-frame latent, so its steps are the ones the next clip's first
-    steps are: copied, never decoded and encoded again. The sound keeps its offset to the picture
-    exactly, fractions of a latent included, since the two grids only meet every three frames.
+    steps are: copied, never decoded and encoded again. The sound sits on the audio grid nearest to its
+    offset from the picture, which the two grids only agree on every three frames: placed at a fraction,
+    H3 redrew it on the grid anyway (production 18, a third of a latent: 268 samples late at 0.925
+    correlation, -0.56 at the cut's own sample). `audio_late` is what the soundtrack is moved back by.
     """
     steps = Geometry(0, 0, frames).latent_frames
     total = int(video.shape[2])
@@ -295,8 +298,9 @@ def carry_of(video: torch.Tensor, audio: torch.Tensor, frames: int, audio_latent
         raise ValueError(f"cannot carry {frames} frames of a {total}-step clip")
     clip_frames = (total - 2) // 5 * FRAME_CYCLE + FRAME_PHASE
     count = min(audio_latents, int(audio.shape[-1]))
-    start = int(audio.shape[-1]) - count - (clip_frames - frames) * _ROPE_FRAME_RESCALE
-    return Carry(video[:, :, total - steps :].clone(), audio[..., -count:].clone(), start)
+    exact = int(audio.shape[-1]) - count - (clip_frames - frames) * _ROPE_FRAME_RESCALE
+    start = round(exact)
+    return Carry(video[:, :, total - steps :].clone(), audio[..., -count:].clone(), start, start - exact)
 
 
 def reference_size(width: int, height: int, geometry: Geometry, mode: str = "match") -> tuple[int, int]:
