@@ -608,6 +608,8 @@ def sample(
     last_frame_latent: torch.Tensor | None = None,
     resident: bool = True,
     carry: Carry | None = None,
+    init: tuple[torch.Tensor, torch.Tensor] | None = None,
+    denoise: float = 1.0,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Run the loop and return `(video latents [1, 24, T, h, w], audio latents [1, 32, 2, T40])`.
 
@@ -616,6 +618,8 @@ def sample(
     without fixing its opening. Both together is legal and is what a chained long video wants. A
     `last_frame_latent` pins the clip's end to that frame as well, as diffusers' `last_image` does.
     `carry` pins the clip's opening steps to the previous clip's last ones; it replaces a first frame.
+    `init` is a finished `(video, audio)` sampled again from `denoise` of the way: ComfyUI's meaning, the
+    last `steps` of a `steps / denoise` schedule.
 
     `on_step(index, video, audio)` is called after every step with the model's current guess at the
     finished clip - the denoised estimate, in the same shapes as the result. That is what a preview
@@ -702,10 +706,25 @@ def sample(
     audio_condition = [pack_audio(latent.float().cpu()) for latent in audio_condition_latents]
     audio_latents = torch.cat([*audio_condition, pack_audio(audio_noise)], dim=0).to(target)
 
-    video_scheduler, audio_scheduler = make_schedulers(steps, shift_video, shift_audio, schedule)
+    total = steps if init is None else max(steps, round(steps / denoise))
+    skip = total - steps
+    video_scheduler, audio_scheduler = make_schedulers(total, shift_video, shift_audio, schedule)
+    if init is not None:
+        video_sigma, audio_sigma = float(video_scheduler.sigmas[skip]), float(audio_scheduler.sigmas[skip])
+        ui.line(f"resampling from sigma {video_sigma:.3f} (video), {audio_sigma:.3f} (audio)")
+        start_video = patchify_video_latents(init[0].float().cpu(), PATCH_SIZE)
+        latents[condition.shape[0] :] = (
+            (1 - video_sigma) * start_video + video_sigma * latents[condition.shape[0] :].cpu()
+        ).to(target)
+        start_audio = pack_audio(init[1].float().cpu()).to(target)
+        audio_latents[-start_audio.shape[0] :] = (1 - audio_sigma) * start_audio + audio_sigma * audio_latents[
+            -start_audio.shape[0] :
+        ]
+        video_scheduler.set_begin_index(skip)
+        audio_scheduler.set_begin_index(skip)
     if sampler == "er_sde":
-        video_sde = ErSde(video_scheduler.sigmas, generator)
-        audio_sde = ErSde(audio_scheduler.sigmas, generator)
+        video_sde = ErSde(video_scheduler.sigmas[skip:], generator)
+        audio_sde = ErSde(audio_scheduler.sigmas[skip:], generator)
     prompt_embeds = conditioning.embeds.to(target)
     layout_kwargs = {
         "token_tags": token_tags.to(target),
@@ -716,7 +735,7 @@ def sample(
     }
 
     for index, (timestep, audio_timestep) in enumerate(
-        zip(video_scheduler.timesteps, audio_scheduler.timesteps, strict=True)
+        zip(video_scheduler.timesteps[skip:], audio_scheduler.timesteps[skip:], strict=True)
     ):
         profiling.step()
         unique, row_indices = build_row_timesteps(

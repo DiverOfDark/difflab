@@ -229,6 +229,8 @@ def sample(
     on_step: Callable[[int, torch.Tensor, torch.Tensor], None] | None = None,
     last_latent: torch.Tensor | None = None,
     carry: pipeline.Carry | None = None,
+    init: Latents | None = None,
+    denoise: float = 1.0,
 ) -> Latents:
     """The denoising loop. ~78% of a render.
 
@@ -271,6 +273,8 @@ def sample(
                     last_frame_latent=last_latent,
                     resident=resident,
                     carry=carry,
+                    init=(init.video, init.audio) if init is not None else None,
+                    denoise=denoise,
                 )
             finally:
                 for hook in hooks:
@@ -425,26 +429,102 @@ def cached_latents(
         )
 
     def produce() -> dict[str, torch.Tensor]:
-        if carry is not None:
-            # The text encoder still sees the opening as <Picture 1>; the DiT has the carried steps instead.
-            first_latent, canvas = None, pipeline.resize_to_canvas(opening.batched(), geometry) if opening else None
-        elif opening is not None:
-            first_latent, canvas = condition(opening, settings, geometry)
-        else:
-            first_latent, canvas = None, None
-        # The order is the labelling: what a chunk is steered by is <Video 1>, and the tail carrying the
-        # previous chunk's motion follows it. A caption written for one chunk then means the same thing
-        # in every chunk, which is what `Reel.check` refuses to let drift.
-        held = [*clips, *([tail] if tail else [])]
-        encoded, presented = models.registry.roomy(
-            video_vae_spec(settings),
-            lambda: encode_references(references, settings, geometry, held, clip_scale=clip_scale),
+        first_latent, conditioning, encoded, last_latent = _conditions(
+            opening, prompt, settings, geometry, references, held, clip_scale, closing, carry
         )
-        last_latent, last_canvas = condition_last(closing, settings, geometry) if closing is not None else (None, None)
-        conditioning = encode(prompt, canvas, presented, settings, last_canvas)
         sampled = sample(conditioning, first_latent, geometry, settings, prompt, encoded, on_step, last_latent, carry)
         return {"video": sampled.video, "audio": sampled.audio}
 
+    # The order is the labelling: what a chunk is steered by is <Video 1>, and the tail carrying the
+    # previous chunk's motion follows it. A caption written for one chunk then means the same thing
+    # in every chunk, which is what `Reel.check` refuses to let drift.
+    held = [*clips, *([tail] if tail else [])]
     store = cache if cache is not None else default_cache
     stored = store.tensors(made, produce)
     return Latents(stored["video"], stored["audio"], geometry, settings, prompt)
+
+
+def _conditions(
+    opening: Frame | None,
+    prompt: str,
+    settings: VideoSettings,
+    geometry: pipeline.Geometry,
+    references: Sequence[Frame],
+    held: list[Clip],
+    clip_scale: float,
+    closing: Frame | None,
+    carry: pipeline.Carry | None,
+) -> tuple[torch.Tensor | None, text_encoder.Conditioning, list[pipeline.Reference], torch.Tensor | None]:
+    """What a chunk is sampled under: its first frame's latent, the prompt, the references and the last frame."""
+    if carry is not None:
+        # The text encoder still sees the opening as <Picture 1>; the DiT has the carried steps instead.
+        first_latent, canvas = None, pipeline.resize_to_canvas(opening.batched(), geometry) if opening else None
+    elif opening is not None:
+        first_latent, canvas = condition(opening, settings, geometry)
+    else:
+        first_latent, canvas = None, None
+    encoded, presented = models.registry.roomy(
+        video_vae_spec(settings),
+        lambda: encode_references(references, settings, geometry, held, clip_scale=clip_scale),
+    )
+    last_latent, last_canvas = condition_last(closing, settings, geometry) if closing is not None else (None, None)
+    conditioning = encode(prompt, canvas, presented, settings, last_canvas)
+    return first_latent, conditioning, encoded, last_latent
+
+
+# The refine pass of noEmbryo's H3 Clip Refiner (ComfyUI-noEmbryo): its defaults, and its band split.
+REFINE_DENOISE, REFINE_STEPS, REFINE_DETAIL, REFINE_SIGMA = 0.4, 3, 1.0, 2.0
+
+
+def refined(
+    base: Latents,
+    chunk: Key,
+    opening: Frame | None,
+    references: Sequence[Frame] = (),
+    tail: Clip | None = None,
+    clips: Sequence[Clip] = (),
+    clip_scale: float = 1.0,
+    canvas_from: Frame | None = None,
+    closing: Frame | None = None,
+    carry: pipeline.Carry | None = None,
+    denoise: float = REFINE_DENOISE,
+    steps: int = REFINE_STEPS,
+    detail: float = REFINE_DETAIL,
+) -> Latents:
+    """`base` sampled again from `denoise` under its own conditioning, of which only the fine detail is
+    kept: each frame's low band, the scene, stays `base`'s, so nothing moves."""
+    made = key("refined", 1, chunk=str(chunk), denoise=denoise, steps=steps, detail=detail)
+    geometry = base.geometry
+
+    def produce() -> dict[str, torch.Tensor]:
+        held = [*clips, *([tail] if tail else [])]
+        first_latent, conditioning, encoded, last_latent = _conditions(
+            opening, base.prompt, base.settings, geometry, references, held, clip_scale, closing, carry
+        )
+        again = sample(
+            conditioning, first_latent, geometry, base.settings.with_(steps=steps), base.prompt, encoded,
+            last_latent=last_latent, carry=carry, init=base, denoise=denoise,
+        )  # fmt: skip
+        low, high = _bands(base.video)
+        _, redrawn = _bands(again.video)
+        return {"video": low + (1 - detail) * high + detail * redrawn, "audio": base.audio}
+
+    stored = default_cache.tensors(made, produce)
+    return Latents(stored["video"], stored["audio"], geometry, base.settings, base.prompt)
+
+
+def _bands(video: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """`(low, high)` of each latent frame: a separable Gaussian blur, replicate-padded, and the rest."""
+    radius = round(3 * REFINE_SIGMA)
+    x = torch.arange(-radius, radius + 1, dtype=torch.float32)
+    kernel = torch.exp(-(x**2) / (2 * REFINE_SIGMA**2))
+    kernel = kernel / kernel.sum()
+    flat = video.float().reshape(-1, 1, *video.shape[-2:])
+    low = torch.nn.functional.conv2d(
+        torch.nn.functional.pad(flat, (radius, radius, 0, 0), mode="replicate"), kernel.view(1, 1, 1, -1)
+    )
+    low = torch.nn.functional.conv2d(
+        torch.nn.functional.pad(low, (0, 0, radius, radius), mode="replicate"), kernel.view(1, 1, -1, 1)
+    )
+    low = low.reshape(video.shape)
+    return low, video.float() - low
