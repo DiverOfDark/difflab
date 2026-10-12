@@ -126,8 +126,13 @@ def run_render_shot(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
     """One shot of a chain: its chunk, then what the next shot opens on. Both are keyed by everything
     they were made of, so a shot already on disk is skipped and a re-rolled one moves its own key and
     the key of every shot chained after it."""
-    video = VideoSettings(**settings["video"]).with_(seed=int(inputs["seed"]), duration=float(inputs["seconds"]))
     continuity, _ = Continuity.resolve(settings["continuity"])
+    carry = _carry(inputs.get("carry"), continuity.tail_frames)
+    # The carried steps are redrawn under the shot before's last frames and cut away at the join, so the
+    # shot runs that much longer to keep its own seconds.
+    seconds = float(inputs["seconds"]) + (continuity.tail_frames / h3_config.FPS if carry else 0.0)
+    video = VideoSettings(**settings["video"]).with_(seed=int(inputs["seed"]), duration=seconds)
+    carried_on = continuity.tail_frames if inputs.get("carried_on") else 0
     prompt = str(inputs["prompt"])
     # A shot opened from its references alone has no first frame: the canvas comes from the production's,
     # and there is no picture to hold its colour to.
@@ -141,11 +146,11 @@ def run_render_shot(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
     position = int(inputs.get("position", 0))
     clips, scale = _excerpt(inputs.get("source"), shape, video)
 
-    chunk = render_chunk.chunk_key(opening, prompt, video, references, tail, clips, scale, closing, shape)
+    chunk = render_chunk.chunk_key(opening, prompt, video, references, tail, clips, scale, closing, shape, carry)
     # A shot that ends on the next one's keyframe is cut on its very last frame, the one pinned to it.
     window = 1 if closing is not None else continuity.handoff_window
     hold = continuity.color_hold if opening is not None else 0.0
-    at = handoff.handoff_key(chunk, window, continuity.tail_frames, anchor, strength, hold)
+    at = handoff.handoff_key(chunk, window, continuity.tail_frames, anchor, strength, hold, carried_on)
     finished = key("held", 1, chunk=str(chunk), hold=hold) if hold else chunk
     latents_file, mp4, soundtrack = (
         cache.path(chunk, ".pt"),
@@ -160,7 +165,7 @@ def run_render_shot(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
         "chunk": store.relative(mp4),
         "audio": store.relative(soundtrack),
         "frame": store.relative(frame_file),
-        "tail": store.relative(tail_file) if continuity.tail_frames else None,
+        "tail": store.relative(tail_file) if continuity.tail_frames and not carried_on else None,
     }
     events.emit(
         protocol.ItemInfo(
@@ -192,6 +197,7 @@ def run_render_shot(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
             clip_scale=scale,
             canvas_from=shape,
             closing=closing,
+            carry=carry,
         )
     finally:
         previews.target(None, "clip")
@@ -200,7 +206,7 @@ def run_render_shot(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
         with ui.step("Holding colour"):
             clip = media.hold_colour(clip, opening, hold)
     with ui.step("Handoff") as detail:
-        made = handoff.handoff(clip, window, continuity.tail_frames, anchor, strength)
+        made = handoff.handoff(clip, window, continuity.tail_frames, anchor, strength, carried_on)
         handoff.save(made, at)
         carried = f" · {len(made.tail)} frames of tail" if made.tail is not None else ""
         detail(f"frame {made.cut + 1} of {len(clip)}{carried}")
@@ -213,6 +219,14 @@ def run_render_shot(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
     events.emit(shown)
     events.emit(protocol.ItemEnd(index=position, seconds=round(time.perf_counter() - started, 1), activity="done"))
     return {**outputs, "cut": made.cut}
+
+
+def _carry(latents: Any, frames: int) -> pipeline.Carry | None:
+    """The shot before's last `frames` and second of sound, from its cached latents."""
+    if not latents or not frames:
+        return None
+    sampled = torch.load(_path(latents), map_location="cpu", weights_only=True)
+    return pipeline.carry_of(sampled["video"], sampled["audio"], frames, h3_config.AUDIO_LATENT_FPS)
 
 
 def _canvas(size: Any) -> Frame:

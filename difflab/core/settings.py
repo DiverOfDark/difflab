@@ -396,6 +396,16 @@ class Continuity(Settings):
         high=3,
         advanced=True,
     )
+    # A shot that continues the one before opens on that shot's last latent steps and sound, pinned,
+    # instead of a re-encoded handoff frame shown its tail as a reference. Measured over five chained
+    # runs (2026-10-05..12), the re-encoded handoff raised the latents' high band 2-4% at every join and
+    # never within a chunk: x1.21 after ten shots.
+    latent_carry: bool = setting(
+        True,
+        "carry latents",
+        "a continuing shot opens on the last steps and sound of the one before, pinned, not on a re-encoded frame",
+        advanced=True,
+    )
     handoff_window: int = setting(
         6,
         "handoff window",

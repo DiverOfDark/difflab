@@ -259,6 +259,46 @@ class Reference:
         return max(float(self.audio_latents), sum(video_time_spans(self.latent_frames)))
 
 
+@dataclass(frozen=True)
+class Carry:
+    """The previous clip's last frames and sound, pinned on this clip's own timeline: the frames over its
+    first latent steps, the sound ending where the previous clip's picture ended.
+
+    Pinned rather than shown as a reference clip: as a reference the model imitates the sound rather
+    than continuing it, which NikoDemon80's H3-Motion-Context measured as a join cross-correlation of
+    about 0.45 against 0.95 pinned, and the picture would go through the VAE a second time.
+    """
+
+    video: torch.Tensor  # [1, 24, k, h, w], k latent steps from a cycle start
+    audio: torch.Tensor  # [1, 32, 2, n]
+    audio_start: float  # where the first audio latent sits, in audio latents after the target's origin
+
+    @property
+    def latent_frames(self) -> int:
+        return int(self.video.shape[2])
+
+    @property
+    def audio_latents(self) -> int:
+        return int(self.audio.shape[-1])
+
+
+def carry_of(video: torch.Tensor, audio: torch.Tensor, frames: int, audio_latents: int) -> Carry:
+    """The last `frames` pixel frames of a clip's latents (`n % 17 == 5`) and its last `audio_latents`.
+
+    The window starts on a cycle's one-frame latent, so its steps are the ones the next clip's first
+    steps are: copied, never decoded and encoded again. The sound keeps its offset to the picture
+    exactly, fractions of a latent included, since the two grids only meet every three frames.
+    """
+    steps = Geometry(0, 0, frames).latent_frames
+    total = int(video.shape[2])
+    if frames % FRAME_CYCLE != FRAME_PHASE or (total - steps) % 5 or steps > total:
+        raise ValueError(f"cannot carry {frames} frames of a {total}-step clip")
+    clip_frames = (total - 2) // 5 * FRAME_CYCLE + FRAME_PHASE
+    count = min(audio_latents, int(audio.shape[-1]))
+    start = int(audio.shape[-1]) - count - (clip_frames - frames) * _ROPE_FRAME_RESCALE
+    return Carry(video[:, :, total - steps :].clone(), audio[..., -count:].clone(), start)
+
+
 def reference_size(width: int, height: int, geometry: Geometry, mode: str = "match") -> tuple[int, int]:
     """How large a reference image is encoded, rounded to the canvas multiple. Never upscales.
 
@@ -288,6 +328,7 @@ def build_reference_layout(
     last_frame: bool = False,
     patch_size: tuple[int, int, int] = PATCH_SIZE,
     audio_channels: int = AUDIO_CHANNELS,
+    carry: Carry | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, int, int]:
     """The `ref2va` layout: `[text | first frame | reference blocks | target audio | target video]`.
 
@@ -306,6 +347,9 @@ def build_reference_layout(
     `last_frame` pins the clip's end the same way, at the target's final frame; its rows follow the
     first frame's, the order diffusers packs `fl2va`'s two keyframes in.
 
+    `carry` pins the previous clip's last steps over the target's first ones, ahead of every other
+    keyframe, and its sound beside them.
+
     Reference and keyframe rows alike are video rows that are never denoised, so the returned
     condition-row count covers both and the sampler leaves them alone.
     """
@@ -314,9 +358,11 @@ def build_reference_layout(
     num_text_tokens = int(text_token_tags.shape[0])
     reference_rows = [reference.rows(patch_h, patch_w) for reference in references]
     reference_audio_rows = [reference.audio_rows(audio_channels) for reference in references]
-    keyframe_rows = rows_per_frame * (int(first_frame) + int(last_frame))
+    carried = carry.latent_frames if carry is not None else 0
+    carried_audio = carry.audio_latents * audio_channels if carry is not None else 0
+    keyframe_rows = rows_per_frame * (carried + int(first_frame) + int(last_frame))
     num_condition_rows = keyframe_rows + sum(reference_rows)
-    num_audio_condition_rows = sum(reference_audio_rows)
+    num_audio_condition_rows = carried_audio + sum(reference_audio_rows)
     num_audio_rows = geometry.audio_latents * audio_channels
     num_video_rows = geometry.latent_frames * rows_per_frame
     sequence_length = num_text_tokens + num_condition_rows + num_audio_condition_rows + num_audio_rows + num_video_rows
@@ -341,6 +387,12 @@ def build_reference_layout(
     row = num_text_tokens
 
     # A keyframe is one of the clip's own frames, so it sits on the target's clock, not before it.
+    if carry is not None:
+        times = _temporal_position_grid(carried, origin)
+        for time in times:
+            position_ids[row : row + rows_per_frame, 0] = time
+            position_ids[row : row + rows_per_frame, 1:] = target_grid
+            row += rows_per_frame
     for anchored, time in ((first_frame, origin), (last_frame, last_anchor_time(origin, geometry.latent_frames))):
         if anchored:
             position_ids[row : row + rows_per_frame, 0] = time
@@ -351,6 +403,11 @@ def build_reference_layout(
     # rows and shares their origin, so the two halves of one reference describe the same moment.
     video_condition_spans: list[torch.Tensor] = [torch.arange(num_text_tokens, num_text_tokens + keyframe_rows)]
     audio_condition_spans: list[torch.Tensor] = []
+    if carry is not None:
+        low, high = float(target_width_grid[0]), float(target_width_grid[-1])
+        fill_audio(row, carry.audio_latents, origin + carry.audio_start, low, high)
+        audio_condition_spans.append(torch.arange(row, row + carried_audio))
+        row += carried_audio
     cursor = float(num_text_tokens)
     for reference, rows, audio_rows in zip(references, reference_rows, reference_audio_rows, strict=True):
         grid, width_grid = (
@@ -546,6 +603,7 @@ def sample(
     references: Sequence[Reference] = (),
     last_frame_latent: torch.Tensor | None = None,
     resident: bool = True,
+    carry: Carry | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Run the loop and return `(video latents [1, 24, T, h, w], audio latents [1, 32, 2, T40])`.
 
@@ -553,6 +611,7 @@ def sample(
     `references` it is `ref2va`, where the references sit in the model's past and steer the clip
     without fixing its opening. Both together is legal and is what a chained long video wants. A
     `last_frame_latent` pins the clip's end to that frame as well, as diffusers' `last_image` does.
+    `carry` pins the clip's opening steps to the previous clip's last ones; it replaces a first frame.
 
     `on_step(index, video, audio)` is called after every step with the model's current guess at the
     finished clip - the denoised estimate, in the same shapes as the result. That is what a preview
@@ -560,17 +619,22 @@ def sample(
     """
     target = torch.device(device)
     generator = torch.Generator("cpu").manual_seed(seed)
-    if first_frame_latent is None and last_frame_latent is None and not references:
+    if first_frame_latent is None and last_frame_latent is None and not references and carry is None:
         raise ValueError("give a first or last frame latent (fl2va), references (ref2va), or both")
+    if carry is not None and first_frame_latent is not None:
+        raise ValueError("a carried clip opens on the carried steps, not on a first frame as well")
 
     keyframes = [latent for latent in (first_frame_latent, last_frame_latent) if latent is not None]
-    if references:
+    if carry is not None:
+        keyframes.insert(0, carry.video)
+    if references or carry is not None:
         layout = build_reference_layout(
             conditioning.tags,
             geometry,
             references,
             first_frame=first_frame_latent is not None,
             last_frame=last_frame_latent is not None,
+            carry=carry,
         )
         # Order matters: the layout puts the keyframes first, then each reference's audio before its
         # own video rows, so the latents have to be gathered in exactly that order.
@@ -579,7 +643,8 @@ def sample(
             *(reference.latent for reference in references if reference.latent is not None),
         ]
         audio_condition_latents = [
-            reference.audio_latent for reference in references if reference.audio_latent is not None
+            *([carry.audio] if carry is not None else []),
+            *(reference.audio_latent for reference in references if reference.audio_latent is not None),
         ]
     else:
         layout = MiniMaxH3PrepareLayoutStep.build_packed_sequence(

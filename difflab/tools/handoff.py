@@ -35,9 +35,17 @@ def handoff(
     tail_frames: int,
     anchor: Frame | None = None,
     strength: float = 0.0,
+    carried: int = 0,
 ) -> Handoff:
     """The sharpest of the last `window` frames and the `tail_frames` before it, both pulled toward
-    `anchor`'s colour by `strength` when one is given (`Continuity.color_anchor`)."""
+    `anchor`'s colour by `strength` when one is given (`Continuity.color_anchor`).
+
+    When the next chunk carries this one's last `carried` frames in latents, it opens on the first of
+    them as it is: picking the sharpest, or pulling its colour, would make it differ from the steps the
+    next chunk actually starts from."""
+    if carried:
+        cut = len(clip) - carried
+        return Handoff(clip.frame(cut), None, cut)
     cut = media.sharpest_index(clip, window)
     frame = clip.frame(cut)
     tail = clip.tail(tail_frames, before=cut) if tail_frames else None
@@ -55,11 +63,14 @@ def handoff_key(
     anchor: Frame | None,
     strength: float,
     hold: float = 0.0,
+    carried: int = 0,
 ) -> Key:
     """Keyed by the chunk it comes from and what was taken from it. The anchor and the hold count only
     when applied, so turning either off does not move every handoff."""
     pulled = anchor.pixels if anchor is not None and strength else None
     held = {"hold": hold} if hold else {}
+    if carried:
+        return key("handoff", 1, chunk=str(chunk), carried=carried, **held)
     return key(
         "handoff", 1, chunk=str(chunk), window=window, tail_frames=tail_frames, anchor=pulled, strength=strength, **held
     )

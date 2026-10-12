@@ -22,6 +22,7 @@ from difflab.screenplay import config as knobs
 from difflab.screenplay import production as productions
 
 _LAST_FRAME = words.SENTENCES["last_frame"].split(":")[0]
+_TAIL_AUDIO = "<Audio 1>"
 _SCENE = words.SENTENCES["scene_frame"].split(":")[0].removeprefix("{picture} ")
 
 
@@ -165,6 +166,11 @@ def _queue_chapter(connection: Any, chapter_id: int, asked_by: str, keyframes_on
         prompt = store.prompt_of(connection, shot.id)
         scene = compiler.scened(take, shot.position)
         moved = landing != (_LAST_FRAME in prompt.text) or scene != (_SCENE in prompt.text)
+        # A tail shown as a reference is <Audio 1>; one carried in latents is named nowhere.
+        moved = moved or (
+            compiler.carried(take, shot.position)
+            and compiler.latent(take, shot.position) == (_TAIL_AUDIO in prompt.text)
+        )
         if shot.plan.get("beats") and not prompt.pinned and moved:
             productions.recompile(connection, production, chapter, shot.id)
     shots = store.shots_of(connection, chapter_id)
@@ -203,6 +209,11 @@ def _queue_chapter(connection: Any, chapter_id: int, asked_by: str, keyframes_on
     editor, _ = settings.effective("edit_image", production.id)
     keyframes = [store.keyframe_of(connection, shot.id) for shot in shots]
     tails, lands = compiler.joins(keyframes, shots, carries)
+    # Which shots open on the one before's latents: the compiler captioned them so, and a shot re-creating
+    # a source video keeps its tail as <Video 2>, which `captions.cite_source` declares.
+    carried = [
+        tails[shot.position] and compiler.latent(take, shot.position) and not shot.plan.get("source") for shot in shots
+    ]
     resolved = looks.resolve(connection, production)
     # Every composed keyframe before any clip: the shot before one ends on it, and the editor is
     # loaded once rather than between clips.
@@ -284,13 +295,16 @@ def _queue_chapter(connection: Any, chapter_id: int, asked_by: str, keyframes_on
             opening = openings[shot.position]
         else:
             opening = _output(previous, "frame")
-        tail = _output(previous, "tail") if tails[shot.position] else None
+        carry = _output(previous, "latents") if carried[shot.position] else None
+        tail = _output(previous, "tail") if tails[shot.position] and carry is None else None
         inputs = {
             "opening": opening,
             "canvas": _canvas(production),
             "closing": openings[shot.position + 1] if lands[shot.position] else None,
             "prompt": productions.revised(clip.review, prompt.text),
             "tail": tail,
+            **({"carry": carry} if carry else {}),
+            **({"carried_on": True} if shot.position + 1 < len(shots) and carried[shot.position + 1] else {}),
             "anchor": anchor,
             "seed": clip.seed,
             "seconds": shot.seconds,

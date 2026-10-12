@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from difflab import store
+from difflab.core.settings import Continuity
 from difflab.models.minimax_h3 import caption
 from difflab.screenplay import config, looks, words
 
@@ -175,6 +176,7 @@ class Take:
     chunks: tuple[Chunk, ...] = ()
     story: tuple[tuple[str, int], ...] = ()  # the IDEA's actions: (its words, the clip from 1)
     tails: tuple[bool, ...] = ()  # per chunk, whether it carries the one before's tail; empty is `tail` after the first
+    latent: bool = False  # Continuity.latent_carry: a carried tail is pinned in latents, not shown as <Video>/<Audio>
     lands: tuple[bool, ...] = ()  # per chunk, whether it ends on the next one's keyframe
     unframed: tuple[bool, ...] = ()  # per chunk, whether it opens on no picture, from its references alone
     scenes: tuple[bool, ...] = ()  # per chunk, whether it may hold the chapter's opening still (`scened`)
@@ -249,6 +251,11 @@ def carried(take: Take, index: int) -> bool:
     if take.chunks and take.chunks[index].cut:
         return False  # a cut opens on its own keyframe: the clip before's motion stops there
     return take.tails[index] if take.tails else take.tail and index > 0
+
+
+def latent(take: Take, index: int) -> bool:
+    """Whether chunk `index`'s carried tail is pinned in latents, so its caption names no tail."""
+    return take.latent and carried(take, index)
 
 
 def scenes(keyframes: list[store.Keyframe], shots: list[store.Shot]) -> tuple[bool, ...]:
@@ -519,7 +526,8 @@ def compile_chunk(take: Take, index: int) -> Compiled:
     say = words.SENTENCES
     chunk = take.chunks[index]
     refs = references(take, index)
-    tail = carried(take, index)
+    pinned = latent(take, index)
+    tail = carried(take, index) and not pinned
     landing = lands(take, index)
     framed = not unframed(take, index)
     first = ("opening" if index == 0 else "handoff",) if framed else ()
@@ -571,8 +579,8 @@ def compile_chunk(take: Take, index: int) -> Compiled:
         definitions += [say["video"], say["audio"]]
 
     # summary
-    directive = caption.directive(tail, framed)
-    lead = "lead_continued" if tail else "lead" if framed else "lead_refs"
+    directive = caption.directive(tail or pinned, framed, heard=not pinned)
+    lead = "lead_carried" if pinned else "lead_continued" if tail else "lead" if framed else "lead_refs"
     summary = " ".join(
         part
         for part in (
@@ -580,7 +588,7 @@ def compile_chunk(take: Take, index: int) -> Compiled:
             say[lead].format(room=subject[env]),
             say["lead_lands"] if landing else "",
             labels_only(chunk.summary.strip(), False),
-            say["audio_role"] if tail else "",
+            say["audio_role"] if tail else say["audio_role_carried"] if pinned else "",
         )
         if part
     )
@@ -592,16 +600,18 @@ def compile_chunk(take: Take, index: int) -> Compiled:
         )
         for m in cast
     ]
-    retention += ([say["retain_frame"]] if framed else []) + ([say["retain_last"]] if landing else [])
-    retention += [say["retain_scene"].format(picture=shown.picture("scene"))] if scene else []
     moving = index > 0 and any(beat.phase == "carry" for beat in take.chunks[index - 1].beats[-1:])
+    first_kept = "retain_carried_moving" if moving else "retain_carried"
+    retention += [say[first_kept if pinned else "retain_frame"]] if framed else []
+    retention += [say["retain_last"]] if landing else []
+    retention += [say["retain_scene"].format(picture=shown.picture("scene"))] if scene else []
     retention += [say["retain_video_moving" if moving else "retain_video"], say["retain_audio"]] if tail else []
 
     # detailed_description
     expand = Expander(take, subject, speakers, now)
     room = take.cards[env]
     body = [
-        say["begin_continued" if tail else "begin" if framed else "begin_refs"].format(
+        say["begin_carried" if pinned else "begin_continued" if tail else "begin" if framed else "begin_refs"].format(
             arrangement=_lower(_sentence(expand(opening(take, index), behind=True)))
         ),
         say["room" if room.lights else "room_unlit"].format(
@@ -892,6 +902,9 @@ def take_of(connection: sqlite3.Connection, production: store.Production, chapte
     planned = {**manifest, **manifest.get("chapter_plans", {}).get(str(chapter.id), {})}
     shots = store.shots_of(connection, chapter.id)
     tail = bool(manifest.get("tail", True))
+    from difflab.screenplay import settings  # here: it imports the tools, which import this module
+
+    continuity, _ = settings.effective("handoff", production.id)
     canvas = manifest.get("canvas") or {}
     keyframes = [store.keyframe_of(connection, shot.id) for shot in shots]
     tails, landed = joins(keyframes, shots, tail)
@@ -922,6 +935,7 @@ def take_of(connection: sqlite3.Connection, production: store.Production, chapte
         chunks=tuple(chunks),
         story=tuple((str(event), int(clip)) for event, clip in planned.get("story", [])),
         tails=tails,
+        latent=isinstance(continuity, Continuity) and continuity.latent_carry,
         lands=landed,
         unframed=tuple(keyframe.source == store.REFS for keyframe in keyframes),
         scenes=scenes(keyframes, shots),

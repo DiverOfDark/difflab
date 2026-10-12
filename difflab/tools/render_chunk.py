@@ -228,6 +228,7 @@ def sample(
     references: Sequence[pipeline.Reference] = (),
     on_step: Callable[[int, torch.Tensor, torch.Tensor], None] | None = None,
     last_latent: torch.Tensor | None = None,
+    carry: pipeline.Carry | None = None,
 ) -> Latents:
     """The denoising loop. ~78% of a render.
 
@@ -269,6 +270,7 @@ def sample(
                     on_step=step_done if previewer is not None or on_step is not None else None,
                     last_frame_latent=last_latent,
                     resident=resident,
+                    carry=carry,
                 )
             finally:
                 for hook in hooks:
@@ -364,6 +366,7 @@ def chunk_key(
     clip_scale: float = 1.0,
     closing: Frame | None = None,
     canvas_from: Frame | None = None,
+    carry: pipeline.Carry | None = None,
 ) -> Key:
     """What identifies a chunk: its opening, prompt, settings, references, tail and any reference
     clips - pictures by their pixels, never by their paths, so renaming a photo renders nothing again.
@@ -383,6 +386,7 @@ def chunk_key(
         clip_scale=clip_scale,
         **({"closing": closing.pixels} if closing is not None else {}),
         **({"canvas": canvas} if canvas is not None else {}),
+        **({"carry": [carry.video, carry.audio, carry.audio_start]} if carry is not None else {}),
     )
 
 
@@ -398,6 +402,7 @@ def cached_latents(
     clip_scale: float = 1.0,
     canvas_from: Frame | None = None,
     closing: Frame | None = None,
+    carry: pipeline.Carry | None = None,
 ) -> Latents:
     """One chunk's latents, read back when this exact opening, prompt and history already ran - so a
     workflow that samples the same thing twice pays once, and a run that dies resumes where it stopped.
@@ -406,16 +411,27 @@ def cached_latents(
     deterministic - and they are small: a 15 s chunk is about 17 MB against gigabytes once it has been
     decoded at 2 MP.
     """
-    made = chunk_key(opening, prompt, settings, references, tail, clips, clip_scale, closing, canvas_from)
+    made = chunk_key(opening, prompt, settings, references, tail, clips, clip_scale, closing, canvas_from, carry)
     # Without a keyframe there is nothing to plan the canvas from, so the shape comes from a frame
     # that is only ever measured: ref2va fixes no opening, and that is the whole point of using it.
     shape = opening or canvas_from
     if shape is None:
         raise ValueError("give an opening frame, or a canvas_from to take the shape from")
     geometry = plan(shape, settings)
+    if carry is not None and carry.video.shape[-2:] != (geometry.latent_height, geometry.latent_width):
+        raise ValueError(
+            f"the carried steps are {tuple(carry.video.shape[-2:])} latents, "
+            f"this canvas is {geometry.latent_height}x{geometry.latent_width}"
+        )
 
     def produce() -> dict[str, torch.Tensor]:
-        first_latent, canvas = condition(opening, settings, geometry) if opening is not None else (None, None)
+        if carry is not None:
+            # The text encoder still sees the opening as <Picture 1>; the DiT has the carried steps instead.
+            first_latent, canvas = None, pipeline.resize_to_canvas(opening.batched(), geometry) if opening else None
+        elif opening is not None:
+            first_latent, canvas = condition(opening, settings, geometry)
+        else:
+            first_latent, canvas = None, None
         # The order is the labelling: what a chunk is steered by is <Video 1>, and the tail carrying the
         # previous chunk's motion follows it. A caption written for one chunk then means the same thing
         # in every chunk, which is what `Reel.check` refuses to let drift.
@@ -426,7 +442,7 @@ def cached_latents(
         )
         last_latent, last_canvas = condition_last(closing, settings, geometry) if closing is not None else (None, None)
         conditioning = encode(prompt, canvas, presented, settings, last_canvas)
-        sampled = sample(conditioning, first_latent, geometry, settings, prompt, encoded, on_step, last_latent)
+        sampled = sample(conditioning, first_latent, geometry, settings, prompt, encoded, on_step, last_latent, carry)
         return {"video": sampled.video, "audio": sampled.audio}
 
     store = cache if cache is not None else default_cache

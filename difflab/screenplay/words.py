@@ -404,6 +404,12 @@ SENTENCES = {
     "retain_audio": "<Audio 1>: reference - its room tone continues in the same character without copying the original signal.",
     "begin": "[Shot 1] The shot begins from <Picture 1>: {arrangement}.",
     "begin_continued": "[Shot 1] The shot begins from <Picture 1>, continuing <Video 1> without a reset: {arrangement}.",
+    # A shot carried in latents: its first second is the shot before's last, pinned, and nothing names it.
+    "lead_carried": "The target video continues the shot before it in one unbroken handheld shot that begins from <Picture 1> in {room}; its first second is that shot's last.",
+    "audio_role_carried": "The room tone of its first second carries on throughout.",
+    "retain_carried": "<Picture 1> ([Shot 1] first frame): fully_preserved - the video starts exactly from <Picture 1>, and the settled poses, handheld drift and light of the shot before continue without a reset.",
+    "retain_carried_moving": "<Picture 1> ([Shot 1] first frame): fully_preserved - the video starts exactly from <Picture 1>, and the motion under way in the shot before, its speed and direction, and its light continue without a reset.",
+    "begin_carried": "[Shot 1] The shot begins from <Picture 1>, continuing the shot before without a reset: {arrangement}.",
     "room": "The setting is {room}, with {traits}, lit by {lights}.",
     "room_unlit": "The setting is {room}, with {traits}.",
     "present": "{subject} is the {noun} with {traits}.",  # a member the prose and the closing never name
