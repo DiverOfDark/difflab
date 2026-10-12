@@ -94,10 +94,6 @@ DIRECTOR_MAIN_BEAT_WINDOW = (0.15, 0.65)
 # height by the end of shot 4, magnifying pixels H3 had drawn small, which is what read as soft and waxy.
 DIRECTOR_ZOOM = {"push_in": 1, "pull_out": -1, "reveal_left": -2, "reveal_right": -2}
 DIRECTOR_ZOOM_MAX = 1  # net pushes a chain may hold before it pulls out again
-# Every this many shots the plan composes a clean keyframe and the shot before lands on it. A clip pinned at
-# both ends keeps its detail (production 13's shot 1: Laplacian 1056 -> 1096); one free at its end slides to H3's own
-# level within a few seconds (shot 2: 1124 -> 443 in 6 s, from a clean composed start).
-DIRECTOR_LAND_EVERY = 2
 DIRECTOR_MAX_LIVING = 3  # people and animals on screen per chunk (the official shot-table rule)
 DIRECTOR_WORDS_PER_SECOND = 2.5  # dialogue
 DIRECTOR_DIALOGUE_TAIL = 2.0  # s of silence after a chunk's last line

@@ -28,7 +28,7 @@ MEMBER_ID = re.compile(rf"[a-z][a-z_]{{0,{knobs.DIRECTOR_ID_LENGTH - 1}}}")  # a
 MEMBER_KINDS = ("person", "animal", "object", "environment")
 OPENING_NOTE = "the opening frame"  # what the planner writes on the keyframe it cuts from the first photo
 CUT_NOTE = "the plan's cut"  # on a keyframe the planner composes for a "new" cut
-LAND_NOTE = "the plan's landing"  # on a keyframe the planner composes every DIRECTOR_LAND_EVERY shots
+LAND_NOTE = "the plan's landing"  # on a keyframe the plan asks for where its story needs one
 ASPECTS = (0.25, 4.0)  # width over height a canvas may be given
 FITS = ("crop", "extend")  # the first photo cut to the canvas, or kept whole and drawn out to it by the editor
 

@@ -83,6 +83,7 @@ def _take_from_plan(data: Any, base: compose.Take) -> compose.Take:
                 seconds=seconds,
                 cut=cut,
                 opening=str(clip.get("opening") or "").strip(),
+                keyframe=bool(chunks) and not cut and clip.get("keyframe") is True,
                 looks={m: look for m, (look, _, _) in made.items()},
                 look_names={m: name for m, (_, name, _) in made.items()},
                 look_from={m: start for m, (_, _, start) in changes.items() if start},

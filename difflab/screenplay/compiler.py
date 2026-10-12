@@ -154,6 +154,7 @@ class Chunk:
     seconds: float = 0.0  # on H3's frame grid; 0 in a plan from before the director chose lengths: `Take.seconds`
     cut: str = ""  # "" continues the chunk before; "back" returns to the opening photo; "new" opens on `opening`
     opening: str = ""  # a "new" cut's first frame, {id} placeholders
+    keyframe: bool = False  # a continuing chunk whose first frame is composed, and the chunk before lands on it
     looks: dict[str, str] = dataclasses.field(default_factory=dict)  # the planner's: member -> its look from here on
     look_names: dict[str, str] = dataclasses.field(default_factory=dict)  # the planner's: member -> that look's name
     look_from: dict[str, str] = dataclasses.field(default_factory=dict)  # member -> the version it starts from
@@ -785,6 +786,7 @@ def chunk_of(plan: dict[str, Any]) -> Chunk:
         seconds=float(plan.get("seconds", 0.0)),
         cut=str(plan.get("cut", "")),
         opening=str(plan.get("opening", "")),
+        keyframe=bool(plan.get("keyframe", False)),
         ambience=str(plan.get("ambience", "")),
         scene=str(plan.get("scene", "")),
     )

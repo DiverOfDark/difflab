@@ -790,7 +790,9 @@ def _plan_shots(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, A
                     store.provide_keyframe(connection, shot.id, str(inputs["opening"]), note=OPENING_NOTE)
                 elif chunk.cut == "new":
                     store.compose_keyframe(connection, shot.id, note=CUT_NOTE)
-                elif position % knobs.DIRECTOR_LAND_EVERY == 0:
+                # A clip pinned at both ends keeps its detail (production 13's shot 1: Laplacian 1056 -> 1096); one free
+                # at its end slides to H3's own level within seconds (shot 2: 1124 -> 443 in 6 s).
+                elif chunk.keyframe:
                     if first.note != LAND_NOTE:
                         store.compose_keyframe(connection, shot.id, note=LAND_NOTE)
                 elif first.source != store.CHAINED:
