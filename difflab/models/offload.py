@@ -143,6 +143,15 @@ class _Staging:
 def _stage(
     streamer: BlockStreamer, fetched: list[torch.Tensor | None], slot: _Staging, allocated: torch.cuda.Event
 ) -> torch.cuda.Event:
+    # Inference mode is thread-local: blocks the text encoder prefetches under it are inference tensors, which this
+    # thread may write only inside it. Writing a normal tensor inside it is allowed, so the DiT's go through too.
+    with torch.inference_mode():
+        return _upload(streamer, fetched, slot, allocated)
+
+
+def _upload(
+    streamer: BlockStreamer, fetched: list[torch.Tensor | None], slot: _Staging, allocated: torch.cuda.Event
+) -> torch.cuda.Event:
     if slot.uploaded is not None:
         slot.uploaded.synchronize()
     flat = slot.reserve(streamer.staged)
