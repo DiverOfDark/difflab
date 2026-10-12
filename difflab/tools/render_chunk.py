@@ -390,7 +390,7 @@ def chunk_key(
         clip_scale=clip_scale,
         **({"closing": closing.pixels} if closing is not None else {}),
         **({"canvas": canvas} if canvas is not None else {}),
-        **({"carry": [carry.video, carry.audio, float(carry.audio_start)]} if carry is not None else {}),
+        **({"carry": [carry.video, carry.audio, float(carry.audio_start)], "held": 1} if carry is not None else {}),
     )
 
 
@@ -433,7 +433,8 @@ def cached_latents(
             opening, prompt, settings, geometry, references, held, clip_scale, closing, carry
         )
         sampled = sample(conditioning, first_latent, geometry, settings, prompt, encoded, on_step, last_latent, carry)
-        return {"video": sampled.video, "audio": sampled.audio}
+        video = held_to(sampled.video, carry.video) if carry is not None else sampled.video
+        return {"video": video, "audio": sampled.audio}
 
     # The order is the labelling: what a chunk is steered by is <Video 1>, and the tail carrying the
     # previous chunk's motion follows it. A caption written for one chunk then means the same thing
@@ -511,6 +512,30 @@ def refined(
 
     stored = default_cache.tensors(made, produce)
     return Latents(stored["video"], stored["audio"], geometry, base.settings, base.prompt)
+
+
+# The most a carried chunk is corrected by, either way. Measured drift was 3-4% a join; a tenfold margin.
+HELD_LIMIT = (0.8, 1.25)
+
+
+def held_to(video: torch.Tensor, carried: torch.Tensor) -> torch.Tensor:
+    """`video` corrected by how far its redrawn opening steps drifted from the `carried` steps they were
+    pinned to: per channel its mean and spread, then its fine detail.
+
+    The two are the same frames, so whatever differs is H3's own drift, not the scene. Uncorrected, the
+    redrawn steps came back with 3.2-3.6% more high band at every join of production 18, and the next
+    shot carries that on: x1.16 after six shots. noEmbryo's Clip Refiner matches the same statistics to
+    the first clip's, where the scene has moved on.
+    """
+    steps = carried.shape[2]
+    head, carried = video[:, :, :steps].float(), carried.float()
+    dims = (0, 2, 3, 4)
+    scale = (carried.std(dim=dims) / head.std(dim=dims).clamp_min(1e-6)).clamp(*HELD_LIMIT)
+    shift = carried.mean(dim=dims) - scale * head.mean(dim=dims)
+    video = video.float() * scale.view(1, -1, 1, 1, 1) + shift.view(1, -1, 1, 1, 1)
+    gain = _bands(carried)[1].std() / _bands(video[:, :, :steps])[1].std().clamp_min(1e-6)
+    low, high = _bands(video)
+    return low + float(gain.clamp(*HELD_LIMIT)) * high
 
 
 def _bands(video: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
