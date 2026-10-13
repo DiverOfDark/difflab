@@ -9,6 +9,7 @@ from typing import Any
 
 import torch
 from exllamav3 import Cache, Config, Generator, Job, LLGuidanceFilter, Model, Tokenizer
+from exllamav3.constants import PAGE_SIZE
 from exllamav3.generator.sampler import ArgmaxSampler, ComboSampler
 from PIL import Image
 from transformers import AutoTokenizer
@@ -26,6 +27,10 @@ IMAGE_SLOT = "<|vision_start|><|image_pad|><|vision_end|>"
 # prefix `"members":[` being one it never writes unthinking; forced `": "`, a model that had thought "let
 # me format the JSON on one line" wrote `{"traits [{": ...`, its `":[{"` masked out (2026-10-11).
 ANY_JSON = {"type": ["object", "array"], "x-guidance": {"whitespace_pattern": " ?"}}
+
+# Hashes of every full page any prompt has had since the server started, reloads included: how much an
+# on-disk KV cache could restore at most, measured before building one. An image counts by its bytes.
+_PAGES_SEEN: set[bytes] = set()
 
 
 class Exl3VL:
@@ -104,7 +109,8 @@ class Exl3VL:
         parts = self.load()
         shown = [images] if isinstance(images, Image.Image) else list(images or ())
         tokenizer = parts["tokenizer"]
-        embeddings = [self._embedding(parts, image) for image in shown]
+        seen = [hashlib.sha256(image.tobytes()).hexdigest() + f"{image.mode}{image.size}" for image in shown]
+        embeddings = [self._embedding(parts, image, name) for image, name in zip(shown, seen, strict=True)]
         messages: list[dict[str, Any]] = [{"role": "system", "content": system}] if system else []
         content = [*({"type": "image"} for _ in shown), {"type": "text", "text": question}]
         messages.append({"role": "user", "content": content})
@@ -123,13 +129,15 @@ class Exl3VL:
         )
         masked = schema or ANY_JSON
         generator = parts["generator"]
-        counted = ("prompt_tokens", "cached_tokens", "prefill_seconds", "new_tokens", "decode_seconds")
+        counted = ("prompt_tokens", "cached_tokens", "seen_tokens", "prefill_seconds", "new_tokens", "decode_seconds")
         numbers = dict.fromkeys(counted, 0.0)
 
         def run(text: str, cap: int, stops: list[int], shape: list[Any] | None, show: Callable[[str], None]) -> str:
+            ids = tokenizer.encode(text, encode_special_tokens=True, embeddings=embeddings)
+            numbers["seen_tokens"] += _seen_tokens(ids, embeddings, seen)
             generator.enqueue(
                 Job(
-                    input_ids=tokenizer.encode(text, encode_special_tokens=True, embeddings=embeddings),
+                    input_ids=ids,
                     max_new_tokens=cap,
                     stop_conditions=stops,
                     sampler=sampler,
@@ -160,8 +168,7 @@ class Exl3VL:
             show(answer.strip(), **{name: round(value, 2) for name, value in numbers.items()})
         return answer.strip()
 
-    def _embedding(self, parts: dict[str, Any], image: Image.Image) -> Any:
-        seen = hashlib.sha256(image.tobytes()).hexdigest() + f"{image.mode}{image.size}"
+    def _embedding(self, parts: dict[str, Any], image: Image.Image, seen: str) -> Any:
         if (embedding := self._embedded.get(seen)) is not None:
             self._embedded.move_to_end(seen)
             return embedding
@@ -180,3 +187,19 @@ class Exl3VL:
         self._embedded.clear()
         gc.collect()
         torch.cuda.empty_cache()
+
+
+def _seen_tokens(ids: torch.Tensor, embeddings: Sequence[Any], seen: Sequence[str]) -> int:
+    tokens: list[Any] = ids[0].tolist()
+    for embedding, name in zip(embeddings, seen, strict=True):
+        tokens = [f"{name}:{t - embedding.first_index}" if embedding.first_index <= t < embedding.last_index else t
+                  for t in tokens]  # fmt: skip
+    found, chain, matching = 0, b"", True
+    for start in range(0, len(tokens) - PAGE_SIZE + 1, PAGE_SIZE):
+        chain = hashlib.blake2b(chain + repr(tokens[start : start + PAGE_SIZE]).encode(), digest_size=16).digest()
+        if matching and chain in _PAGES_SEEN:
+            found += PAGE_SIZE
+        else:
+            matching = False
+            _PAGES_SEEN.add(chain)
+    return found
