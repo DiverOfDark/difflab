@@ -1,6 +1,8 @@
 """Qwen3.8-27B as turboderp's EXL3 on ExLlamaV3, its MTP head (kept at `mtp_bits: 4`) drafting."""
 
 import gc
+import hashlib
+from collections import OrderedDict
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
@@ -32,6 +34,7 @@ class Exl3VL:
     def __init__(self, checkpoint: Checkpoint) -> None:
         self.checkpoint = checkpoint
         self._parts: dict[str, Any] | None = None
+        self._embedded: OrderedDict[str, Any] = OrderedDict()
 
     def load(self) -> dict[str, Any]:
         if self._parts is None:
@@ -101,7 +104,7 @@ class Exl3VL:
         parts = self.load()
         shown = [images] if isinstance(images, Image.Image) else list(images or ())
         tokenizer = parts["tokenizer"]
-        embeddings = [parts["vision"].get_image_embeddings(tokenizer=tokenizer, image=image) for image in shown]
+        embeddings = [self._embedding(parts, image) for image in shown]
         messages: list[dict[str, Any]] = [{"role": "system", "content": system}] if system else []
         content = [*({"type": "image"} for _ in shown), {"type": "text", "text": question}]
         messages.append({"role": "user", "content": content})
@@ -120,6 +123,8 @@ class Exl3VL:
         )
         masked = schema or ANY_JSON
         generator = parts["generator"]
+        counted = ("prompt_tokens", "cached_tokens", "prefill_seconds", "new_tokens", "decode_seconds")
+        numbers = dict.fromkeys(counted, 0.0)
 
         def run(text: str, cap: int, stops: list[int], shape: list[Any] | None, show: Callable[[str], None]) -> str:
             generator.enqueue(
@@ -139,6 +144,11 @@ class Exl3VL:
                     if chunk := result.get("text"):
                         said += chunk
                         show(said)
+                    if result.get("eos"):
+                        for name, field in (("prefill_seconds", "time_prefill"), ("decode_seconds", "time_generate")):
+                            numbers[name] += result[field]
+                        for name in ("prompt_tokens", "cached_tokens", "new_tokens"):
+                            numbers[name] += result[name]
             return said
 
         with ui.live_answer(title, echo) as show:
@@ -147,13 +157,26 @@ class Exl3VL:
             prompt += f"{thought.strip()}\n</think>\n\n"
             shape = [LLGuidanceFilter(tokenizer, eos_after_completed=True, json_schema=masked)] if as_json else None
             answer = run(prompt, max_new_tokens, parts["stops"], shape, lambda said: show(f"{thought}\n\n{said}"))
-            show(answer.strip())
+            show(answer.strip(), **{name: round(value, 2) for name, value in numbers.items()})
         return answer.strip()
+
+    def _embedding(self, parts: dict[str, Any], image: Image.Image) -> Any:
+        seen = hashlib.sha256(image.tobytes()).hexdigest() + f"{image.mode}{image.size}"
+        if (embedding := self._embedded.get(seen)) is not None:
+            self._embedded.move_to_end(seen)
+            return embedding
+        embedding = parts["vision"].get_image_embeddings(tokenizer=parts["tokenizer"], image=image)
+        self._embedded[seen] = embedding
+        held = sum(e.embeddings.nbytes for e in self._embedded.values())
+        while held > config.VLM_EMBEDDING_CACHE_BYTES and len(self._embedded) > 1:
+            held -= self._embedded.popitem(last=False)[1].embeddings.nbytes
+        return embedding
 
     def unload(self) -> None:
         if self._parts is not None:
             for model in self._parts["models"]:
                 model.unload()
         self._parts = None
+        self._embedded.clear()
         gc.collect()
         torch.cuda.empty_cache()

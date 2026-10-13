@@ -118,6 +118,7 @@ class StageEnd(Event):
     ok: bool
     seconds: float
     detail: str | None = None
+    numbers: dict[str, float] | None = None
 
 
 @dataclass(frozen=True)

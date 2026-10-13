@@ -44,6 +44,10 @@ VLM_DRAFT_TOKENS = 4
 VLM_REASONING_EFFORT = "low"
 VLM_THINK_TOKENS = 4096
 VLM_RECURRENT_CACHE_BYTES = 1024**3  # host RAM, for reusing a prefix's linear-attention state
+# Host RAM for images already embedded. A picture embedded afresh gets new placeholder token ids, so no
+# prompt holding it ever matches the paged cache past it; a repair re-read the whole plan or clip. A
+# 1280x736 frame is 920 tokens, ~9.4 MB: this holds one judged clip of 26 frames twice over.
+VLM_EMBEDDING_CACHE_BYTES = 512 * 1024**2
 
 # ComfyUI Image Saver Simple.
 OUT_DIR = OUTPUT_DIR / "images"

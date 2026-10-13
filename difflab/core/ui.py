@@ -224,7 +224,7 @@ def answered(title: str, detail: str, seconds: float) -> None:
 
 
 @contextmanager
-def live_answer(title: str, echo: bool = True) -> Iterator[Callable[[str], None]]:
+def live_answer(title: str, echo: bool = True) -> Iterator[Callable[..., None]]:
     """Text streaming out of a model. The yielded function replaces what has arrived so far.
 
     A throttled word count goes out while it arrives: a 2048-token director call is a minute in which
@@ -233,15 +233,17 @@ def live_answer(title: str, echo: bool = True) -> Iterator[Callable[[str], None]
     a second is not something anyone reads; the text itself rides on `stage.end`, where it is kept.
 
     `echo` chooses what the finished line says - the answer itself, or how many words it was.
+    Numbers given with the text ride on `stage.end` as they last stood.
     """
-    text = ""
+    text, numbers = "", dict[str, float]()
     t0 = time.perf_counter()
     throttle = _Throttle()
     events.emit(protocol.StageStart(label=title, unit="word"))
 
-    def update(latest: str) -> None:
+    def update(latest: str, **counted: float) -> None:
         nonlocal text
         text = latest
+        numbers.update(counted)
         if throttle():
             events.emit(
                 protocol.StageProgress(
@@ -260,7 +262,9 @@ def live_answer(title: str, echo: bool = True) -> Iterator[Callable[[str], None]
         )
         raise
     seconds = time.perf_counter() - t0
-    events.emit(protocol.StageEnd(label=title, ok=True, detail=text[-4000:], seconds=round(seconds, 1)))
+    events.emit(
+        protocol.StageEnd(label=title, ok=True, detail=text[-4000:], seconds=round(seconds, 1), numbers=numbers or None)
+    )
     _say(f"  ✓  {_where()}{title:<{_LABEL_WIDTH}} {text if echo else f'{len(text.split())} words'}")
 
 
