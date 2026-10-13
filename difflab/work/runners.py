@@ -122,42 +122,6 @@ def run_retime(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, An
     return {"video": store.relative(destination)}
 
 
-def run_refine_shot(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
-    """A rendered shot's latents through the refine pass (`render_chunk.refined`), decoded and held to
-    the colour its chunk was held to. `inputs` are the shot's render inputs and its `latents`."""
-    continuity, _ = Continuity.resolve(settings["continuity"])
-    carry = _carry(inputs.get("carry"), continuity.tail_frames, float(inputs.get("carry_late") or 0.0))
-    seconds = float(inputs["seconds"]) + (continuity.tail_frames / h3_config.FPS if carry else 0.0)
-    video = VideoSettings(**settings["video"]).with_(seed=int(inputs["seed"]), duration=seconds)
-    opening = _frame(inputs["opening"]) if inputs.get("opening") else None
-    shape = opening if opening is not None else _canvas(inputs.get("canvas"))
-    closing = _frame(inputs["closing"]) if inputs.get("closing") else None
-    tail = handoff.load_tail(_path(inputs["tail"])) if inputs.get("tail") else None
-    references = [_frame(p) for p in inputs.get("references", [])]
-    clips, scale = _excerpt(inputs.get("source"), shape, video)
-    prompt = str(inputs["prompt"])
-    chunk = render_chunk.chunk_key(opening, prompt, video, references, tail, clips, scale, closing, shape, carry)
-    sampled = torch.load(_path(inputs["latents"]), map_location="cpu", weights_only=True)
-    base = render_chunk.Latents(sampled["video"], sampled["audio"], render_chunk.plan(shape, video), video, prompt)
-    refine = settings.get("refine", {})
-    latents = render_chunk.refined(
-        base, chunk, opening, references, tail, clips, scale, shape, closing, carry,
-        denoise=float(refine.get("denoise", render_chunk.REFINE_DENOISE)),
-        steps=int(refine.get("steps", render_chunk.REFINE_STEPS)),
-        detail=float(refine.get("detail", render_chunk.REFINE_DETAIL)),
-    )  # fmt: skip
-    made = key("refined_shot", 1, chunk=str(chunk), refine=refine)
-    mp4 = cache.path(made, ".mp4")
-    clip = render_chunk.decode(latents)
-    hold = continuity.color_hold if opening is not None else 0.0
-    if hold and opening is not None:
-        clip = media.hold_colour(clip, opening, hold)
-    _write_chunk(clip, mp4, cache.path(made, ".audio.pt"))
-    refined_file = cache.path(made, ".pt")
-    torch.save({"video": latents.video, "audio": latents.audio}, refined_file)
-    return {"chunk": store.relative(mp4), "latents": store.relative(refined_file), "key": str(made)}
-
-
 def run_render_shot(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
     """One shot of a chain: its chunk, then what the next shot opens on. Both are keyed by everything
     they were made of, so a shot already on disk is skipped and a re-rolled one moves its own key and
@@ -713,7 +677,6 @@ RUNNERS: dict[str, Runner] = {
     "grade": run_grade,
     "retime": run_retime,
     "render_shot": run_render_shot,
-    "refine_shot": run_refine_shot,
     "assemble": run_assemble,
     "enlarge_shot": run_enlarge_shot,
     "finish": run_finish,

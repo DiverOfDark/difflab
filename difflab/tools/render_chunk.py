@@ -229,8 +229,6 @@ def sample(
     on_step: Callable[[int, torch.Tensor, torch.Tensor], None] | None = None,
     last_latent: torch.Tensor | None = None,
     carry: pipeline.Carry | None = None,
-    init: Latents | None = None,
-    denoise: float = 1.0,
 ) -> Latents:
     """The denoising loop. ~78% of a render.
 
@@ -273,8 +271,6 @@ def sample(
                     last_frame_latent=last_latent,
                     resident=resident,
                     carry=carry,
-                    init=(init.video, init.audio) if init is not None else None,
-                    denoise=denoise,
                 )
             finally:
                 for hook in hooks:
@@ -477,45 +473,8 @@ def _conditions(
     return first_latent, conditioning, encoded, last_latent
 
 
-# The refine pass of noEmbryo's H3 Clip Refiner (ComfyUI-noEmbryo): its defaults, and its band split.
-REFINE_DENOISE, REFINE_STEPS, REFINE_DETAIL, REFINE_SIGMA = 0.4, 3, 1.0, 2.0
-
-
-def refined(
-    base: Latents,
-    chunk: Key,
-    opening: Frame | None,
-    references: Sequence[Frame] = (),
-    tail: Clip | None = None,
-    clips: Sequence[Clip] = (),
-    clip_scale: float = 1.0,
-    canvas_from: Frame | None = None,
-    closing: Frame | None = None,
-    carry: pipeline.Carry | None = None,
-    denoise: float = REFINE_DENOISE,
-    steps: int = REFINE_STEPS,
-    detail: float = REFINE_DETAIL,
-) -> Latents:
-    """`base` sampled again from `denoise` under its own conditioning, of which only the fine detail is
-    kept: each frame's low band, the scene, stays `base`'s, so nothing moves."""
-    made = key("refined", 1, chunk=str(chunk), denoise=denoise, steps=steps, detail=detail)
-    geometry = base.geometry
-
-    def produce() -> dict[str, torch.Tensor]:
-        held = [*clips, *([tail] if tail else [])]
-        first_latent, conditioning, encoded, last_latent = _conditions(
-            opening, base.prompt, base.settings, geometry, references, held, clip_scale, closing, carry
-        )
-        again = sample(
-            conditioning, first_latent, geometry, base.settings.with_(steps=steps), base.prompt, encoded,
-            last_latent=last_latent, carry=carry, init=base, denoise=denoise,
-        )  # fmt: skip
-        low, high = _bands(base.video)
-        _, redrawn = _bands(again.video)
-        return {"video": low + (1 - detail) * high + detail * redrawn, "audio": base.audio}
-
-    stored = default_cache.tensors(made, produce)
-    return Latents(stored["video"], stored["audio"], geometry, base.settings, base.prompt)
+# The band split of noEmbryo's H3 Clip Refiner (ComfyUI-noEmbryo).
+BAND_SIGMA = 2.0
 
 
 # The most a carried chunk is corrected by, either way. Measured drift was 3-4% a join; a tenfold margin.
@@ -544,9 +503,9 @@ def held_to(video: torch.Tensor, carried: torch.Tensor) -> torch.Tensor:
 
 def _bands(video: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     """`(low, high)` of each latent frame: a separable Gaussian blur, replicate-padded, and the rest."""
-    radius = round(3 * REFINE_SIGMA)
+    radius = round(3 * BAND_SIGMA)
     x = torch.arange(-radius, radius + 1, dtype=torch.float32)
-    kernel = torch.exp(-(x**2) / (2 * REFINE_SIGMA**2))
+    kernel = torch.exp(-(x**2) / (2 * BAND_SIGMA**2))
     kernel = kernel / kernel.sum()
     flat = video.float().reshape(-1, 1, *video.shape[-2:])
     low = torch.nn.functional.conv2d(
