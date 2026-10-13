@@ -178,6 +178,11 @@ class Exl3VL:
                 if not chain or chain[-1] in parts["disk"].states.on_disk:
                     continue
                 opening = ids[:, : len(chain) * PAGE_SIZE + 1]
+                # The MTP draft embeds the last token itself, and a picture's placeholder ids are past its
+                # vocabulary: an opening cut inside a picture failed the judge (IndexError, 2026-10-14).
+                last = int(opening[0, -1])
+                if any(embedding.first_index <= last < embedding.last_index for embedding in embeddings):
+                    continue
                 generator.enqueue(
                     Job(input_ids=opening, max_new_tokens=1, sampler=ArgmaxSampler(), embeddings=embeddings)
                 )
