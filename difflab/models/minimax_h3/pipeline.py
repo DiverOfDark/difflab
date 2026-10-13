@@ -272,7 +272,7 @@ class Carry:
     video: torch.Tensor  # [1, 24, k, h, w], k latent steps from a cycle start
     audio: torch.Tensor  # [1, 32, 2, n]
     audio_start: int  # where the first audio latent sits, in audio latents after the target's origin
-    audio_late: float = 0.0  # latents the carried sound lands after where its picture puts it, under 1/2
+    audio_late: float = 0.0  # latents this clip's soundtrack runs behind its latent's, the chain's sum: |x| <= 1/2
 
     @property
     def latent_frames(self) -> int:
@@ -283,14 +283,18 @@ class Carry:
         return int(self.audio.shape[-1])
 
 
-def carry_of(video: torch.Tensor, audio: torch.Tensor, frames: int, audio_latents: int) -> Carry:
+def carry_of(video: torch.Tensor, audio: torch.Tensor, frames: int, audio_latents: int, late: float = 0.0) -> Carry:
     """The last `frames` pixel frames of a clip's latents (`n % 17 == 5`) and its last `audio_latents`.
 
     The window starts on a cycle's one-frame latent, so its steps are the ones the next clip's first
-    steps are: copied, never decoded and encoded again. The sound sits on the audio grid nearest to its
-    offset from the picture, which the two grids only agree on every three frames: placed at a fraction,
-    H3 redrew it on the grid anyway (production 18, a third of a latent: 268 samples late at 0.925
-    correlation, -0.56 at the cut's own sample). `audio_late` is what the soundtrack is moved back by.
+    steps are: copied, never decoded and encoded again. The sound goes on the audio grid, which agrees
+    with the picture's only every three frames: placed at a fraction, H3 redrew it on the grid anyway
+    (production 18, a third of a latent: 268 samples late at 0.925 correlation, -0.56 at the cut).
+
+    So each soundtrack is moved back by what its sound landed late, and that adds up down a chain: the
+    clip before's soundtrack was itself moved by `late`, while what is carried is its latent. Rounding
+    toward the sum rather than the nearest keeps it within half a latent, 12.5 ms, however long the
+    chain; moving only by each join's own lateness put the next join out by 268 samples (-0.63).
     """
     steps = Geometry(0, 0, frames).latent_frames
     total = int(video.shape[2])
@@ -299,8 +303,8 @@ def carry_of(video: torch.Tensor, audio: torch.Tensor, frames: int, audio_latent
     clip_frames = (total - 2) // 5 * FRAME_CYCLE + FRAME_PHASE
     count = min(audio_latents, int(audio.shape[-1]))
     exact = int(audio.shape[-1]) - count - (clip_frames - frames) * _ROPE_FRAME_RESCALE
-    start = round(exact)
-    return Carry(video[:, :, total - steps :].clone(), audio[..., -count:].clone(), start, start - exact)
+    start = round(exact - late)
+    return Carry(video[:, :, total - steps :].clone(), audio[..., -count:].clone(), start, late + start - exact)
 
 
 def reference_size(width: int, height: int, geometry: Geometry, mode: str = "match") -> tuple[int, int]:

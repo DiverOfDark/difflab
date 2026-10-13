@@ -390,7 +390,11 @@ def chunk_key(
         clip_scale=clip_scale,
         **({"closing": closing.pixels} if closing is not None else {}),
         **({"canvas": canvas} if canvas is not None else {}),
-        **({"carry": [carry.video, carry.audio, float(carry.audio_start)], "held": 1} if carry is not None else {}),
+        **(
+            {"carry": [carry.video, carry.audio, float(carry.audio_start), carry.audio_late], "held": 1}
+            if carry is not None
+            else {}
+        ),
     )
 
 

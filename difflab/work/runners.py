@@ -126,7 +126,7 @@ def run_refine_shot(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
     """A rendered shot's latents through the refine pass (`render_chunk.refined`), decoded and held to
     the colour its chunk was held to. `inputs` are the shot's render inputs and its `latents`."""
     continuity, _ = Continuity.resolve(settings["continuity"])
-    carry = _carry(inputs.get("carry"), continuity.tail_frames)
+    carry = _carry(inputs.get("carry"), continuity.tail_frames, float(inputs.get("carry_late") or 0.0))
     seconds = float(inputs["seconds"]) + (continuity.tail_frames / h3_config.FPS if carry else 0.0)
     video = VideoSettings(**settings["video"]).with_(seed=int(inputs["seed"]), duration=seconds)
     opening = _frame(inputs["opening"]) if inputs.get("opening") else None
@@ -163,7 +163,7 @@ def run_render_shot(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
     they were made of, so a shot already on disk is skipped and a re-rolled one moves its own key and
     the key of every shot chained after it."""
     continuity, _ = Continuity.resolve(settings["continuity"])
-    carry = _carry(inputs.get("carry"), continuity.tail_frames)
+    carry = _carry(inputs.get("carry"), continuity.tail_frames, float(inputs.get("carry_late") or 0.0))
     # The carried steps are redrawn under the shot before's last frames and cut away at the join, so the
     # shot runs that much longer to keep its own seconds.
     seconds = float(inputs["seconds"]) + (continuity.tail_frames / h3_config.FPS if carry else 0.0)
@@ -202,6 +202,7 @@ def run_render_shot(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
         "audio": store.relative(soundtrack),
         "frame": store.relative(frame_file),
         "tail": store.relative(tail_file) if continuity.tail_frames and not carried_on else None,
+        "audio_late": carry.audio_late if carry is not None else 0.0,
     }
     events.emit(
         protocol.ItemInfo(
@@ -257,12 +258,13 @@ def run_render_shot(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
     return {**outputs, "cut": made.cut}
 
 
-def _carry(latents: Any, frames: int) -> pipeline.Carry | None:
-    """The shot before's last `frames` and second of sound, from its cached latents."""
+def _carry(latents: Any, frames: int, late: float) -> pipeline.Carry | None:
+    """The shot before's last `frames` and second of sound, from its cached latents; `late` is how far
+    behind them its soundtrack runs."""
     if not latents or not frames:
         return None
     sampled = torch.load(_path(latents), map_location="cpu", weights_only=True)
-    return pipeline.carry_of(sampled["video"], sampled["audio"], frames, h3_config.AUDIO_LATENT_FPS)
+    return pipeline.carry_of(sampled["video"], sampled["audio"], frames, h3_config.AUDIO_LATENT_FPS, late)
 
 
 def _canvas(size: Any) -> Frame:

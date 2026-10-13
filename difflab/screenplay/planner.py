@@ -303,7 +303,7 @@ def _queue_chapter(connection: Any, chapter_id: int, asked_by: str, keyframes_on
             "closing": openings[shot.position + 1] if lands[shot.position] else None,
             "prompt": productions.revised(clip.review, prompt.text),
             "tail": tail,
-            **({"carry": carry} if carry else {}),
+            **({"carry": carry, "carry_late": _output(previous, "audio_late")} if carry else {}),
             **({"carried_on": True} if shot.position + 1 < len(shots) and carried[shot.position + 1] else {}),
             "anchor": anchor,
             "seed": clip.seed,
