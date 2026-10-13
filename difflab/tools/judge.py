@@ -53,11 +53,11 @@ def judge(
     appearance: dict[str, str] | None = None,
 ) -> Verdict:
     """`kind` is keyframe or clip; `arrangement` is what should be seen, members as {id}; `pictures` are
-    members' own reference photos by id, shown after the frames so clothes are judged against them;
+    members' own reference photos by id, shown before the frames so clothes are judged against them;
     `looks` is what earlier shots changed about a member for good, and `becomes` what this one changes.
     `allowed` is what the bible lets differ from the photo, `appearance` a member's look as a person wrote it."""
     given = {slug: frame for slug, frame in (pictures or {}).items() if slug in {card.id for card in cast}}
-    numbered = {slug: len(frames) + n for n, slug in enumerate(given, 1)}
+    numbered = {slug: n for n, slug in enumerate(given, 1)}
     expected = {card.id for card in cast}
 
     def parse(data: Any) -> Verdict:
@@ -106,10 +106,13 @@ def judge(
         or "- nobody in particular",
         count=len(frames),
         fixes=words.JUDGE_FIXES_PICTURE if kind in PICTURES else words.JUDGE_FIXES_SCENE,
-        references=f", then {len(given)} reference photo(s)" if given else "",
+        references=f"First {len(given)} reference photo(s), then the shot. " if given else "",
     )
-    images = [direct.shrink(frame, h3.DIRECTOR_PHOTO_PIXELS) for frame in [*frames, *given.values()]]
-    data = direct.ask_json(words.JUDGE_SYSTEM, question, images, gate, f"judge · {kind}", settings.max_new_tokens)
+    # The photos lead so that every judging of the same cast opens the same way, which the VLM keeps on disk.
+    images = [direct.shrink(frame, h3.DIRECTOR_PHOTO_PIXELS) for frame in [*given.values(), *frames]]
+    data = direct.ask_json(
+        words.JUDGE_SYSTEM, question, images, gate, f"judge · {kind}", settings.max_new_tokens, steady=len(given)
+    )
     return parse(data)
 
 

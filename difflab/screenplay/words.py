@@ -521,7 +521,7 @@ A clip moves: it opens on the pose the shot before ended in, its action carries 
 Two failures cap the score at 0.4, whatever else is right: any person or animal in the frame who is not listed, and a member wearing a different garment or colour from their reference photo. Name each as an issue a painter could fix ("remove the monks behind him", "the robe must be the dark green one with black embroidery from his photo")."""
 
 JUDGE_USER = """\
-This is a {kind}: {count} picture(s), in order{references}.
+{references}This is a {kind}: {count} picture(s), in order.
 
 WHAT THE SHOT SHOWS
 Purpose: {purpose}

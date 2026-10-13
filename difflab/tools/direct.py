@@ -119,8 +119,10 @@ def ask(
     temperature: float = 0.0,
     seed: int = SEED,
     schema: dict[str, Any] | None = None,
+    steady: int = 0,
 ) -> str:
-    """One answer, uncached and unchecked: `ask_json` is the one that gates and keeps."""
+    """One answer, uncached and unchecked: `ask_json` is the one that gates and keeps. `steady` as in
+    `Exl3VL.ask`."""
     vlm: Exl3VL = models.registry.acquire(ask_vlm.spec(MODEL.get()))
     return vlm.ask(
         images,
@@ -135,6 +137,7 @@ def ask(
         echo=False,  # JSON for the gate, not for reading: the tally line shows where we are
         as_json=True,
         schema=schema,
+        steady=steady,
     )
 
 
@@ -189,6 +192,7 @@ def ask_json(
     settle: bool = True,
     repairs: int = h3.DIRECTOR_REPAIRS,
     schema: dict[str, Any] | None = None,
+    steady: int = 0,
 ) -> Any:
     """Ask, check, and on failure ask again with the gate's own messages as the instructions.
 
@@ -230,7 +234,7 @@ def ask_json(
             fresh = attempt or failures or take
             warmth = max(temperature, h3.DIRECTOR_REPAIR_TEMPERATURE) if fresh else temperature
             seed = (SEED + attempt + failures * (repairs + 1) + take * 1000) % 2**32  # the sampler's range
-            raw = ask(system, asked, images, heading, tokens, warmth, seed, schema)
+            raw = ask(system, asked, images, heading, tokens, warmth, seed, schema, steady)
             # Shown its answer and told to keep what the issues do not name, the model has copied all
             # 2,185 characters of it back on a new seed; the same words fail the same way.
             if raw.strip() == before:
