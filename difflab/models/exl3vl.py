@@ -177,12 +177,13 @@ class Exl3VL:
                 chain = kvdisk.anchors(ids, end // PAGE_SIZE)
                 if not chain or chain[-1] in parts["disk"].states.on_disk:
                     continue
-                opening = ids[:, : len(chain) * PAGE_SIZE + 1]
+                opening = ids[:, : len(chain) * PAGE_SIZE + 1].clone()
                 # The MTP draft embeds the last token itself, and a picture's placeholder ids are past its
-                # vocabulary: an opening cut inside a picture failed the judge (IndexError, 2026-10-14).
-                last = int(opening[0, -1])
-                if any(embedding.first_index <= last < embedding.last_index for embedding in embeddings):
-                    continue
+                # vocabulary: an opening cut inside a picture failed the judge (IndexError, 2026-10-14). That
+                # token is past the checkpoint, so a text one stands in; the draft's KV at the cut is the only
+                # thing it moves, and the model still checks every draft.
+                if opening[0, -1] >= FIRST_MM_EMBEDDING_INDEX:
+                    opening[0, -1] = parts["thought"]
                 generator.enqueue(
                     Job(input_ids=opening, max_new_tokens=1, sampler=ArgmaxSampler(), embeddings=embeddings)
                 )
