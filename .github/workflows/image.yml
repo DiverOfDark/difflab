@@ -63,9 +63,14 @@ jobs:
             type=sha,prefix=
 
       - uses: docker/build-push-action@v6
+        env:
+          # With rewrite-timestamp, an unchanged file is the same bytes in every build, so an environment
+          # layer whose files did not change keeps its digest and no host pulls it twice.
+          SOURCE_DATE_EPOCH: 0
         with:
           context: .
-          push: true
+          # zstd unpacks a multi-gigabyte layer several times faster than gzip, which is single-threaded.
+          outputs: type=registry,compression=zstd,force-compression=true,rewrite-timestamp=true,oci-mediatypes=true
           # Six architectures per CUTLASS unit: two at a time inside each of six nvcc jobs keeps it to
           # twelve compilers.
           build-args: |
@@ -74,10 +79,9 @@ jobs:
             NVCC_THREADS=2
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # The last image is the layer cache: every layer is in it, so an unchanged environment is
-          # referred to rather than rebuilt.
-          cache-from: type=registry,ref=ghcr.io/diverofdark/difflab:latest
-          cache-to: type=inline
+          # The build stage is not in the image, so the layer cache is a tag of its own, every stage in it.
+          cache-from: type=registry,ref=ghcr.io/diverofdark/difflab:buildcache
+          cache-to: type=registry,ref=ghcr.io/diverofdark/difflab:buildcache,mode=max,compression=zstd
 
       # Pushed only when the build changed the mount, which it does only when the environment layer
       # was rebuilt.
