@@ -14,7 +14,7 @@ type Tab = "run" | "results" | "settings";
 const loaded = ref(false);
 const wizard = ref(false);
 const tab = ref<Tab>("run");
-const status = ref<Status>({ phase: "none", kind: null, gpu: "", usd: 0, usd_per_hour: 0, uptime_s: 0, draining: false, message: "", progress: null });
+const status = ref<Status>({ phase: "none", kind: null, gpu: "", usd: 0, usd_per_hour: 0, uptime_s: 0, draining: false, message: "", progress: null, slow: false });
 const prefs = reactive<Prefs>({ idle_minutes: 5, stuck_minutes: 15, spend_limit_usd: 5, exit_when_done: false, auto_download: true, results_dir: "", setup_done: false });
 const hasKey = ref(false);
 const hasLocal = ref(false);
@@ -156,6 +156,11 @@ const start = (kind: Kind) =>
   });
 const stopNow = () => act("stop", () => api.stop(true));
 const stopWhenDone = () => act("drain", () => api.stop(false));
+const retryMachine = () =>
+  act("retry", async () => {
+    logLines.value = [];
+    await api.retryMachine();
+  });
 const openUi = () => act("open", () => api.openUi());
 const openResults = () => act("folder", () => api.openResults());
 const download = () =>
@@ -237,6 +242,7 @@ onMounted(async () => {
             <p v-if="status.message" class="band" :class="status.phase === 'error' ? 'error' : 'hint'">{{ status.message }}</p>
 
             <div v-if="running" class="buttons">
+              <button v-if="status.slow" class="primary" :disabled="!!busy" @click="retryMachine"><i v-if="busy === 'retry'" class="spin" />{{ busy === "retry" ? "Starting another…" : "Try another machine" }}</button>
               <button class="primary" :disabled="status.phase !== 'ready' || !!busy" @click="openUi"><i v-if="busy === 'open'" class="spin" />Open DiffLab</button>
               <button v-if="status.kind === 'runpod' && !status.draining" :disabled="!!busy" @click="stopWhenDone"><i v-if="busy === 'drain'" class="spin" />Stop when queue is done</button>
               <button class="danger" :disabled="!!busy" @click="stopNow"><i v-if="busy === 'stop'" class="spin" />{{ busy === "stop" ? "Stopping…" : "Stop now" }}</button>

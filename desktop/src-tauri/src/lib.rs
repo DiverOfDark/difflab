@@ -23,6 +23,9 @@ const BALANCE_EVERY: i64 = 60;
 const VERSIONS_EVERY: i64 = 6 * 3600;
 const LOG_KEEP: usize = 2000;
 const SYNC_EVERY: i64 = 60;
+// A first pod answered 118 s after creation (4090, EU-RO-1); one whose host retried a 2 GB layer for
+// 7 minutes (3090, EU-CZ-1) never got there. Past this the user is offered another machine.
+const SLOW_BOOT_S: i64 = 480;
 const NOISE: [&str; 2] = ["/api/pod/heartbeat", "GET /api/gpu"];
 const RESULT_PREFIXES: [&str; 2] = ["images/", "videos/"];
 
@@ -37,6 +40,7 @@ struct Status {
     draining: bool,
     message: String,
     progress: Option<f64>,
+    slow: bool,
 }
 
 #[derive(Serialize, Clone, Default)]
@@ -58,6 +62,9 @@ struct Inner {
     // std rather than tokio locks: the log readers fill them from synchronous callbacks.
     logs: std::sync::Mutex<std::collections::VecDeque<runpod::LogLine>>,
     boot: std::sync::Mutex<Option<local::Pulled>>,
+    // The host's registry pull failed and is being retried, or the container has started.
+    retrying: std::sync::Mutex<bool>,
+    container_started: std::sync::Mutex<bool>,
     follower: std::sync::Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
     tray_status: std::sync::Mutex<Option<tauri::menu::MenuItem<tauri::Wry>>>,
     syncing: Mutex<()>,
@@ -314,6 +321,16 @@ impl Inner {
             if session.kind == Kind::Runpod {
                 status.usd = status.uptime_s as f64 / 3600.0 * session.usd_per_hour;
             }
+            let pulling = session.kind == Kind::Runpod && !*self.container_started.lock().unwrap();
+            let retrying = *self.retrying.lock().unwrap();
+            if pulling && (retrying || status.uptime_s > SLOW_BOOT_S) {
+                status.slow = true;
+                status.message = format!(
+                    "This machine is slow to download DiffLab ({} min{}). A new pod usually lands on another machine and is up in about 2 minutes.",
+                    status.uptime_s / 60,
+                    if retrying { ", its download keeps failing and retrying" } else { "" }
+                );
+            }
             if status.message.is_empty() {
                 let boot = self.boot.lock().unwrap().clone();
                 (status.message, status.progress) = match (boot, &session.kind) {
@@ -342,10 +359,15 @@ async fn follow_pod(app: &AppHandle, inner: &Inner, session: &Session) {
             .follow_logs(&session.pod_id, from.as_deref(), |id, line| {
                 cursor = Some(id);
                 if line.source == "system" {
+                    if line.line.contains("Retrying in") {
+                        *inner.retrying.lock().unwrap() = true;
+                    }
                     if let Some(pulled) = tracker.feed(&line.line) {
                         *inner.boot.lock().unwrap() = Some(pulled);
                     }
                 } else {
+                    *inner.container_started.lock().unwrap() = true;
+                    *inner.retrying.lock().unwrap() = false;
                     *inner.boot.lock().unwrap() = Some(local::Pulled {
                         message: "Starting the server…".into(),
                         progress: None,
@@ -528,6 +550,8 @@ async fn start(app: AppHandle, inner: State<'_, Shared>, kind: Kind) -> Result<(
     }
     inner.logs.lock().unwrap().clear();
     *inner.boot.lock().unwrap() = None;
+    *inner.retrying.lock().unwrap() = false;
+    *inner.container_started.lock().unwrap() = false;
     let starting = Status {
         phase: "starting".into(),
         kind: Some(kind.clone()),
@@ -701,6 +725,22 @@ async fn stop_now(app: &AppHandle, inner: &Shared, immediately: bool) -> Result<
         .end(&app, format!("Stopped by you, ${usd:.2}.{note}"))
         .await;
     Ok(())
+}
+
+/// Deletes a pod whose host is failing to pull the image and asks RunPod for another.
+#[tauri::command]
+async fn retry_machine(app: AppHandle, inner: State<'_, Shared>) -> Result<(), String> {
+    if let Some(session) = inner
+        .session
+        .lock()
+        .await
+        .clone()
+        .filter(|s| s.kind == Kind::Runpod)
+    {
+        inner.runpod()?.delete_pod(&session.pod_id).await?;
+    }
+    inner.end(&app, String::new()).await;
+    start(app, inner, Kind::Runpod).await
 }
 
 #[tauri::command]
@@ -1162,6 +1202,8 @@ pub fn run() {
                 versions: Mutex::new(Versions::default()),
                 logs: std::sync::Mutex::new(Default::default()),
                 boot: std::sync::Mutex::new(None),
+                retrying: std::sync::Mutex::new(false),
+                container_started: std::sync::Mutex::new(false),
                 follower: std::sync::Mutex::new(None),
                 tray_status: std::sync::Mutex::new(None),
                 syncing: Mutex::new(()),
@@ -1202,6 +1244,7 @@ pub fn run() {
             save_settings,
             start,
             stop,
+            retry_machine,
             open_ui,
             sync_results,
             open_results,

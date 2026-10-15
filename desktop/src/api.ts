@@ -12,6 +12,7 @@ export interface Status {
   draining: boolean;
   message: string;
   progress: number | null;
+  slow: boolean;
 }
 
 export interface Prefs {
@@ -57,6 +58,7 @@ export const saveSettings = (prefs: Prefs, secrets: Secrets = {}) =>
   });
 export const start = (kind: Kind) => invoke("start", { kind });
 export const stop = (immediately: boolean) => invoke("stop", { immediately });
+export const retryMachine = () => invoke("retry_machine");
 export const openUi = () => invoke("open_ui");
 export const syncResults = () => invoke<string>("sync_results");
 export const openResults = () => invoke("open_results");
