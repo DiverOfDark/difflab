@@ -19,6 +19,7 @@ export interface Prefs {
   stuck_minutes: number;
   spend_limit_usd: number;
   exit_when_done: boolean;
+  auto_download: boolean;
   results_dir: string;
   setup_done: boolean;
 }
@@ -39,6 +40,7 @@ export interface Loaded {
   status: Status;
   results_dir: string;
   balance: number | null;
+  last_synced: string;
 }
 
 export interface Secrets {

@@ -22,6 +22,7 @@ const HEARTBEAT: Duration = Duration::from_secs(10);
 const BALANCE_EVERY: i64 = 60;
 const VERSIONS_EVERY: i64 = 6 * 3600;
 const LOG_KEEP: usize = 2000;
+const SYNC_EVERY: i64 = 60;
 const NOISE: [&str; 2] = ["/api/pod/heartbeat", "GET /api/gpu"];
 const RESULT_PREFIXES: [&str; 2] = ["images/", "videos/"];
 
@@ -59,6 +60,9 @@ struct Inner {
     boot: std::sync::Mutex<Option<local::Pulled>>,
     follower: std::sync::Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
     tray_status: std::sync::Mutex<Option<tauri::menu::MenuItem<tauri::Wry>>>,
+    syncing: Mutex<()>,
+    synced_at: std::sync::Mutex<i64>,
+    last_synced: std::sync::Mutex<String>,
 }
 
 type Shared = Arc<Inner>;
@@ -138,6 +142,9 @@ impl Inner {
         }
         if draining {
             body["drain"] = json!(true);
+        }
+        if self.syncing.try_lock().is_err() {
+            body["hold"] = json!(true);
         }
         let response = self
             .http
@@ -287,6 +294,13 @@ impl Inner {
             status.phase = "ready".into();
             status.usd = answer["usd"].as_f64().unwrap_or(0.0);
             let ending = answer["ending"].as_str().unwrap_or("").to_string();
+            let due = now() - *self.synced_at.lock().unwrap() >= SYNC_EVERY;
+            // The watchdog's announcement is the last tick the pod's files can be fetched in.
+            if session.kind == Kind::Runpod
+                && (due || (!ending.is_empty() && session.ending.is_empty()))
+            {
+                sync_soon(app, app.state::<Shared>().inner());
+            }
             if ending != session.ending {
                 session.ending = ending;
                 let _ = self.store.save_session(Some(&session));
@@ -387,6 +401,7 @@ struct Loaded {
     status: Status,
     results_dir: String,
     balance: Option<f64>,
+    last_synced: String,
 }
 
 fn results_dir(app: &AppHandle, prefs: &Prefs) -> PathBuf {
@@ -405,6 +420,7 @@ async fn load(app: AppHandle, inner: State<'_, Shared>) -> Result<Loaded, String
         status: inner.status.lock().await.clone(),
         results_dir: results_dir(&app, &prefs).display().to_string(),
         balance: inner.balance.lock().await.1,
+        last_synced: inner.last_synced.lock().unwrap().clone(),
         prefs,
     })
 }
@@ -658,12 +674,32 @@ async fn stop_now(app: &AppHandle, inner: &Shared, immediately: bool) -> Result<
         inner.tick(&app).await;
         return Ok(());
     }
+    let mut note = String::new();
+    if session.kind == Kind::Runpod
+        && inner.status.lock().await.phase == "ready"
+        && inner.store.prefs().auto_download
+    {
+        inner
+            .set(
+                &app,
+                Status {
+                    message: "Downloading results before stopping…".into(),
+                    ..inner.status.lock().await.clone()
+                },
+            )
+            .await;
+        if let Err(problem) = sync_pod(&app, inner, false).await {
+            note = format!(" Results could not be downloaded first: {problem}");
+        }
+    }
     match session.kind {
         Kind::Runpod => inner.runpod()?.delete_pod(&session.pod_id).await?,
         Kind::Local => local::stop().await?,
     }
     let usd = inner.status.lock().await.usd;
-    inner.end(&app, format!("Stopped by you, ${usd:.2}.")).await;
+    inner
+        .end(&app, format!("Stopped by you, ${usd:.2}.{note}"))
+        .await;
     Ok(())
 }
 
@@ -755,11 +791,103 @@ struct SyncProgress {
     file: String,
 }
 
+/// Copies what the running pod made and this PC lacks into the results folder's RunPod/. One at a time:
+/// the minute timer, the shutdown announcement and Stop can all ask at once.
+async fn sync_pod(app: &AppHandle, inner: &Shared, report: bool) -> Result<usize, String> {
+    let _one = inner.syncing.lock().await;
+    let Some(session) = inner
+        .session
+        .lock()
+        .await
+        .clone()
+        .filter(|s| s.kind == Kind::Runpod)
+    else {
+        return Ok(0);
+    };
+    let dir = results_dir(app, &inner.store.prefs()).join("RunPod");
+    let listed: Vec<Value> = inner
+        .http
+        .get(format!("{}/api/results", session.base_url))
+        .bearer_auth(&session.token)
+        .timeout(Duration::from_secs(30))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .json()
+        .await
+        .map_err(|e| format!("the pod's results list: {e}"))?;
+    let wanted: Vec<(String, PathBuf)> = listed
+        .iter()
+        .filter_map(|r| {
+            let (key, size) = (r["path"].as_str()?, r["size"].as_u64()?);
+            let to = dir.join(key);
+            (std::fs::metadata(&to).map(|m| m.len()).ok() != Some(size))
+                .then(|| (key.to_string(), to))
+        })
+        .collect();
+    let total = wanted.len();
+    for (done, (key, to)) in wanted.iter().enumerate() {
+        if report {
+            let _ = app.emit(
+                "sync",
+                SyncProgress {
+                    done,
+                    total,
+                    file: key.clone(),
+                },
+            );
+        }
+        download(
+            &inner.http,
+            &format!("{}/output/{key}", session.base_url),
+            &session.token,
+            to,
+        )
+        .await?;
+    }
+    if total > 0 {
+        *inner.last_synced.lock().unwrap() = format!(
+            "{total} new from RunPod at {}",
+            chrono::Local::now().format("%H:%M")
+        );
+        let _ = app.emit("synced", inner.last_synced.lock().unwrap().clone());
+        if !report {
+            let body = format!(
+                "{total} new file{} in {}",
+                if total == 1 { "" } else { "s" },
+                dir.display()
+            );
+            let _ = app
+                .notification()
+                .builder()
+                .title("DiffLab results downloaded")
+                .body(body)
+                .show();
+        }
+    }
+    Ok(total)
+}
+
+/// In the background, so the tick's heartbeat never waits on a download.
+fn sync_soon(app: &AppHandle, inner: &Shared) {
+    if !inner.store.prefs().auto_download {
+        return;
+    }
+    *inner.synced_at.lock().unwrap() = now();
+    let (app, inner) = (app.clone(), inner.clone());
+    tauri::async_runtime::spawn(async move {
+        if let Err(problem) = sync_pod(&app, &inner, false).await {
+            *inner.last_synced.lock().unwrap() = format!("Automatic download failed: {problem}");
+            let _ = app.emit("synced", inner.last_synced.lock().unwrap().clone());
+        }
+    });
+}
+
 #[tauri::command]
 async fn sync_results(app: AppHandle, inner: State<'_, Shared>) -> Result<String, String> {
     let dir = results_dir(&app, &inner.store.prefs());
-    // Kept apart, so the two can never overwrite each other's file of the same name.
-    let (here, pod) = (dir.join("This PC"), dir.join("RunPod"));
+    // Kept apart from RunPod/, so the two can never overwrite each other's file of the same name.
+    let here = dir.join("This PC");
     let missing = |base: &std::path::Path, key: &str, size: u64| {
         let to = base.join(key);
         let have = std::fs::metadata(&to).map(|m| m.len()).ok();
@@ -786,49 +914,21 @@ async fn sync_results(app: AppHandle, inner: State<'_, Shared>) -> Result<String
         local::copy_results(&wanted, |done, key| progress(done, total, key)).await?;
         copied += total;
     }
-    // A global volume has no S3 API, so RunPod's results come from the pod while it is up.
-    let session = inner
-        .session
-        .lock()
-        .await
-        .clone()
-        .filter(|s| s.kind == Kind::Runpod);
-    let ready = inner.status.lock().await.phase == "ready";
-    match session {
-        Some(session) if ready => {
-            let listed: Vec<Value> = inner
-                .http
-                .get(format!("{}/api/results", session.base_url))
-                .bearer_auth(&session.token)
-                .send()
-                .await
-                .map_err(|e| e.to_string())?
-                .json()
-                .await
-                .map_err(|e| format!("the pod's results list: {e}"))?;
-            let wanted: Vec<_> = listed
-                .iter()
-                .filter_map(|r| missing(&pod, r["path"].as_str()?, r["size"].as_u64()?))
-                .collect();
-            let total = wanted.len();
-            for (done, (key, to)) in wanted.into_iter().enumerate() {
-                progress(done, total, &key);
-                download(
-                    &inner.http,
-                    &format!("{}/output/{key}", session.base_url),
-                    &session.token,
-                    &to,
-                )
-                .await?;
-            }
-            copied += total;
-        }
-        _ if !local::has_results().await => {
-            return Err(
-                "Nothing to download yet. RunPod results download while a pod is running.".into(),
-            );
-        }
-        _ => {}
+    // A global volume has no S3 API (checked: its id is refused like a bucket that does not exist), so
+    // RunPod's results come from the pod while it is up.
+    let pod_up = inner.status.lock().await.phase == "ready"
+        && inner
+            .session
+            .lock()
+            .await
+            .as_ref()
+            .is_some_and(|s| s.kind == Kind::Runpod);
+    if pod_up {
+        copied += sync_pod(&app, inner.inner(), true).await?;
+    } else if !local::has_results().await {
+        return Err(
+            "Nothing to download yet. RunPod results download while a pod is running.".into(),
+        );
     }
     progress(copied, copied, "");
     Ok(if copied == 0 {
@@ -1064,6 +1164,9 @@ pub fn run() {
                 boot: std::sync::Mutex::new(None),
                 follower: std::sync::Mutex::new(None),
                 tray_status: std::sync::Mutex::new(None),
+                syncing: Mutex::new(()),
+                synced_at: std::sync::Mutex::new(0),
+                last_synced: std::sync::Mutex::new(String::new()),
                 store,
                 http: reqwest::Client::new(),
             });

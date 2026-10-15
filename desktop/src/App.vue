@@ -15,7 +15,7 @@ const loaded = ref(false);
 const wizard = ref(false);
 const tab = ref<Tab>("run");
 const status = ref<Status>({ phase: "none", kind: null, gpu: "", usd: 0, usd_per_hour: 0, uptime_s: 0, draining: false, message: "", progress: null });
-const prefs = reactive<Prefs>({ idle_minutes: 5, stuck_minutes: 15, spend_limit_usd: 5, exit_when_done: false, results_dir: "", setup_done: false });
+const prefs = reactive<Prefs>({ idle_minutes: 5, stuck_minutes: 15, spend_limit_usd: 5, exit_when_done: false, auto_download: true, results_dir: "", setup_done: false });
 const hasKey = ref(false);
 const hasLocal = ref(false);
 const balance = ref<number | null>(null);
@@ -27,6 +27,7 @@ const error = ref("");
 const saved = ref(false);
 const sync = ref<{ done: number; total: number; file: string } | null>(null);
 const syncNote = ref("");
+const lastSynced = ref("");
 const versions = ref<Versions | null>(null);
 const logLines = ref<LogLine[]>([]);
 const logBox = ref<HTMLElement | null>(null);
@@ -107,6 +108,7 @@ async function reload() {
   status.value = got.status;
   resultsDir.value = got.results_dir;
   balance.value = got.balance;
+  lastSynced.value = got.last_synced;
 }
 
 async function act(label: string, fn: () => Promise<unknown>) {
@@ -166,6 +168,7 @@ onMounted(async () => {
   await listen<LogLine>("log", (e) => addLog(e.payload));
   logLines.value = (await api.logs()).slice(-LOG_SHOWN);
   await listen<number | null>("balance", (e) => (balance.value = e.payload));
+  await listen<string>("synced", (e) => (lastSynced.value = e.payload));
   await listen<{ done: number; total: number; file: string }>("sync", (e) => (sync.value = e.payload));
   await listen<Omit<Versions, "app" | "running_image">>("versions", (e) => {
     if (versions.value) versions.value = { ...versions.value, ...e.payload };
@@ -274,7 +277,8 @@ onMounted(async () => {
               <p class="note mono">{{ sync.done }} / {{ sync.total }} · {{ sync.file }}</p>
             </template>
             <p v-else-if="syncNote" class="band hint">{{ syncNote }}</p>
-            <p class="note">Results made on this PC are copied from Docker; RunPod's download while a GPU is running there.</p>
+            <p v-if="lastSynced" class="note mono">{{ lastSynced }}</p>
+            <p class="note">Results made on this PC are copied from Docker when you press Download. RunPod's download {{ prefs.auto_download ? "by themselves every minute while a GPU runs, and once more before it stops" : "while a GPU runs there" }}.</p>
           </div>
         </section>
 
@@ -299,6 +303,7 @@ onMounted(async () => {
               </div>
             </div>
             <label class="check"><input v-model="prefs.exit_when_done" type="checkbox" /> Stop as soon as the queue is done</label>
+            <label class="check"><input v-model="prefs.auto_download" type="checkbox" /> Download RunPod results automatically</label>
             <label class="field"><span class="label">Results folder</span>
               <div class="row"><input :value="resultsDir" readonly /><button @click="chooseFolder">Choose…</button></div>
             </label>

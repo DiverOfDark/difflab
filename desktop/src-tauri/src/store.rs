@@ -12,6 +12,7 @@ pub struct Prefs {
     pub stuck_minutes: f64,
     pub spend_limit_usd: f64,
     pub exit_when_done: bool,
+    pub auto_download: bool,
     pub results_dir: String,
     pub setup_done: bool,
 }
@@ -23,6 +24,7 @@ impl Default for Prefs {
             stuck_minutes: 15.0,
             spend_limit_usd: 5.0,
             exit_when_done: false,
+            auto_download: true,
             results_dir: String::new(),
             setup_done: false,
         }

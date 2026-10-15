@@ -26,14 +26,20 @@ _drain = False  # the app's "stop when the queue is done"
 # Why the pod is about to go, in every heartbeat answer for one tick before it does: the volume is no
 # longer readable from the desktop once the pod is gone, so this is how the app learns the reason.
 _ending = ""
+# The app is still downloading results: deletion waits until this passes. Renewed by each heartbeat
+# while the download runs, so an app that quits mid-download holds the pod one minute at most.
+_held_until = 0.0
+HOLD = 60.0
 
 
-def beat(usd_per_hour: float | None = None, drain: bool = False) -> dict[str, Any]:
-    global _heard, _rate, _drain
+def beat(usd_per_hour: float | None = None, drain: bool = False, hold: bool = False) -> dict[str, Any]:
+    global _heard, _rate, _drain, _held_until
     _heard = time.time()
     if usd_per_hour:
         _rate = usd_per_hour
     _drain = _drain or drain
+    if hold:
+        _held_until = time.time() + HOLD
     return state()
 
 
@@ -69,8 +75,10 @@ class Watchdog(threading.Thread):
             # Asked again a tick later: work queued in between keeps the pod.
             if not verdict:
                 _announce("")
-            elif _ending:
+            elif _ending and time.time() >= _held_until:
                 _end(verdict)
+            elif _ending:
+                print("difflab: the app is still downloading results; deleting after it", flush=True)
             else:
                 _announce(verdict)
 
