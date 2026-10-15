@@ -1,0 +1,16 @@
+# DiffLab desktop
+
+Starts difflab on this PC (Docker, a 24 GB NVIDIA card, 64 GB RAM) or on a RunPod pod, opens its page,
+and downloads the results. The pod deletes itself (`difflab/work/watchdog.py`), so closing the app never
+leaves a GPU billing.
+
+    npm install
+    npm run tauri dev        # or: npm run tauri build
+
+Linux needs the WebKitGTK 4.1 headers to build (`webkit2gtk4.1-devel` on Fedora). On an immutable
+Fedora (Bazzite, Silverblue) build in a toolbox; the binary runs on the host. Installers for Windows,
+macOS and Linux come from the `desktop` workflow, run by hand.
+
+What a RunPod user needs: an API key, and an S3 API key (Settings → S3 API Keys) so results download
+with no pod running. The first pod creates a 150 GB network volume named `difflab` in the chosen region;
+the first render on it downloads ~96 GB of weights.
