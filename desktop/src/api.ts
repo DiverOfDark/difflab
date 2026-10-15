@@ -64,6 +64,7 @@ export const stop = (immediately: boolean) => invoke("stop", { immediately });
 export const openUi = () => invoke("open_ui");
 export const syncResults = () => invoke<string>("sync_results");
 export const openResults = () => invoke("open_results");
+export const openLink = (url: string) => invoke("open_link", { url });
 
 export const usd = (n: number) => `$${n.toFixed(2)}`;
 

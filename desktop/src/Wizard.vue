@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from "vue";
-import { openUrl } from "@tauri-apps/plugin-opener";
-import { balance, saveSettings, usd, type Hardware, type Kind, type Prefs } from "./api";
+import { balance, openLink as openUrl, saveSettings, usd, type Hardware, type Kind, type Prefs } from "./api";
 
 const props = defineProps<{ prefs: Prefs; hardware: Hardware | null; datacenters: string[]; hasKey: boolean }>();
 const emit = defineEmits<{ done: [kind: Kind] }>();

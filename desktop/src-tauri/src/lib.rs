@@ -661,6 +661,26 @@ async fn open_results(app: AppHandle, inner: State<'_, Shared>) -> Result<(), St
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+async fn open_link(app: AppHandle, url: String) -> Result<(), String> {
+    if !url.starts_with("https://") {
+        return Err("only https links open".into());
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let _ = app;
+        local::command("xdg-open")
+            .arg(&url)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| format!("could not open {url}: {e}"))
+    }
+    #[cfg(not(target_os = "linux"))]
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -710,7 +730,8 @@ pub fn run() {
             stop,
             open_ui,
             sync_results,
-            open_results
+            open_results,
+            open_link
         ])
         .run(tauri::generate_context!())
         .expect("error while running DiffLab");
