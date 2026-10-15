@@ -121,8 +121,8 @@ impl Inner {
     }
 
     async fn end(&self, app: &AppHandle, message: String) {
-        if let Some(window) = app.get_webview_window("ui") {
-            let _ = window.close();
+        for window in studio_windows(app) {
+            let _ = window.destroy();
         }
         if let Some(follower) = self.follower.lock().unwrap().take() {
             follower.abort();
@@ -765,9 +765,14 @@ async fn open_studio(app: &AppHandle, inner: &Shared) -> Result<(), String> {
         .await
         .clone()
         .ok_or("difflab is not running")?;
-    if let Some(window) = app.get_webview_window("ui") {
-        bring_forward(&window);
-        return Ok(());
+    // A studio window closed by its title bar can linger under its label without being on screen,
+    // so only a visible one is reused; the rest are dropped and the new one takes a label of its own.
+    for window in studio_windows(&app) {
+        if window.is_visible().unwrap_or(false) {
+            bring_forward(&window);
+            return Ok(());
+        }
+        let _ = window.destroy();
     }
     let url = format!("{}/auth?token={}", session.base_url, session.token);
     let dir = results_dir(&app, &inner.store.prefs());
@@ -776,7 +781,7 @@ async fn open_studio(app: &AppHandle, inner: &Shared) -> Result<(), String> {
     let opener = app.clone();
     WebviewWindowBuilder::new(
         &app,
-        "ui",
+        format!("ui-{}", chrono::Utc::now().timestamp_millis()),
         WebviewUrl::External(url.parse().map_err(|e| format!("{e}"))?),
     )
     .title("DiffLab")
@@ -1105,6 +1110,14 @@ async fn open_link(app: AppHandle, url: String) -> Result<(), String> {
     app.opener()
         .open_url(url, None::<&str>)
         .map_err(|e| e.to_string())
+}
+
+fn studio_windows(app: &AppHandle) -> Vec<tauri::WebviewWindow> {
+    app.webview_windows()
+        .into_iter()
+        .filter(|(label, _)| label.starts_with("ui"))
+        .map(|(_, window)| window)
+        .collect()
 }
 
 fn show_main(app: &AppHandle) {
