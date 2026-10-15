@@ -6,8 +6,9 @@ const props = defineProps<{ prefs: Prefs; hardware: Hardware | null; datacenters
 const emit = defineEmits<{ done: [kind: Kind] }>();
 
 const RUNPOD_SIGNUP = "https://runpod.io?ref=cazj8c05";
-const RUNPOD_KEYS = "https://www.runpod.io/console/user/settings?ref=cazj8c05";
-const RUNPOD_BILLING = "https://www.runpod.io/console/user/billing?ref=cazj8c05";
+const RUNPOD_KEYS = "https://console.runpod.io/user/credentials?tab=api-key&ref=cazj8c05";
+const RUNPOD_CREDENTIALS = "https://console.runpod.io/user/credentials?ref=cazj8c05";
+const RUNPOD_BILLING = "https://console.runpod.io/user/billing?ref=cazj8c05";
 
 const kind = ref<Kind | null>(null);
 const step = ref(0);
@@ -99,7 +100,7 @@ async function next() {
       <ol class="how">
         <li>Create an account at <a href="#" @click.prevent="openUrl(RUNPOD_SIGNUP)">runpod.io</a>.</li>
         <li>Add credit under <a href="#" @click.prevent="openUrl(RUNPOD_BILLING)">Billing</a>. $10 is enough to try it.</li>
-        <li>Under <a href="#" @click.prevent="openUrl(RUNPOD_KEYS)">Settings → API Keys</a>, create a key with <em>All</em> access and paste it here.</li>
+        <li>Under <a href="#" @click.prevent="openUrl(RUNPOD_KEYS)">Credentials → API Keys</a>, create a key with <em>All</em> access and paste it here.</li>
       </ol>
       <label class="field">
         <span class="label">API key</span>
@@ -125,7 +126,7 @@ async function next() {
       </label>
       <div>
         <h3>Download results without a GPU <span class="pill waiting">optional</span></h3>
-        <p class="muted">With an S3 key the app can copy finished videos to this PC even when no GPU is running. RunPod only lets you create one on its site: open Settings → S3 API Keys, create one, and paste the key that starts with rps_. You can add it later in Settings.</p>
+        <p class="muted">With an S3 key the app can copy finished videos to this PC even when no GPU is running. RunPod only lets you create one on its site: open <a href="#" @click.prevent="openUrl(RUNPOD_CREDENTIALS)">Credentials → S3 API Keys</a>, create one, and paste the key that starts with rps_. You can add it later in Settings.</p>
       </div>
       <label class="field"><span class="label">S3 key</span><input v-model="secrets.s3Secret" type="password" placeholder="rps_…" /></label>
     </section>
