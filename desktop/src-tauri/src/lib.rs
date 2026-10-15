@@ -766,7 +766,8 @@ async fn open_studio(app: &AppHandle, inner: &Shared) -> Result<(), String> {
         .clone()
         .ok_or("difflab is not running")?;
     if let Some(window) = app.get_webview_window("ui") {
-        return window.set_focus().map_err(|e| e.to_string());
+        bring_forward(&window);
+        return Ok(());
     }
     let url = format!("{}/auth?token={}", session.base_url, session.token);
     let dir = results_dir(&app, &inner.store.prefs());
@@ -1108,10 +1109,19 @@ async fn open_link(app: AppHandle, url: String) -> Result<(), String> {
 
 fn show_main(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
-        let _ = window.show();
-        let _ = window.unminimize();
-        let _ = window.set_focus();
+        bring_forward(&window);
     }
+}
+
+/// KDE on Wayland refuses focus to a window that asks without an activation token, which the tray
+/// does not hand over, so a window already open stays behind. Mapping it again puts it in front.
+fn bring_forward(window: &tauri::WebviewWindow) {
+    if window.is_visible().unwrap_or(false) {
+        let _ = window.hide();
+    }
+    let _ = window.unminimize();
+    let _ = window.show();
+    let _ = window.set_focus();
 }
 
 /// Like JetBrains Toolbox: closing the window leaves DiffLab in the tray, where a running pod keeps
