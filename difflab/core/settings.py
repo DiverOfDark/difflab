@@ -13,6 +13,7 @@ owns it is what carries the version.
 from __future__ import annotations
 
 import dataclasses
+import os
 import random
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
@@ -36,7 +37,10 @@ def setting(
     """A dataclass field with the metadata the page and the keys read. `keyed=False` for a knob that
     changes how a run is shown rather than what it makes. Fields of one `role` name the same model in
     different tools, and the page sets them together; a `multiple` one holds a list of them, one
-    `reference*strength` per line."""
+    `reference*strength` per line. `DIFFLAB_MODEL_<ROLE>` in the environment or `.env` replaces a role's
+    default on one machine."""
+    if role and (chosen := os.environ.get(f"DIFFLAB_MODEL_{role.upper().replace('-', '_')}")) is not None:
+        default = chosen
     return dataclasses.field(
         default=default,
         metadata={
@@ -150,7 +154,7 @@ def _coerce(value: Any, kind: str) -> Any:
 
 
 # The one language model, which sees and writes: Qwen3.8-27B, vision tower and MTP head kept,
-# as turboderp's 4.0 bpw EXL3 (16.5 GB).
+# as turboderp's 4.0 bpw EXL3 (16.9 GB).
 VLM = "turboderp/Qwen3.8-27B-exl3@113cf7ab958054860e43fb7f3063b1af19171095"
 
 

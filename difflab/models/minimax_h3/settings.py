@@ -21,28 +21,27 @@ class VideoSettings(Settings):
     """MiniMax H3. The dev defaults are 2 s at 0.4 MP (~25 s of sampling); a full render is 15 s at
     0.8 MP (~15 min)."""
 
-    # a community hybrid's TURBO hybrid: both tasks in one file, with its own turbo fused in, so no turbo LoRA.
-    # Measured on clip 1 of production 9 (2026-10-04), same seed and inputs, worst frame against the photo's
-    # mottle 1.11, a* 2.4, L spread 23.2: this file alone 1.29 / 3.0 / 23.5; with larryvrh's turbo v4 LoRA
-    # over it, as it ran until then, 2.03 / 4.4 / 25.7; Comfy's pruned ref2va with that LoRA 1.65 / 4.1 /
-    # 24.1. The LoRA is what blotched and reddened every take, on either checkpoint.
+    # Comfy's pruned ref2va with larryvrh's turbo v4 LoRA serves both tasks. Measured on clip 1 of production 9
+    # (2026-10-04), same seed and inputs, worst frame against the photo's mottle 1.11, a* 2.4, L spread 23.2:
+    # this pair 1.65 / 4.1 / 24.1; a community hybrid with its own turbo fused in and no LoRA 1.29 / 3.0 /
+    # 23.5, and 2.03 / 4.4 / 25.7 with the LoRA over it as well. The LoRA is what blotches and reddens a take,
+    # so a model with a turbo fused in runs with `loras` empty.
     checkpoint: str = setting(
-        "Comfy-Org/MiniMax-H3@7e75982b97cd5a41d2dcfa1904ee88d0686d6fd1:diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+        f"{COMFY}:diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors",
         "model",
         "the int8 DiT: repo@commit:path",
         role="video-model",
     )
     loras: str = setting(
-        "",
+        "larryvrh/MiniMax-H3-Turbo-Lora@43a74557ac3f6539db8e0f2a959d03feb7a81480:minimax_h3_turbo_v4_step600_ema.safetensors",
         "LoRAs",
         "stacked on the video model in order, as reference*strength; a model with no turbo fused in needs a turbo LoRA",
         role="video-loras",
         multiple=True,
     )
-    # Qwen3-VL-32B truncated to 50 layers, int8 ConvRot (26 GB).
+    # Qwen3-VL-32B truncated to 50 layers, int8 ConvRot (27 GB).
     text_encoder: str = setting(
-        "Comfy-Org/MiniMax-H3@7e75982b97cd5a41d2dcfa1904ee88d0686d6fd1"
-        ":text_encoders/qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
+        f"{COMFY}:text_encoders/qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
         "text encoder",
         "the int8 Qwen3-VL: repo@commit:path",
         advanced=True,

@@ -25,3 +25,6 @@ output/
 # The built page (npm --prefix frontend run build) and what builds it
 frontend/node_modules
 difflab/api/static
+
+# This machine's model picks
+.env

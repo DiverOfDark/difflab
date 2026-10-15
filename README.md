@@ -121,7 +121,10 @@ deletes its own pod according to `DIFFLAB_IDLE_MINUTES`, `DIFFLAB_STUCK_MINUTES`
 | Video with audio | MiniMax H3, int8, with a turbo LoRA |
 | Finish | SeedVR2 7B (restore), RealESRGAN x2 / 4xLSDIR (enlarge), RIFE 4.26 (frame rate) |
 
-Every model is pinned to a commit in `difflab/core/hub.py`. Each role can be swapped on the Settings page.
+Every default is pinned to a commit (`difflab/core/settings.py`, `difflab/models/minimax_h3/settings.py`).
+Each role can be swapped on the Settings page, or for one machine in a git-ignored `.env`, one
+`DIFFLAB_MODEL_<ROLE>=repo@commit:path` per role (`VLM`, `EDITOR`, `EDITOR_21_LORAS`, `VIDEO_MODEL`,
+`VIDEO_LORAS`, `VIDEO_TEXT_ENCODER`, ...), with `\n` between the lines of a LoRA list.
 
 ## Speed (RTX 3090)
 

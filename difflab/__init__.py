@@ -2,6 +2,7 @@
 
 import logging
 import os
+from pathlib import Path
 
 # Block streaming allocates and frees the same large shapes every step; without expandable segments
 # the allocator strands gigabytes between them (3 GB reserved-but-unused at the 0.8 MP OOM).
@@ -16,3 +17,12 @@ from huggingface_hub.utils.tqdm import disable_progress_bars
 
 disable_progress_bars()
 logging.getLogger("torch.utils._pytree").setLevel(logging.ERROR)  # torchao's enum registration chatter
+
+# This machine's own model picks, `DIFFLAB_MODEL_<ROLE>=repo@commit:path` (see `core.settings.setting`), kept
+# out of git; a `\n` separates the lines of a LoRA list. The environment wins over the file.
+_ENV = Path(__file__).resolve().parent.parent / ".env"
+if _ENV.is_file():
+    for _line in _ENV.read_text().splitlines():
+        _key, _sep, _value = _line.partition("=")
+        if _sep and not _key.lstrip().startswith("#"):
+            os.environ.setdefault(_key.strip(), _value.strip().replace("\\n", "\n"))
