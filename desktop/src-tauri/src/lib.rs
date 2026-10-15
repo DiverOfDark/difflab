@@ -346,12 +346,13 @@ async fn start(app: AppHandle, inner: State<'_, Shared>, kind: Kind) -> Result<(
                     &app,
                     Status {
                         phase: "error".into(),
-                        message: e.clone(),
+                        message: e,
                         ..Default::default()
                     },
                 )
                 .await;
-            Err(e)
+            // The status card already says it; an Err would show it a second time.
+            Ok(())
         }
     }
 }
@@ -404,12 +405,12 @@ async fn launch(app: &AppHandle, inner: &Inner, kind: Kind) -> Result<Session, S
                     },
                 )
                 .await;
-            local::start(&token, &found.runtime).await?;
+            let port = local::start(&token, &found.runtime).await?;
             Ok(Session {
                 kind,
                 pod_id: local::CONTAINER.into(),
                 token,
-                base_url: local::url(),
+                base_url: local::url(port),
                 started_at: now(),
                 usd_per_hour: 0.0,
                 gpu: found.gpu,

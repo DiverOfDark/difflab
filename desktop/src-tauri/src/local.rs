@@ -10,8 +10,6 @@ use crate::runpod::IMAGE;
 
 pub const CONTAINER: &str = "difflab-desktop";
 pub const VOLUME: &str = "difflab";
-// Not 8765: a difflab started by hand on this machine already holds it.
-pub const PORT: u16 = 18765;
 // The pipeline offloads for a 24 GB card and assumes a 58 GB host (`core/models.py`); 56 lets a
 // "64 GB" machine through after what firmware and the iGPU reserve.
 const MIN_VRAM_MIB: u64 = 23_000;
@@ -233,7 +231,12 @@ pub async fn pull(progress: mpsc::UnboundedSender<Pulled>) -> Result<(), String>
     Ok(())
 }
 
-pub async fn start(token: &str, runtime: &str) -> Result<(), String> {
+/// Returns the host port it listens on: whatever the OS hands out, since any fixed one may be taken.
+pub async fn start(token: &str, runtime: &str) -> Result<u16, String> {
+    let free = std::net::TcpListener::bind("127.0.0.1:0")
+        .and_then(|l| l.local_addr())
+        .map_err(|e| format!("no free port: {e}"))?
+        .port();
     let _ = command("docker")
         .args(["rm", "-f", CONTAINER])
         .output()
@@ -244,7 +247,7 @@ pub async fn start(token: &str, runtime: &str) -> Result<(), String> {
     } else {
         &["--gpus", "all"]
     };
-    let port = format!("127.0.0.1:{PORT}:8765");
+    let port = format!("127.0.0.1:{free}:8765");
     let volume = format!("{VOLUME}:/app/output");
     let token = format!("DIFFLAB_TOKEN={token}");
     let mut args = vec![
@@ -258,12 +261,11 @@ pub async fn start(token: &str, runtime: &str) -> Result<(), String> {
         .await
         .map_err(|e| e.to_string())?;
     if !out.status.success() {
-        return Err(format!(
-            "docker run failed: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        ));
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let said = stderr.lines().filter(|l| !l.trim().is_empty() && !l.contains("--help")).collect::<Vec<_>>().join("\n");
+        return Err(format!("Docker could not start DiffLab: {}", said.trim_start_matches("docker: ")));
     }
-    Ok(())
+    Ok(free)
 }
 
 pub async fn running() -> bool {
@@ -289,6 +291,6 @@ pub async fn stop() -> Result<(), String> {
     }
 }
 
-pub fn url() -> String {
-    format!("http://127.0.0.1:{PORT}")
+pub fn url(port: u16) -> String {
+    format!("http://127.0.0.1:{port}")
 }
