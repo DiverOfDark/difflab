@@ -1149,16 +1149,48 @@ fn tray(app: &tauri::App, inner: &Shared) -> tauri::Result<()> {
             let app = app.clone();
             match event.id.as_ref() {
                 "show" => show_main(&app),
+                // Nothing on screen says these failed otherwise: the window may be hidden.
                 "studio" => {
                     tauri::async_runtime::spawn(async move {
                         let inner = app.state::<Shared>().inner().clone();
-                        let _ = open_studio(&app, &inner).await;
+                        if let Err(problem) = open_studio(&app, &inner).await {
+                            let _ = app
+                                .notification()
+                                .builder()
+                                .title("Could not open the studio")
+                                .body(problem)
+                                .show();
+                        }
                     });
                 }
                 "stop" => {
                     tauri::async_runtime::spawn(async move {
                         let inner = app.state::<Shared>().inner().clone();
-                        let _ = stop_now(&app, &inner, true).await;
+                        let _ = app
+                            .notification()
+                            .builder()
+                            .title("Stopping DiffLab")
+                            .body("Downloading results first, then stopping.")
+                            .show();
+                        match stop_now(&app, &inner, true).await {
+                            Ok(()) => {
+                                let said = inner.status.lock().await.message.clone();
+                                let _ = app
+                                    .notification()
+                                    .builder()
+                                    .title("DiffLab stopped")
+                                    .body(said)
+                                    .show();
+                            }
+                            Err(problem) => {
+                                let _ = app
+                                    .notification()
+                                    .builder()
+                                    .title("Could not stop DiffLab")
+                                    .body(problem)
+                                    .show();
+                            }
+                        }
                     });
                 }
                 "quit" => {
