@@ -121,6 +121,10 @@ impl Inner {
     }
 
     async fn end(&self, app: &AppHandle, message: String) {
+        if self.session.lock().await.is_none() && !message.is_empty() {
+            // Already ended by someone else (Stop, or another tick): keep what they said.
+            return;
+        }
         for window in studio_windows(app) {
             let _ = window.destroy();
         }
@@ -348,6 +352,18 @@ impl Inner {
                     (None, Kind::Local) => ("Starting the server (about a minute)…".into(), None),
                 };
             }
+        }
+        // Stop may have ended this session while the tick waited on RunPod or the heartbeat; a late
+        // write would put "booting" over "stopped" for good, as no later tick has a session to fix it.
+        if self
+            .session
+            .lock()
+            .await
+            .as_ref()
+            .map(|s| s.pod_id.as_str())
+            != Some(session.pod_id.as_str())
+        {
+            return;
         }
         self.set(app, status).await;
     }
