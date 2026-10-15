@@ -65,3 +65,20 @@ export const syncResults = () => invoke<string>("sync_results");
 export const openResults = () => invoke("open_results");
 
 export const usd = (n: number) => `$${n.toFixed(2)}`;
+
+export interface ImageVersion {
+  digest: string;
+  revision: string;
+  created: string;
+}
+
+export interface Versions {
+  app: string;
+  running_image: string;
+  image_latest: ImageVersion | null;
+  image_local: ImageVersion | null;
+  updating: boolean;
+  checked_at: number;
+}
+
+export const versions = (refresh = false) => invoke<Versions>("versions", { refresh });

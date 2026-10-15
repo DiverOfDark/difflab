@@ -138,10 +138,16 @@ impl Client {
         serde_json::from_value(made).map_err(|e| format!("unexpected volume: {e}"))
     }
 
-    pub async fn create_pod(&self, volume_id: &str, env: Value) -> Result<Pod, String> {
+    /// `image` pinned by digest: a host that cached an older `latest` would otherwise start that.
+    pub async fn create_pod(
+        &self,
+        volume_id: &str,
+        image: &str,
+        env: Value,
+    ) -> Result<Pod, String> {
         let body = json!({
             "name": "difflab",
-            "imageName": IMAGE,
+            "imageName": image,
             "gpuTypeIds": GPUS,
             "gpuCount": 1,
             "cloudType": "SECURE",

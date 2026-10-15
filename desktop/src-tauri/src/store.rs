@@ -51,6 +51,8 @@ pub struct Session {
     pub started_at: i64,
     pub usd_per_hour: f64,
     pub gpu: String,
+    #[serde(default)]
+    pub image: String,
 }
 
 pub struct Store {

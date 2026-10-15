@@ -135,37 +135,126 @@ const REPOSITORY: &str = "diverofdark/difflab";
 const ACCEPT: &str = "application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, \
                       application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json";
 
-/// Each layer's compressed size by the 12-character id `docker pull` prints: without a terminal it
-/// prints no byte counts, only which layers are done.
-pub async fn layer_sizes() -> Option<HashMap<String, u64>> {
-    let http = reqwest::Client::new();
-    let token: Value = http
-        .get(format!(
-            "{REGISTRY}/token?scope=repository:{REPOSITORY}:pull"
-        ))
-        .send()
-        .await
-        .ok()?
+struct Registry {
+    http: reqwest::Client,
+    token: String,
+}
+
+impl Registry {
+    async fn open() -> Option<Self> {
+        let http = reqwest::Client::new();
+        let token: Value = http
+            .get(format!(
+                "{REGISTRY}/token?scope=repository:{REPOSITORY}:pull"
+            ))
+            .send()
+            .await
+            .ok()?
+            .json()
+            .await
+            .ok()?;
+        let token = token["token"].as_str()?.to_string();
+        Some(Registry { http, token })
+    }
+
+    async fn get(&self, path: &str, accept: &str) -> Option<reqwest::Response> {
+        let response = self
+            .http
+            .get(format!("{REGISTRY}/v2/{REPOSITORY}/{path}"))
+            .bearer_auth(&self.token)
+            .header("Accept", accept)
+            .send()
+            .await
+            .ok()?;
+        response.status().is_success().then_some(response)
+    }
+
+    /// The digest `latest` points at (what `docker pull` records), and the linux/amd64 manifest under it.
+    async fn latest(&self) -> Option<(String, Value)> {
+        let response = self.get("manifests/latest", ACCEPT).await?;
+        let digest = response
+            .headers()
+            .get("docker-content-digest")?
+            .to_str()
+            .ok()?
+            .to_string();
+        let mut manifest: Value = response.json().await.ok()?;
+        if let Some(list) = manifest["manifests"].as_array() {
+            let platform = list.iter().find(|m| {
+                m["platform"]["os"] == "linux" && m["platform"]["architecture"] == "amd64"
+            })?["digest"]
+                .as_str()?
+                .to_string();
+            manifest = self
+                .get(&format!("manifests/{platform}"), ACCEPT)
+                .await?
+                .json()
+                .await
+                .ok()?;
+        }
+        Some((digest, manifest))
+    }
+}
+
+#[derive(Serialize, Clone, Default)]
+pub struct ImageVersion {
+    pub digest: String,
+    pub revision: String,
+    pub created: String,
+}
+
+fn version_from(digest: String, labels: &Value) -> ImageVersion {
+    ImageVersion {
+        digest,
+        revision: labels["org.opencontainers.image.revision"]
+            .as_str()
+            .unwrap_or("")
+            .chars()
+            .take(7)
+            .collect(),
+        created: labels["org.opencontainers.image.created"]
+            .as_str()
+            .unwrap_or("")
+            .chars()
+            .take(10)
+            .collect(),
+    }
+}
+
+/// What `latest` is on ghcr now: the image CI built from the newest commit on main.
+pub async fn latest_image() -> Option<ImageVersion> {
+    let registry = Registry::open().await?;
+    let (digest, manifest) = registry.latest().await?;
+    let config = manifest["config"]["digest"].as_str()?;
+    let config: Value = registry
+        .get(&format!("blobs/{config}"), "*/*")
+        .await?
         .json()
         .await
         .ok()?;
-    let token = token["token"].as_str()?.to_string();
-    let get = |reference: String| {
-        http.get(format!("{REGISTRY}/v2/{REPOSITORY}/manifests/{reference}"))
-            .bearer_auth(&token)
-            .header("Accept", ACCEPT)
-            .send()
-    };
-    let mut manifest: Value = get("latest".into()).await.ok()?.json().await.ok()?;
-    if let Some(list) = manifest["manifests"].as_array() {
-        let digest = list
-            .iter()
-            .find(|m| m["platform"]["os"] == "linux" && m["platform"]["architecture"] == "amd64")?
-            ["digest"]
-            .as_str()?
-            .to_string();
-        manifest = get(digest).await.ok()?.json().await.ok()?;
-    }
+    Some(version_from(digest, &config["config"]["Labels"]))
+}
+
+/// The image this PC would start, when it has pulled one.
+pub async fn local_image() -> Option<ImageVersion> {
+    let found = output(
+        "docker",
+        &["image", "inspect", IMAGE, "--format", "{{json .}}"],
+    )
+    .await?;
+    let found: Value = serde_json::from_str(&found).ok()?;
+    let digest = found["RepoDigests"]
+        .as_array()?
+        .iter()
+        .filter_map(Value::as_str)
+        .find_map(|d| d.split_once('@').map(|(_, digest)| digest.to_string()))?;
+    Some(version_from(digest, &found["Config"]["Labels"]))
+}
+
+/// Each layer's compressed size by the 12-character id `docker pull` prints: without a terminal it
+/// prints no byte counts, only which layers are done.
+pub async fn layer_sizes() -> Option<HashMap<String, u64>> {
+    let (_, manifest) = Registry::open().await?.latest().await?;
     let sizes = manifest["layers"]
         .as_array()?
         .iter()

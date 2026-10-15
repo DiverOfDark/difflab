@@ -3,8 +3,11 @@ import "../../frontend/src/style.css";
 import { computed, onMounted, reactive, ref } from "vue";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
+import { check, type Update } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import * as api from "./api";
-import { usd, type Hardware, type Kind, type Prefs, type Status } from "./api";
+import { usd, type Hardware, type Kind, type Prefs, type Status, type Versions } from "./api";
 import Wizard from "./Wizard.vue";
 
 type Tab = "run" | "results" | "settings";
@@ -26,6 +29,11 @@ const error = ref("");
 const saved = ref(false);
 const sync = ref<{ done: number; total: number; file: string } | null>(null);
 const syncNote = ref("");
+const versions = ref<Versions | null>(null);
+const appUpdate = ref<{ version: string; ready: boolean } | null>(null);
+const appUpdateNote = ref("");
+let pending: Update | null = null;
+const CHECK_EVERY_MS = 6 * 3600 * 1000;
 
 const running = computed(() => ["starting", "booting", "ready"].includes(status.value.phase));
 const uptime = computed(() => {
@@ -43,6 +51,41 @@ const phase = computed(
       error: { label: "Problem", dot: "failed" },
     })[status.value.phase],
 );
+const imageStale = computed(() => {
+  const v = versions.value;
+  return !!v?.image_latest && !!v.image_local && v.image_latest.digest !== v.image_local.digest;
+});
+const updateBadge = computed(() => !!appUpdate.value?.ready || imageStale.value);
+const imageLabel = (v: { revision: string; created: string } | null | undefined) => (v ? `${v.revision || "?"} · ${v.created || "?"}` : "—");
+
+// Downloaded quietly; installed when the window closes, or now if asked.
+async function checkApp() {
+  try {
+    const found = await check();
+    if (!found) {
+      appUpdateNote.value = "up to date";
+      return;
+    }
+    appUpdate.value = { version: found.version, ready: false };
+    await found.download();
+    pending = found;
+    appUpdate.value = { version: found.version, ready: true };
+  } catch (e) {
+    appUpdateNote.value = `could not check (${String(e)})`;
+  }
+}
+
+async function installNow() {
+  if (!pending) return;
+  await pending.install();
+  await relaunch();
+}
+
+async function checkNow() {
+  versions.value = await api.versions(true);
+  await checkApp();
+}
+
 const where = computed(() => (status.value.kind === "local" ? "this PC" : "RunPod"));
 
 async function reload() {
@@ -108,10 +151,22 @@ onMounted(async () => {
   await listen<Status>("status", (e) => (status.value = e.payload));
   await listen<number | null>("balance", (e) => (balance.value = e.payload));
   await listen<{ done: number; total: number; file: string }>("sync", (e) => (sync.value = e.payload));
+  await listen<Omit<Versions, "app" | "running_image">>("versions", (e) => {
+    if (versions.value) versions.value = { ...versions.value, ...e.payload };
+  });
+  await getCurrentWindow().onCloseRequested(async (event) => {
+    if (!pending) return;
+    event.preventDefault();
+    await pending.install().catch(() => undefined);
+    await getCurrentWindow().destroy();
+  });
   await reload();
   wizard.value = !prefs.setup_done && !running.value;
   loaded.value = true;
   hardware.value = await api.hardware();
+  versions.value = await api.versions(false);
+  checkApp();
+  setInterval(checkApp, CHECK_EVERY_MS);
 });
 </script>
 
@@ -130,6 +185,7 @@ onMounted(async () => {
       </span>
       <span class="state mono">
         <span v-if="balance !== null" title="your RunPod balance">{{ usd(balance) }}</span>
+        <button v-if="updateBadge" class="link update" title="an update is ready" @click="tab = 'settings'; wizard = false">update</button>
         <span class="phase"><i class="dot" :class="phase.dot" />{{ phase.label.toLowerCase() }}</span>
       </span>
     </header>
@@ -232,6 +288,28 @@ onMounted(async () => {
           </div>
         </section>
 
+        <section v-if="tab === 'settings' && versions" class="card">
+          <div class="head"><h5>Versions</h5><button class="link" @click="checkNow">check now →</button></div>
+          <div class="body">
+            <div class="knob">
+              <div><span class="name">App {{ versions.app }}</span>
+                <span v-if="appUpdate?.ready" class="hint">{{ appUpdate.version }} is downloaded and installs when you close the app.</span>
+                <span v-else-if="appUpdate" class="hint">Downloading {{ appUpdate.version }}…</span>
+                <span v-else class="hint">{{ appUpdateNote || "checking…" }}</span>
+              </div>
+              <button v-if="appUpdate?.ready" class="primary" @click="installNow">Restart to update</button>
+            </div>
+            <div class="knob">
+              <div><span class="name">DiffLab image</span>
+                <span class="hint">Latest: {{ imageLabel(versions.image_latest) }}</span>
+                <span class="hint">On this PC: {{ versions.image_local ? imageLabel(versions.image_local) : "not downloaded" }}<template v-if="versions.updating"> · downloading the update in the background…</template><template v-else-if="imageStale"> · an update is available</template></span>
+                <span v-if="versions.running_image && versions.image_latest && versions.running_image !== versions.image_latest.revision" class="hint">Running {{ versions.running_image }}; stop and start again to use the latest.</span>
+                <span class="hint">RunPod always starts the latest.</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
         <p v-if="error" class="band error">{{ error }}</p>
       </div>
     </main>
@@ -268,6 +346,9 @@ onMounted(async () => {
   gap: var(--space-2);
   font-size: var(--text-xs);
   color: var(--text-secondary);
+}
+.update {
+  color: var(--accent);
 }
 .phase {
   display: flex;

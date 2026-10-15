@@ -18,6 +18,7 @@ use store::{Kind, Prefs, Session, Store, RUNPOD_KEY, S3_ACCESS, S3_SECRET};
 // Also the status refresh; the pod's watchdog counts the app as gone after DIFFLAB_IDLE_MINUTES without one.
 const HEARTBEAT: Duration = Duration::from_secs(10);
 const BALANCE_EVERY: i64 = 60;
+const VERSIONS_EVERY: i64 = 6 * 3600;
 const RESULT_PREFIXES: [&str; 2] = ["images/", "videos/"];
 
 #[derive(Serialize, Clone, Default)]
@@ -33,12 +34,21 @@ struct Status {
     progress: Option<f64>,
 }
 
+#[derive(Serialize, Clone, Default)]
+struct Versions {
+    image_latest: Option<local::ImageVersion>,
+    image_local: Option<local::ImageVersion>,
+    updating: bool,
+    checked_at: i64,
+}
+
 struct Inner {
     store: Store,
     balance: Mutex<(i64, Option<f64>)>,
     status: Mutex<Status>,
     session: Mutex<Option<Session>>,
     draining: Mutex<bool>,
+    versions: Mutex<Versions>,
     http: reqwest::Client,
 }
 
@@ -294,6 +304,63 @@ async fn balance(
     }
 }
 
+/// What ghcr has as `latest`, and what this PC last pulled; a stale local image is pulled in the
+/// background so the next local start does not wait for it.
+async fn check_versions(app: &AppHandle, inner: &Shared) {
+    let latest = local::latest_image().await;
+    let here = local::local_image().await;
+    let stale = matches!((&latest, &here), (Some(l), Some(h)) if l.digest != h.digest);
+    {
+        let mut held = inner.versions.lock().await;
+        held.checked_at = now();
+        held.image_latest = latest;
+        held.image_local = here;
+        if stale && !held.updating {
+            held.updating = true;
+            let (app, inner) = (app.clone(), inner.clone());
+            tauri::async_runtime::spawn(async move {
+                let (tx, _) = tokio::sync::mpsc::unbounded_channel();
+                let _ = local::pull(tx).await;
+                let mut held = inner.versions.lock().await;
+                held.updating = false;
+                held.image_local = local::local_image().await;
+                let _ = app.emit("versions", held.clone());
+            });
+        }
+        let _ = app.emit("versions", held.clone());
+    }
+}
+
+#[derive(Serialize)]
+struct VersionInfo {
+    app: String,
+    running_image: String,
+    #[serde(flatten)]
+    versions: Versions,
+}
+
+#[tauri::command]
+async fn versions(
+    app: AppHandle,
+    inner: State<'_, Shared>,
+    refresh: bool,
+) -> Result<VersionInfo, String> {
+    if refresh {
+        check_versions(&app, inner.inner()).await;
+    }
+    Ok(VersionInfo {
+        app: app.package_info().version.to_string(),
+        running_image: inner
+            .session
+            .lock()
+            .await
+            .as_ref()
+            .map(|s| s.image.clone())
+            .unwrap_or_default(),
+        versions: inner.versions.lock().await.clone(),
+    })
+}
+
 #[tauri::command]
 async fn hardware() -> Result<local::Hardware, String> {
     Ok(local::check().await)
@@ -421,6 +488,10 @@ async fn launch(app: &AppHandle, inner: &Inner, kind: Kind) -> Result<Session, S
                 started_at: now(),
                 usd_per_hour: 0.0,
                 gpu: found.gpu,
+                image: local::local_image()
+                    .await
+                    .map(|v| v.revision)
+                    .unwrap_or_default(),
             })
         }
         Kind::Runpod => {
@@ -438,11 +509,17 @@ async fn launch(app: &AppHandle, inner: &Inner, kind: Kind) -> Result<Session, S
                 "DIFFLAB_SPEND_LIMIT_USD": prefs.spend_limit_usd.to_string(),
                 "DIFFLAB_EXIT_WHEN_DONE": if prefs.exit_when_done { "1" } else { "" },
             });
-            let pod = client.create_pod(&volume.id, env).await?;
+            let latest = local::latest_image().await;
+            let image = match &latest {
+                Some(v) => format!("{}@{}", runpod::IMAGE.trim_end_matches(":latest"), v.digest),
+                None => runpod::IMAGE.to_string(),
+            };
+            let pod = client.create_pod(&volume.id, &image, env).await?;
             Ok(Session {
                 kind,
                 base_url: runpod::proxy_url(&pod.id),
                 gpu: pod.gpu_name(),
+                image: latest.map(|v| v.revision).unwrap_or_default(),
                 usd_per_hour: pod.cost_per_hr,
                 pod_id: pod.id,
                 token,
@@ -565,6 +642,8 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             let dir = app.path().app_config_dir()?;
             let store = Store::new(dir);
@@ -577,6 +656,7 @@ pub fn run() {
                 }),
                 session: Mutex::new(session),
                 draining: Mutex::new(false),
+                versions: Mutex::new(Versions::default()),
                 store,
                 http: reqwest::Client::new(),
             });
@@ -585,6 +665,9 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 loop {
                     inner.refresh_balance(&handle, false).await;
+                    if now() - inner.versions.lock().await.checked_at > VERSIONS_EVERY {
+                        check_versions(&handle, &inner).await;
+                    }
                     inner.tick(&handle).await;
                     tokio::time::sleep(HEARTBEAT).await;
                 }
@@ -594,6 +677,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             load,
             balance,
+            versions,
             hardware,
             save_settings,
             start,
