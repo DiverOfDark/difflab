@@ -304,8 +304,8 @@ class ChainSettings(Settings):
     carry: bool = setting(
         True,
         "carry latents",
-        "Qwen-Image 2.1 only: each edit is conditioned on the last one's latent, never on its decoded and re-encoded "
-        "picture; the size snaps to /32",
+        "Qwen-Image 2.1: each edit is conditioned on the last one's latent, never on its decoded and re-encoded "
+        "picture; the size snaps to /32. The AIO always edits from pictures",
         advanced=True,
     )
 

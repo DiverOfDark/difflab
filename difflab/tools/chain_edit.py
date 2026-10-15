@@ -46,9 +46,9 @@ class Chained:
 
 def chain(photo: Frame, idea: str, settings: EditSettings, retries: int, carry: bool = False) -> Chained:
     """`carry` conditions each edit on the last one's latent, never on its picture decoded and encoded again."""
-    if carry and settings.engine != "qwen-image-2.1":
-        ui.note(f"chain · carrying latents is Qwen-Image 2.1's alone; {settings.engine} edits from pictures")
-        carry = False
+    # Carried on the AIO, the sky turned to noise by the third edit, worse than from decoded pictures (beach test,
+    # 2026-10-15).
+    carry = carry and settings.engine == "qwen-image-2.1"
     size = edit_image.carried_size(photo, settings.megapixels) if carry else None
     edits = plan(photo, photo, idea, [], settings.engine)
     images: list[Frame] = [photo]
