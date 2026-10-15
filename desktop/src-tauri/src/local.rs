@@ -407,3 +407,85 @@ pub async fn stop() -> Result<(), String> {
 pub fn url(port: u16) -> String {
     format!("http://127.0.0.1:{port}")
 }
+
+const RESULTS_HELPER: &str = "difflab-desktop-results";
+
+pub async fn has_results() -> bool {
+    output("docker", &["volume", "inspect", VOLUME])
+        .await
+        .is_some()
+}
+
+/// Every file under `prefixes` in the Docker volume, as (path under output/, bytes).
+pub async fn list_results(prefixes: &[&str]) -> Result<Vec<(String, u64)>, String> {
+    let volume = format!("{VOLUME}:/app/output:ro");
+    let mut args = vec!["run", "--rm", "--entrypoint", "find", "-v", &volume, IMAGE];
+    let roots: Vec<String> = prefixes
+        .iter()
+        .map(|p| format!("/app/output/{}", p.trim_end_matches('/')))
+        .collect();
+    args.extend(roots.iter().map(String::as_str));
+    args.extend(["-type", "f", "-printf", "%s %p\\n"]);
+    let out = command("docker")
+        .args(&args)
+        .output()
+        .await
+        .map_err(|e| e.to_string())?;
+    // find exits non-zero when one of the folders does not exist yet; what it did list still counts.
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut found = Vec::new();
+    for line in text.lines() {
+        let Some((size, path)) = line.split_once(' ') else {
+            continue;
+        };
+        let Ok(size) = size.parse() else { continue };
+        if let Some(key) = path.strip_prefix("/app/output/") {
+            found.push((key.to_string(), size));
+        }
+    }
+    if found.is_empty()
+        && !out.status.success()
+        && !String::from_utf8_lossy(&out.stderr).contains("No such file")
+    {
+        return Err(format!(
+            "could not read the difflab volume: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    Ok(found)
+}
+
+/// `docker cp` rather than a bind mount: the CLI writes the files itself, so they belong to this user
+/// and need no SELinux label on the target folder.
+pub async fn copy_results(
+    files: &[(String, std::path::PathBuf)],
+    mut each: impl FnMut(usize, &str),
+) -> Result<(), String> {
+    let _ = command("docker")
+        .args(["rm", "-f", RESULTS_HELPER])
+        .output()
+        .await;
+    let volume = format!("{VOLUME}:/app/output");
+    run(
+        "docker",
+        &["create", "--name", RESULTS_HELPER, "-v", &volume, IMAGE],
+    )
+    .await?;
+    let mut result = Ok(());
+    for (done, (key, to)) in files.iter().enumerate() {
+        each(done, key);
+        if let Some(parent) = to.parent() {
+            let _ = tokio::fs::create_dir_all(parent).await;
+        }
+        let from = format!("{RESULTS_HELPER}:/app/output/{key}");
+        if let Err(e) = run("docker", &["cp", &from, &to.display().to_string()]).await {
+            result = Err(e);
+            break;
+        }
+    }
+    let _ = command("docker")
+        .args(["rm", "-f", RESULTS_HELPER])
+        .output()
+        .await;
+    result
+}

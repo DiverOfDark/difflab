@@ -38,6 +38,7 @@ export interface Loaded {
   prefs: Prefs;
   has_runpod_key: boolean;
   has_s3: boolean;
+  has_local_results: boolean;
   datacenters: string[];
   status: Status;
   results_dir: string;

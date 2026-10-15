@@ -264,6 +264,7 @@ struct Loaded {
     prefs: Prefs,
     has_runpod_key: bool,
     has_s3: bool,
+    has_local_results: bool,
     datacenters: Vec<&'static str>,
     status: Status,
     results_dir: String,
@@ -283,6 +284,7 @@ async fn load(app: AppHandle, inner: State<'_, Shared>) -> Result<Loaded, String
     Ok(Loaded {
         has_runpod_key: inner.store.secret(RUNPOD_KEY).is_some(),
         has_s3: inner.store.secret(S3_SECRET).is_some(),
+        has_local_results: local::has_results().await,
         datacenters: runpod::DATACENTERS.to_vec(),
         status: inner.status.lock().await.clone(),
         results_dir: results_dir(&app, &prefs).display().to_string(),
@@ -581,48 +583,59 @@ struct SyncProgress {
 
 #[tauri::command]
 async fn sync_results(app: AppHandle, inner: State<'_, Shared>) -> Result<String, String> {
-    let volume = inner
-        .volume()
-        .await
-        .ok_or("add your S3 key and start a pod once, so the app knows your volume")?;
     let dir = results_dir(&app, &inner.store.prefs());
-    let mut wanted = Vec::new();
-    for prefix in RESULT_PREFIXES {
-        for object in volume.list(prefix).await? {
-            if object.key.ends_with('/') {
-                continue;
-            }
-            let to = dir.join(&object.key);
-            let have = tokio::fs::metadata(&to).await.map(|m| m.len()).ok();
-            if have != Some(object.size) {
-                wanted.push((object.key, to));
-            }
-        }
-    }
-    let total = wanted.len();
-    for (done, (key, to)) in wanted.into_iter().enumerate() {
+    let missing = |key: &str, size: u64| {
+        let to = dir.join(key);
+        let have = std::fs::metadata(&to).map(|m| m.len()).ok();
+        (have != Some(size)).then_some((key.to_string(), to))
+    };
+    let progress = |done: usize, total: usize, file: &str| {
         let _ = app.emit(
             "sync",
             SyncProgress {
                 done,
                 total,
-                file: key.clone(),
+                file: file.to_string(),
             },
         );
-        volume.download(&key, &to).await?;
+    };
+    let mut copied = 0;
+    if local::has_results().await {
+        let wanted: Vec<_> = local::list_results(&RESULT_PREFIXES)
+            .await?
+            .into_iter()
+            .filter_map(|(key, size)| missing(&key, size))
+            .collect();
+        let total = wanted.len();
+        local::copy_results(&wanted, |done, key| progress(done, total, key)).await?;
+        copied += total;
     }
-    let _ = app.emit(
-        "sync",
-        SyncProgress {
-            done: total,
-            total,
-            file: String::new(),
-        },
-    );
-    Ok(if total == 0 {
+    if let Some(volume) = inner.volume().await {
+        let mut wanted = Vec::new();
+        for prefix in RESULT_PREFIXES {
+            for object in volume.list(prefix).await? {
+                if !object.key.ends_with('/') {
+                    wanted.extend(missing(&object.key, object.size));
+                }
+            }
+        }
+        let total = wanted.len();
+        for (done, (key, to)) in wanted.into_iter().enumerate() {
+            progress(done, total, &key);
+            volume.download(&key, &to).await?;
+        }
+        copied += total;
+    } else if !local::has_results().await {
+        return Err(
+            "Nothing to download yet: run DiffLab here first, or add your S3 key for RunPod."
+                .into(),
+        );
+    }
+    progress(copied, copied, "");
+    Ok(if copied == 0 {
         "Everything is already downloaded.".into()
     } else {
-        format!("Downloaded {total} files.")
+        format!("Downloaded {copied} files.")
     })
 }
 

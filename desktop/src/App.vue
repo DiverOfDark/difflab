@@ -20,6 +20,7 @@ const prefs = reactive<Prefs>({ datacenter: "EU-RO-1", volume_id: "", idle_minut
 const datacenters = ref<string[]>([]);
 const hasKey = ref(false);
 const hasS3 = ref(false);
+const hasLocal = ref(false);
 const balance = ref<number | null>(null);
 const resultsDir = ref("");
 const hardware = ref<Hardware | null>(null);
@@ -93,6 +94,7 @@ async function reload() {
   Object.assign(prefs, got.prefs);
   hasKey.value = got.has_runpod_key;
   hasS3.value = got.has_s3;
+  hasLocal.value = got.has_local_results;
   datacenters.value = got.datacenters;
   status.value = got.status;
   resultsDir.value = got.results_dir;
@@ -239,14 +241,14 @@ onMounted(async () => {
           <div class="body">
             <p class="mono muted path">{{ resultsDir }}</p>
             <div class="buttons">
-              <button class="primary" :disabled="!hasS3 || !!busy" @click="download">Download results</button>
+              <button class="primary" :disabled="(!hasS3 && !hasLocal) || !!busy" @click="download">Download results</button>
             </div>
             <template v-if="busy === 'Downloading' && sync">
               <div class="bar"><i :style="{ width: `${sync.total ? (sync.done / sync.total) * 100 : 0}%` }" /></div>
               <p class="note mono">{{ sync.done }} / {{ sync.total }} · {{ sync.file }}</p>
             </template>
             <p v-else-if="syncNote" class="band hint">{{ syncNote }}</p>
-            <p v-if="!hasS3" class="note">Add an S3 key in Settings to download results, even with no GPU running.</p>
+            <p v-if="!hasS3" class="note">Results made on this PC are copied from Docker. For RunPod, add an S3 key in Settings.</p>
           </div>
         </section>
 
