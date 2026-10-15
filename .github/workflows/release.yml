@@ -118,9 +118,12 @@ jobs:
         run: |
           gh release list --repo "$GITHUB_REPOSITORY" --json tagName,isDraft --jq '.[] | select(.isDraft) | .tagName' \
             | xargs -r -n1 gh release delete --repo "$GITHUB_REPOSITORY" --yes
-          gh release create "desktop-v$VERSION" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft \
-            --title "DiffLab $VERSION" --notes "Built from $GITHUB_SHA. Image: ghcr.io/diverofdark/difflab:$VERSION."
-          echo "id=$(gh api "repos/$GITHUB_REPOSITORY/releases" --jq ".[] | select(.tag_name == \"desktop-v$VERSION\") | .id")" >> "$GITHUB_OUTPUT"
+          # Created through the API for its id: a release list does not show a draft made a moment ago.
+          id=$(gh api "repos/$GITHUB_REPOSITORY/releases" -f tag_name="desktop-v$VERSION" -f target_commitish="$GITHUB_SHA" \
+            -f name="DiffLab $VERSION" -f body="Built from $GITHUB_SHA. Image: ghcr.io/diverofdark/difflab:$VERSION." \
+            -F draft=true --jq .id)
+          test -n "$id"
+          echo "id=$id" >> "$GITHUB_OUTPUT"
 
   bundle:
     needs: release
@@ -188,4 +191,7 @@ jobs:
     steps:
       - env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release edit "desktop-v$VERSION" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          ID: ${{ needs.release.outputs.id }}
+        run: |
+          test "$(gh api "repos/$GITHUB_REPOSITORY/releases/$ID" --jq '.assets | length')" -gt 0
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$ID" -F draft=false -f make_latest=true --jq .html_url
