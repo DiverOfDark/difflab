@@ -20,6 +20,8 @@ use store::{Kind, Prefs, Session, Store, RUNPOD_KEY, S3_ACCESS, S3_SECRET};
 const HEARTBEAT: Duration = Duration::from_secs(10);
 const BALANCE_EVERY: i64 = 60;
 const VERSIONS_EVERY: i64 = 6 * 3600;
+const LOG_KEEP: usize = 2000;
+const NOISE: [&str; 2] = ["/api/pod/heartbeat", "GET /api/gpu"];
 const RESULT_PREFIXES: [&str; 2] = ["images/", "videos/"];
 
 #[derive(Serialize, Clone, Default)]
@@ -51,6 +53,10 @@ struct Inner {
     draining: Mutex<bool>,
     versions: Mutex<Versions>,
     http: reqwest::Client,
+    // std rather than tokio locks: the log readers fill them from synchronous callbacks.
+    logs: std::sync::Mutex<std::collections::VecDeque<runpod::LogLine>>,
+    boot: std::sync::Mutex<Option<local::Pulled>>,
+    follower: std::sync::Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
 }
 
 type Shared = Arc<Inner>;
@@ -109,6 +115,10 @@ impl Inner {
         if let Some(window) = app.get_webview_window("ui") {
             let _ = window.close();
         }
+        if let Some(follower) = self.follower.lock().unwrap().take() {
+            follower.abort();
+        }
+        *self.boot.lock().unwrap() = None;
         *self.session.lock().await = None;
         *self.draining.lock().await = false;
         let _ = self.store.save_session(None);
@@ -165,11 +175,49 @@ impl Inner {
         }
     }
 
+    fn push_log(&self, app: &AppHandle, line: runpod::LogLine) {
+        // The server's access log of the app's own heartbeat and the page's card poll, every few seconds.
+        if line.source == "container" && NOISE.iter().any(|n| line.line.contains(n)) {
+            return;
+        }
+        let mut logs = self.logs.lock().unwrap();
+        // RunPod repeats a layer's "Downloading" several times a second.
+        if line.source == "system"
+            && logs
+                .back()
+                .is_some_and(|last| last.source == "system" && last.line == line.line)
+        {
+            return;
+        }
+        if logs.len() >= LOG_KEEP {
+            logs.pop_front();
+        }
+        logs.push_back(line.clone());
+        let _ = app.emit("log", line);
+    }
+
+    fn ensure_follower(&self, app: &AppHandle, session: &Session) {
+        let mut held = self.follower.lock().unwrap();
+        if held.as_ref().is_some_and(|f| !f.inner().is_finished()) {
+            return;
+        }
+        let app = app.clone();
+        let session = session.clone();
+        *held = Some(tauri::async_runtime::spawn(async move {
+            let inner = app.state::<Shared>().inner().clone();
+            match session.kind {
+                Kind::Runpod => follow_pod(&app, &inner, &session).await,
+                Kind::Local => follow_container(&app, &inner).await,
+            }
+        }));
+    }
+
     async fn tick(&self, app: &AppHandle) {
         let Some(mut session) = self.session.lock().await.clone() else {
             return;
         };
         let draining = *self.draining.lock().await;
+        self.ensure_follower(app, &session);
         let mut status = Status {
             phase: "booting".into(),
             kind: Some(session.kind.clone()),
@@ -223,7 +271,13 @@ impl Inner {
                             && (pod.cost_per_hr != session.usd_per_hour || session.gpu.is_empty())
                         {
                             session.usd_per_hour = pod.cost_per_hr;
-                            session.gpu = pod.gpu_name();
+                            session.gpu = match pod.gpu_name() {
+                                // The REST pod has no gpu; GraphQL's machine does.
+                                name if name.is_empty() => {
+                                    client.gpu_name(&pod.id).await.unwrap_or_default()
+                                }
+                                name => name,
+                            };
                             let _ = self.store.save_session(Some(&session));
                             *self.session.lock().await = Some(session.clone());
                             status.usd_per_hour = session.usd_per_hour;
@@ -242,15 +296,81 @@ impl Inner {
         if let Some(answer) = self.heartbeat(&session, session.usd_per_hour).await {
             status.phase = "ready".into();
             status.usd = answer["usd"].as_f64().unwrap_or(0.0);
-        } else if session.kind == Kind::Local {
-            status.message = "Starting the server (about a minute)…".into();
-        } else if session.kind == Kind::Runpod {
-            status.usd = status.uptime_s as f64 / 3600.0 * session.usd_per_hour;
+            *self.boot.lock().unwrap() = None;
+        } else {
+            if session.kind == Kind::Runpod {
+                status.usd = status.uptime_s as f64 / 3600.0 * session.usd_per_hour;
+            }
             if status.message.is_empty() {
-                status.message = "Starting: pulling the image and booting the server (a few minutes on a new pod).".into();
+                let boot = self.boot.lock().unwrap().clone();
+                (status.message, status.progress) = match (boot, &session.kind) {
+                    (Some(b), _) => (b.message, b.progress),
+                    (None, Kind::Runpod) => {
+                        ("Waiting for RunPod to set up the machine…".into(), None)
+                    }
+                    (None, Kind::Local) => ("Starting the server (about a minute)…".into(), None),
+                };
             }
         }
         self.set(app, status).await;
+    }
+}
+
+async fn follow_pod(app: &AppHandle, inner: &Inner, session: &Session) {
+    let Ok(client) = inner.runpod() else { return };
+    let mut tracker = local::PullTracker::new(
+        local::layer_sizes().await.unwrap_or_default(),
+        "onto the RunPod machine",
+    );
+    let mut cursor: Option<String> = None;
+    loop {
+        let from = cursor.clone();
+        let _ = client
+            .follow_logs(&session.pod_id, from.as_deref(), |id, line| {
+                cursor = Some(id);
+                if line.source == "system" {
+                    if let Some(pulled) = tracker.feed(&line.line) {
+                        *inner.boot.lock().unwrap() = Some(pulled);
+                    }
+                } else {
+                    *inner.boot.lock().unwrap() = Some(local::Pulled {
+                        message: "Starting the server…".into(),
+                        progress: None,
+                    });
+                }
+                inner.push_log(app, line);
+            })
+            .await;
+        tokio::time::sleep(Duration::from_secs(3)).await;
+    }
+}
+
+async fn follow_container(app: &AppHandle, inner: &Inner) {
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    let Ok(mut child) = local::follow_logs(300) else {
+        return;
+    };
+    let (Some(out), Some(err)) = (child.stdout.take(), child.stderr.take()) else {
+        return;
+    };
+    let (mut out, mut err) = (BufReader::new(out).lines(), BufReader::new(err).lines());
+    let (mut out_open, mut err_open) = (true, true);
+    while out_open || err_open {
+        let line = tokio::select! {
+            l = out.next_line(), if out_open => l.ok().flatten().or_else(|| { out_open = false; None }),
+            l = err.next_line(), if err_open => l.ok().flatten().or_else(|| { err_open = false; None }),
+        };
+        if let Some(line) = line {
+            let ts = chrono::Utc::now().to_rfc3339();
+            inner.push_log(
+                app,
+                runpod::LogLine {
+                    source: "container".into(),
+                    line,
+                    ts,
+                },
+            );
+        }
     }
 }
 
@@ -365,6 +485,11 @@ async fn versions(
 }
 
 #[tauri::command]
+fn logs(inner: State<'_, Shared>) -> Vec<runpod::LogLine> {
+    inner.logs.lock().unwrap().iter().cloned().collect()
+}
+
+#[tauri::command]
 async fn hardware() -> Result<local::Hardware, String> {
     Ok(local::check().await)
 }
@@ -403,6 +528,8 @@ async fn start(app: AppHandle, inner: State<'_, Shared>, kind: Kind) -> Result<(
     if inner.session.lock().await.is_some() {
         return Err("difflab is already running".into());
     }
+    inner.logs.lock().unwrap().clear();
+    *inner.boot.lock().unwrap() = None;
     let starting = Status {
         phase: "starting".into(),
         kind: Some(kind.clone()),
@@ -703,6 +830,9 @@ pub fn run() {
                 session: Mutex::new(session),
                 draining: Mutex::new(false),
                 versions: Mutex::new(Versions::default()),
+                logs: std::sync::Mutex::new(Default::default()),
+                boot: std::sync::Mutex::new(None),
+                follower: std::sync::Mutex::new(None),
                 store,
                 http: reqwest::Client::new(),
             });
@@ -724,6 +854,7 @@ pub fn run() {
             load,
             balance,
             versions,
+            logs,
             hardware,
             save_settings,
             start,

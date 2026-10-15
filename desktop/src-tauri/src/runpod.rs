@@ -1,9 +1,13 @@
-use serde::Deserialize;
+use futures_util::StreamExt;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 const API: &str = "https://rest.runpod.io/v1";
 // The REST API has no account route; the balance is only on GraphQL (runpodctl reads it there too).
 const GRAPHQL: &str = "https://api.runpod.io/graphql";
+// Pod logs are on the v2 API (what `runpodctl pod logs` reads): server-sent events of
+// {source: system|container, line, ts}, the system lines narrating the image pull layer by layer.
+const LOGS: &str = "https://api.runpod.io/v2";
 pub const IMAGE: &str = "ghcr.io/diverofdark/difflab:latest";
 pub const VOLUME_NAME: &str = "difflab";
 // ~96 GB of weights, the 40 GiB KV cache (`VLM_DISK_CACHE_BYTES`), the database and finals.
@@ -51,6 +55,16 @@ impl Pod {
             .unwrap_or("")
             .to_string()
     }
+}
+
+#[derive(Deserialize, Serialize, Clone)]
+pub struct LogLine {
+    #[serde(default)]
+    pub source: String,
+    #[serde(default)]
+    pub line: String,
+    #[serde(default)]
+    pub ts: String,
 }
 
 pub struct Client {
@@ -215,6 +229,75 @@ impl Client {
             .and_then(Value::as_str)
             .map(str::to_string)
             .ok_or_else(|| "RunPod answered without a user id".into())
+    }
+
+    pub async fn gpu_name(&self, id: &str) -> Option<String> {
+        let found = self
+            .graphql(&format!(
+                "pod(input: {{podId: \"{id}\"}}) {{ machine {{ gpuDisplayName }} }}"
+            ))
+            .await?;
+        found["pod"]["machine"]["gpuDisplayName"]
+            .as_str()
+            .map(str::to_string)
+    }
+
+    async fn graphql(&self, query: &str) -> Option<Value> {
+        let body: Value = self
+            .http
+            .post(GRAPHQL)
+            .query(&[("api_key", &self.key)])
+            .json(&json!({ "query": format!("query {{ {query} }}") }))
+            .send()
+            .await
+            .ok()?
+            .json()
+            .await
+            .ok()?;
+        Some(body["data"].clone())
+    }
+
+    /// Streams the pod's log from after `cursor` (or its last `tail` lines) until the connection
+    /// drops; the caller reconnects with the last id it was handed.
+    pub async fn follow_logs(
+        &self,
+        id: &str,
+        cursor: Option<&str>,
+        mut each: impl FnMut(String, LogLine),
+    ) -> Result<(), String> {
+        let mut request = self
+            .http
+            .get(format!("{LOGS}/pods/{id}/logs"))
+            .bearer_auth(&self.key)
+            .header("Accept", "text/event-stream");
+        request = match cursor {
+            Some(cursor) => request.header("Last-Event-ID", cursor),
+            None => request.query(&[("tail", "300")]),
+        };
+        let response = request.send().await.map_err(|e| e.to_string())?;
+        if !response.status().is_success() {
+            return Err(format!("logs answered {}", response.status()));
+        }
+        let mut stream = response.bytes_stream();
+        let mut buffer = String::new();
+        while let Some(chunk) = stream.next().await {
+            buffer.push_str(&String::from_utf8_lossy(&chunk.map_err(|e| e.to_string())?));
+            while let Some(end) = buffer.find("\n\n") {
+                let event: String = buffer.drain(..end + 2).collect();
+                let (mut event_id, mut data) = (String::new(), String::new());
+                for line in event.lines() {
+                    if let Some(v) = line.strip_prefix("id:") {
+                        event_id = v.trim().to_string();
+                    } else if let Some(v) = line.strip_prefix("data:") {
+                        data.push_str(v.trim_start());
+                    }
+                }
+                if let Ok(line) = serde_json::from_str::<LogLine>(&data) {
+                    each(event_id, line);
+                }
+            }
+        }
+        Ok(())
     }
 
     pub async fn delete_pod(&self, id: &str) -> Result<(), String> {

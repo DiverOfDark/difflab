@@ -293,15 +293,92 @@ pub async fn layer_sizes() -> Option<HashMap<String, u64>> {
     (!sizes.is_empty()).then_some(sizes)
 }
 
+#[derive(Clone)]
 pub struct Pulled {
     pub message: String,
     pub progress: Option<f64>,
 }
 
+/// Turns image-pull lines into gigabytes: both `docker pull` ("<id>: Download complete") and RunPod's
+/// system log ("<id> Download complete") name layers by the id `layer_sizes` keys on.
+pub struct PullTracker {
+    sizes: HashMap<String, u64>,
+    total: u64,
+    seen: HashSet<String>,
+    fetched: HashSet<String>,
+    unpacked: HashSet<String>,
+    pub place: &'static str,
+}
+
+impl PullTracker {
+    pub fn new(sizes: HashMap<String, u64>, place: &'static str) -> Self {
+        let total = sizes.values().sum();
+        PullTracker {
+            sizes,
+            total,
+            seen: HashSet::new(),
+            fetched: HashSet::new(),
+            unpacked: HashSet::new(),
+            place,
+        }
+    }
+
+    pub fn feed(&mut self, line: &str) -> Option<Pulled> {
+        let (id, state) = line.split_once(' ')?;
+        let id = id.trim_end_matches(':');
+        if id.len() != 12 || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return None;
+        }
+        let state = state.trim();
+        self.seen.insert(id.to_string());
+        if matches!(
+            state,
+            "Download complete" | "Already exists" | "Pull complete"
+        ) {
+            self.fetched.insert(id.to_string());
+        }
+        if matches!(state, "Already exists" | "Pull complete") {
+            self.unpacked.insert(id.to_string());
+        }
+        let (seen, fetched, unpacked) = (self.seen.len(), self.fetched.len(), self.unpacked.len());
+        let got: u64 = self
+            .fetched
+            .iter()
+            .filter_map(|id| self.sizes.get(id))
+            .sum();
+        Some(if fetched < seen && self.total > 0 {
+            Pulled {
+                message: format!(
+                    "Downloading DiffLab {}: {:.1} / {:.1} GB",
+                    self.place,
+                    got as f64 / 1e9,
+                    self.total as f64 / 1e9
+                ),
+                progress: Some(got as f64 / self.total as f64),
+            }
+        } else if fetched < seen {
+            Pulled {
+                message: format!(
+                    "Downloading DiffLab {}: {fetched} / {seen} parts",
+                    self.place
+                ),
+                progress: Some(fetched as f64 / seen as f64),
+            }
+        } else {
+            Pulled {
+                message: format!(
+                    "Unpacking DiffLab {}: {unpacked} / {seen} parts",
+                    self.place
+                ),
+                progress: Some(unpacked as f64 / seen as f64),
+            }
+        })
+    }
+}
+
 /// `docker pull`, reporting what it has fetched as it goes.
 pub async fn pull(progress: mpsc::UnboundedSender<Pulled>) -> Result<(), String> {
-    let sizes = layer_sizes().await.unwrap_or_default();
-    let total: u64 = sizes.values().sum();
+    let mut tracker = PullTracker::new(layer_sizes().await.unwrap_or_default(), "to this PC");
     let mut child = command("docker")
         .args(["pull", IMAGE])
         .stdout(Stdio::piped())
@@ -309,50 +386,10 @@ pub async fn pull(progress: mpsc::UnboundedSender<Pulled>) -> Result<(), String>
         .spawn()
         .map_err(|e| format!("docker pull: {e}"))?;
     let mut lines = BufReader::new(child.stdout.take().expect("piped")).lines();
-    let (mut seen, mut fetched, mut unpacked) = (HashSet::new(), HashSet::new(), HashSet::new());
     while let Ok(Some(line)) = lines.next_line().await {
-        let Some((id, state)) = line.split_once(": ") else {
-            continue;
-        };
-        if id.len() != 12 {
-            continue;
+        if let Some(update) = tracker.feed(&line) {
+            let _ = progress.send(update);
         }
-        seen.insert(id.to_string());
-        if matches!(
-            state,
-            "Download complete" | "Already exists" | "Pull complete"
-        ) {
-            fetched.insert(id.to_string());
-        }
-        if matches!(state, "Already exists" | "Pull complete") {
-            unpacked.insert(id.to_string());
-        }
-        let got: u64 = fetched.iter().filter_map(|id| sizes.get(id)).sum();
-        let update = if fetched.len() < seen.len() && total > 0 {
-            Pulled {
-                message: format!(
-                    "Downloading DiffLab: {:.1} / {:.1} GB",
-                    got as f64 / 1e9,
-                    total as f64 / 1e9
-                ),
-                progress: Some(got as f64 / total as f64),
-            }
-        } else if fetched.len() < seen.len() {
-            Pulled {
-                message: format!(
-                    "Downloading DiffLab: {} / {} parts",
-                    fetched.len(),
-                    seen.len()
-                ),
-                progress: Some(fetched.len() as f64 / seen.len() as f64),
-            }
-        } else {
-            Pulled {
-                message: format!("Unpacking: {} / {} parts", unpacked.len(), seen.len()),
-                progress: Some(unpacked.len() as f64 / seen.len() as f64),
-            }
-        };
-        let _ = progress.send(update);
     }
     let out = child.wait_with_output().await.map_err(|e| e.to_string())?;
     if !out.status.success() {
@@ -362,6 +399,16 @@ pub async fn pull(progress: mpsc::UnboundedSender<Pulled>) -> Result<(), String>
         ));
     }
     Ok(())
+}
+
+/// The container's own output, from the last `tail` lines on, until it stops.
+pub fn follow_logs(tail: usize) -> Result<tokio::process::Child, String> {
+    command("docker")
+        .args(["logs", "-f", "--tail", &tail.to_string(), CONTAINER])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("docker logs: {e}"))
 }
 
 /// Returns the host port it listens on: whatever the OS hands out, since any fixed one may be taken.

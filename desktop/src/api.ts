@@ -84,3 +84,11 @@ export interface Versions {
 }
 
 export const versions = (refresh = false) => invoke<Versions>("versions", { refresh });
+
+export interface LogLine {
+  source: string;
+  line: string;
+  ts: string;
+}
+
+export const logs = () => invoke<LogLine[]>("logs");

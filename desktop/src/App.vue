@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import "../../frontend/src/style.css";
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, nextTick, onMounted, reactive, ref } from "vue";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import * as api from "./api";
-import { usd, type Hardware, type Kind, type Prefs, type Status, type Versions } from "./api";
+import { usd, type Hardware, type Kind, type Prefs, type LogLine, type Status, type Versions } from "./api";
 import Wizard from "./Wizard.vue";
 
 type Tab = "run" | "results" | "settings";
@@ -31,6 +31,19 @@ const saved = ref(false);
 const sync = ref<{ done: number; total: number; file: string } | null>(null);
 const syncNote = ref("");
 const versions = ref<Versions | null>(null);
+const logLines = ref<LogLine[]>([]);
+const logBox = ref<HTMLElement | null>(null);
+const logsOpen = ref(true);
+const LOG_SHOWN = 1000;
+
+// Follows the bottom unless the reader has scrolled up to read something.
+function addLog(line: LogLine) {
+  const box = logBox.value;
+  const atBottom = !box || box.scrollHeight - box.scrollTop - box.clientHeight < 24;
+  logLines.value.push(line);
+  if (logLines.value.length > LOG_SHOWN) logLines.value.splice(0, logLines.value.length - LOG_SHOWN);
+  if (atBottom) nextTick(() => logBox.value && (logBox.value.scrollTop = logBox.value.scrollHeight));
+}
 const appUpdate = ref<{ version: string; ready: boolean } | null>(null);
 const appUpdateNote = ref("");
 let pending: Update | null = null;
@@ -139,7 +152,11 @@ async function chooseFolder() {
   }
 }
 
-const start = (kind: Kind) => act(kind, () => api.start(kind));
+const start = (kind: Kind) =>
+  act(kind, async () => {
+    logLines.value = [];
+    await api.start(kind);
+  });
 const stopNow = () => act("stop", () => api.stop(true));
 const stopWhenDone = () => act("drain", () => api.stop(false));
 const openUi = () => act("open", () => api.openUi());
@@ -151,6 +168,8 @@ const download = () =>
 
 onMounted(async () => {
   await listen<Status>("status", (e) => (status.value = e.payload));
+  await listen<LogLine>("log", (e) => addLog(e.payload));
+  logLines.value = (await api.logs()).slice(-LOG_SHOWN);
   await listen<number | null>("balance", (e) => (balance.value = e.payload));
   await listen<{ done: number; total: number; file: string }>("sync", (e) => (sync.value = e.payload));
   await listen<Omit<Versions, "app" | "running_image">>("versions", (e) => {
@@ -202,7 +221,8 @@ onMounted(async () => {
           <button :class="{ on: tab === 'settings' }" @click="tab = 'settings'">Settings</button>
         </nav>
 
-        <section v-if="tab === 'run'" class="card">
+        <template v-if="tab === 'run'">
+        <section class="card">
           <div class="head">
             <h5>{{ phase.label }}<span v-if="status.kind" class="muted"> · {{ where }}</span></h5>
             <span v-if="running && status.kind === 'runpod'" class="mono muted">{{ usd(status.usd_per_hour) }}/h</span>
@@ -235,6 +255,17 @@ onMounted(async () => {
             </template>
           </div>
         </section>
+
+        <section v-if="logLines.length" class="card logs">
+          <div class="head slim">
+            <h5>Log</h5>
+            <button class="link" @click="logsOpen = !logsOpen">{{ logsOpen ? "hide" : "show" }}</button>
+          </div>
+          <div v-show="logsOpen" ref="logBox" class="lines mono">
+            <div v-for="(l, i) in logLines" :key="i" :class="l.source">{{ l.line }}</div>
+          </div>
+        </section>
+        </template>
 
         <section v-else-if="tab === 'results'" class="card">
           <div class="head"><h5>Results</h5><button class="link" @click="openResults">open folder →</button></div>
@@ -366,6 +397,19 @@ button {
   to {
     transform: rotate(360deg);
   }
+}
+.logs .lines {
+  max-height: 260px;
+  overflow-y: auto;
+  padding: var(--space-1) var(--space-2);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: var(--bg-base);
+}
+.logs .system {
+  color: var(--text-tertiary);
 }
 .update {
   color: var(--accent);
