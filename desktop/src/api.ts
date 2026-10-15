@@ -15,8 +15,6 @@ export interface Status {
 }
 
 export interface Prefs {
-  datacenter: string;
-  volume_id: string;
   idle_minutes: number;
   stuck_minutes: number;
   spend_limit_usd: number;
@@ -37,9 +35,7 @@ export interface Hardware {
 export interface Loaded {
   prefs: Prefs;
   has_runpod_key: boolean;
-  has_s3: boolean;
   has_local_results: boolean;
-  datacenters: string[];
   status: Status;
   results_dir: string;
   balance: number | null;
@@ -47,7 +43,6 @@ export interface Loaded {
 
 export interface Secrets {
   runpodKey?: string;
-  s3Secret?: string;
 }
 
 export const load = () => invoke<Loaded>("load");
@@ -57,7 +52,6 @@ export const saveSettings = (prefs: Prefs, secrets: Secrets = {}) =>
   invoke("save_settings", {
     prefs,
     runpodKey: secrets.runpodKey || null,
-    s3Secret: secrets.s3Secret || null,
   });
 export const start = (kind: Kind) => invoke("start", { kind });
 export const stop = (immediately: boolean) => invoke("stop", { immediately });

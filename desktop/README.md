@@ -11,6 +11,7 @@ Linux needs the WebKitGTK 4.1 headers to build (`webkit2gtk4.1-devel` on Fedora)
 Fedora (Bazzite, Silverblue) build in a toolbox; the binary runs on the host. Installers for Windows,
 macOS and Linux come from the `desktop` workflow, run by hand.
 
-What a RunPod user needs: an API key, and an S3 API key (Settings → S3 API Keys) so results download
-with no pod running. The first pod creates a 150 GB network volume named `difflab` in the chosen region;
-the first render on it downloads ~96 GB of weights.
+What a RunPod user needs: an API key. The first pod creates a global volume named `difflab` (no
+datacenter, grows as used, billed for storage and requests) and mounts it at `/app/output`; the first
+render on it downloads ~96 GB of weights. Results download from the running pod over HTTP, as RunPod's
+S3 API reaches only network volumes. Closing the window leaves the app in the tray; Quit is its menu.

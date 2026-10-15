@@ -1,6 +1,5 @@
 mod local;
 mod runpod;
-mod s3;
 mod store;
 
 use rand::RngCore;
@@ -16,7 +15,7 @@ use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
 use tokio::sync::Mutex;
 
-use store::{Kind, Prefs, Session, Store, RUNPOD_KEY, S3_ACCESS, S3_SECRET};
+use store::{Kind, Prefs, Session, Store, RUNPOD_KEY};
 
 // Also the status refresh; the pod's watchdog counts the app as gone after DIFFLAB_IDLE_MINUTES without one.
 const HEARTBEAT: Duration = Duration::from_secs(10);
@@ -59,6 +58,7 @@ struct Inner {
     logs: std::sync::Mutex<std::collections::VecDeque<runpod::LogLine>>,
     boot: std::sync::Mutex<Option<local::Pulled>>,
     follower: std::sync::Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
+    tray_status: std::sync::Mutex<Option<tauri::menu::MenuItem<tauri::Wry>>>,
 }
 
 type Shared = Arc<Inner>;
@@ -76,26 +76,6 @@ impl Inner {
         Ok(runpod::Client::new(key))
     }
 
-    async fn volume(&self) -> Option<s3::Volume> {
-        let prefs = self.store.prefs();
-        let id = Some(prefs.volume_id).filter(|v| !v.is_empty())?;
-        let secret = self.store.secret(S3_SECRET)?;
-        let access = match self.store.secret(S3_ACCESS) {
-            Some(access) => access,
-            None => {
-                let access = self.runpod().ok()?.user_id().await.ok()?;
-                let _ = self.store.set_secret(S3_ACCESS, &access);
-                access
-            }
-        };
-        Some(s3::Volume {
-            datacenter: prefs.datacenter,
-            id,
-            access,
-            secret,
-        })
-    }
-
     async fn refresh_balance(&self, app: &AppHandle, force: bool) -> Option<f64> {
         let mut held = self.balance.lock().await;
         if !force && now() - held.0 < BALANCE_EVERY {
@@ -109,6 +89,21 @@ impl Inner {
     }
 
     async fn set(&self, app: &AppHandle, status: Status) {
+        let line = match status.phase.as_str() {
+            "ready" if status.usd_per_hour > 0.0 => {
+                format!("Running on RunPod · ${:.2}", status.usd)
+            }
+            "ready" => "Running on this PC".to_string(),
+            "starting" | "booting" => "Starting…".to_string(),
+            "error" => "Problem: open DiffLab".to_string(),
+            _ => "Not running".to_string(),
+        };
+        if let Some(item) = self.tray_status.lock().unwrap().as_ref() {
+            let _ = item.set_text(&line);
+        }
+        if let Some(tray) = app.tray_by_id("tray") {
+            let _ = tray.set_tooltip(Some(format!("DiffLab: {line}")));
+        }
         *self.status.lock().await = status.clone();
         let _ = app.emit("status", status);
     }
@@ -159,21 +154,14 @@ impl Inner {
         response.json().await.ok()
     }
 
-    /// Why the pod ended, from what its watchdog wrote on the volume.
-    async fn ended_reason(&self, pod_id: &str) -> String {
-        let Some(volume) = self.volume().await else {
-            return "The pod is gone.".into();
-        };
-        match volume.get("pod-ended.json").await {
-            Ok(Some(bytes)) => match serde_json::from_slice::<Value>(&bytes) {
-                Ok(v) if v["pod"].as_str() == Some(pod_id) => format!(
-                    "Pod shut down: {}, ${:.2}.",
-                    v["reason"].as_str().unwrap_or("no reason recorded"),
-                    v["usd"].as_f64().unwrap_or(0.0)
-                ),
-                _ => "The pod was deleted outside the app.".into(),
-            },
-            _ => "The pod is gone.".into(),
+    /// Why the pod ended, as its watchdog announced in the heartbeat a tick before deleting it.
+    async fn ended_reason(&self, session: &Session) -> String {
+        let usd = self.status.lock().await.usd;
+        if session.ending.is_empty() {
+            "The pod is gone: it shut down while the app was closed, or was deleted outside it."
+                .into()
+        } else {
+            format!("Pod shut down: {}, ${usd:.2}.", session.ending)
         }
     }
 
@@ -250,17 +238,17 @@ impl Inner {
                     // A pod just created may not be listed yet.
                     Ok(None) if status.uptime_s < 120 => {}
                     Ok(None) => {
-                        let reason = self.ended_reason(&session.pod_id).await;
+                        let reason = self.ended_reason(&session).await;
                         return self.end(app, reason).await;
                     }
                     Ok(Some(pod)) if pod.desired_status == "TERMINATED" => {
-                        let reason = self.ended_reason(&session.pod_id).await;
+                        let reason = self.ended_reason(&session).await;
                         return self.end(app, reason).await;
                     }
                     // Its container exited: the watchdog is gone with it, and the pod still holds its disk.
                     Ok(Some(pod)) if pod.desired_status == "EXITED" => {
                         let _ = client.delete_pod(&session.pod_id).await;
-                        let reason = self.ended_reason(&session.pod_id).await;
+                        let reason = self.ended_reason(&session).await;
                         let reason = if reason.starts_with("Pod shut down") {
                             reason
                         } else {
@@ -298,6 +286,15 @@ impl Inner {
         if let Some(answer) = self.heartbeat(&session, session.usd_per_hour).await {
             status.phase = "ready".into();
             status.usd = answer["usd"].as_f64().unwrap_or(0.0);
+            let ending = answer["ending"].as_str().unwrap_or("").to_string();
+            if ending != session.ending {
+                session.ending = ending;
+                let _ = self.store.save_session(Some(&session));
+                *self.session.lock().await = Some(session.clone());
+            }
+            if !session.ending.is_empty() {
+                status.message = format!("Shutting down in under a minute: {}.", session.ending);
+            }
             *self.boot.lock().unwrap() = None;
         } else {
             if session.kind == Kind::Runpod {
@@ -386,9 +383,7 @@ fn token() -> String {
 struct Loaded {
     prefs: Prefs,
     has_runpod_key: bool,
-    has_s3: bool,
     has_local_results: bool,
-    datacenters: Vec<&'static str>,
     status: Status,
     results_dir: String,
     balance: Option<f64>,
@@ -406,9 +401,7 @@ async fn load(app: AppHandle, inner: State<'_, Shared>) -> Result<Loaded, String
     let prefs = inner.store.prefs();
     Ok(Loaded {
         has_runpod_key: inner.store.secret(RUNPOD_KEY).is_some(),
-        has_s3: inner.store.secret(S3_SECRET).is_some(),
         has_local_results: local::has_results().await,
-        datacenters: runpod::DATACENTERS.to_vec(),
         status: inner.status.lock().await.clone(),
         results_dir: results_dir(&app, &prefs).display().to_string(),
         balance: inner.balance.lock().await.1,
@@ -501,26 +494,13 @@ async fn save_settings(
     inner: State<'_, Shared>,
     prefs: Prefs,
     runpod_key: Option<String>,
-    s3_secret: Option<String>,
 ) -> Result<(), String> {
-    let mut prefs = prefs;
-    let old = inner.store.prefs();
-    if old.datacenter != prefs.datacenter {
-        prefs.volume_id = String::new();
-    }
     inner.store.save_prefs(&prefs)?;
-    for (name, value) in [(RUNPOD_KEY, runpod_key.clone()), (S3_SECRET, s3_secret)] {
-        if let Some(v) = value
-            .map(|v| v.trim().to_string())
-            .filter(|v| !v.is_empty())
-        {
-            inner.store.set_secret(name, &v)?;
-        }
-    }
-    if runpod_key.is_some_and(|k| !k.trim().is_empty()) {
-        if let Ok(id) = inner.runpod()?.user_id().await {
-            inner.store.set_secret(S3_ACCESS, &id)?;
-        }
+    if let Some(key) = runpod_key
+        .map(|k| k.trim().to_string())
+        .filter(|k| !k.is_empty())
+    {
+        inner.store.set_secret(RUNPOD_KEY, &key)?;
     }
     Ok(())
 }
@@ -624,29 +604,30 @@ async fn launch(app: &AppHandle, inner: &Inner, kind: Kind) -> Result<Session, S
                     .await
                     .map(|v| v.revision)
                     .unwrap_or_default(),
+                ending: String::new(),
             })
         }
         Kind::Runpod => {
             let client = inner.runpod()?;
             let key = inner.store.secret(RUNPOD_KEY).unwrap_or_default();
-            let volume = client.volume(&prefs.datacenter).await?;
-            let mut prefs = prefs;
-            prefs.volume_id = volume.id.clone();
-            inner.store.save_prefs(&prefs)?;
-            let env = json!({
-                "DIFFLAB_TOKEN": token,
-                "DIFFLAB_RUNPOD_API_KEY": key,
-                "DIFFLAB_IDLE_MINUTES": prefs.idle_minutes.to_string(),
-                "DIFFLAB_STUCK_MINUTES": prefs.stuck_minutes.to_string(),
-                "DIFFLAB_SPEND_LIMIT_USD": prefs.spend_limit_usd.to_string(),
-                "DIFFLAB_EXIT_WHEN_DONE": if prefs.exit_when_done { "1" } else { "" },
-            });
+            let volume = client.global_volume().await?;
+            let env = [
+                ("DIFFLAB_TOKEN", token.clone()),
+                ("DIFFLAB_RUNPOD_API_KEY", key),
+                ("DIFFLAB_IDLE_MINUTES", prefs.idle_minutes.to_string()),
+                ("DIFFLAB_STUCK_MINUTES", prefs.stuck_minutes.to_string()),
+                ("DIFFLAB_SPEND_LIMIT_USD", prefs.spend_limit_usd.to_string()),
+                (
+                    "DIFFLAB_EXIT_WHEN_DONE",
+                    if prefs.exit_when_done { "1" } else { "" }.to_string(),
+                ),
+            ];
             let latest = local::latest_image().await;
             let image = match &latest {
                 Some(v) => format!("{}@{}", runpod::IMAGE.trim_end_matches(":latest"), v.digest),
                 None => runpod::IMAGE.to_string(),
             };
-            let pod = client.create_pod(&volume.id, &image, env).await?;
+            let pod = client.create_pod(&volume, &image, &env).await?;
             Ok(Session {
                 kind,
                 base_url: runpod::proxy_url(&pod.id),
@@ -656,6 +637,7 @@ async fn launch(app: &AppHandle, inner: &Inner, kind: Kind) -> Result<Session, S
                 pod_id: pod.id,
                 token,
                 started_at: now(),
+                ending: String::new(),
             })
         }
     }
@@ -663,6 +645,11 @@ async fn launch(app: &AppHandle, inner: &Inner, kind: Kind) -> Result<Session, S
 
 #[tauri::command]
 async fn stop(app: AppHandle, inner: State<'_, Shared>, immediately: bool) -> Result<(), String> {
+    stop_now(&app, inner.inner(), immediately).await
+}
+
+async fn stop_now(app: &AppHandle, inner: &Shared, immediately: bool) -> Result<(), String> {
+    let app = app.clone();
     let Some(session) = inner.session.lock().await.clone() else {
         return Ok(());
     };
@@ -682,6 +669,11 @@ async fn stop(app: AppHandle, inner: State<'_, Shared>, immediately: bool) -> Re
 
 #[tauri::command]
 async fn open_ui(app: AppHandle, inner: State<'_, Shared>) -> Result<(), String> {
+    open_studio(&app, inner.inner()).await
+}
+
+async fn open_studio(app: &AppHandle, inner: &Shared) -> Result<(), String> {
+    let app = app.clone();
     let session = inner
         .session
         .lock()
@@ -794,26 +786,49 @@ async fn sync_results(app: AppHandle, inner: State<'_, Shared>) -> Result<String
         local::copy_results(&wanted, |done, key| progress(done, total, key)).await?;
         copied += total;
     }
-    if let Some(volume) = inner.volume().await {
-        let mut wanted = Vec::new();
-        for prefix in RESULT_PREFIXES {
-            for object in volume.list(prefix).await? {
-                if !object.key.ends_with('/') {
-                    wanted.extend(missing(&pod, &object.key, object.size));
-                }
+    // A global volume has no S3 API, so RunPod's results come from the pod while it is up.
+    let session = inner
+        .session
+        .lock()
+        .await
+        .clone()
+        .filter(|s| s.kind == Kind::Runpod);
+    let ready = inner.status.lock().await.phase == "ready";
+    match session {
+        Some(session) if ready => {
+            let listed: Vec<Value> = inner
+                .http
+                .get(format!("{}/api/results", session.base_url))
+                .bearer_auth(&session.token)
+                .send()
+                .await
+                .map_err(|e| e.to_string())?
+                .json()
+                .await
+                .map_err(|e| format!("the pod's results list: {e}"))?;
+            let wanted: Vec<_> = listed
+                .iter()
+                .filter_map(|r| missing(&pod, r["path"].as_str()?, r["size"].as_u64()?))
+                .collect();
+            let total = wanted.len();
+            for (done, (key, to)) in wanted.into_iter().enumerate() {
+                progress(done, total, &key);
+                download(
+                    &inner.http,
+                    &format!("{}/output/{key}", session.base_url),
+                    &session.token,
+                    &to,
+                )
+                .await?;
             }
+            copied += total;
         }
-        let total = wanted.len();
-        for (done, (key, to)) in wanted.into_iter().enumerate() {
-            progress(done, total, &key);
-            volume.download(&key, &to).await?;
+        _ if !local::has_results().await => {
+            return Err(
+                "Nothing to download yet. RunPod results download while a pod is running.".into(),
+            );
         }
-        copied += total;
-    } else if !local::has_results().await {
-        return Err(
-            "Nothing to download yet: run DiffLab here first, or add your S3 key for RunPod."
-                .into(),
-        );
+        _ => {}
     }
     progress(copied, copied, "");
     Ok(if copied == 0 {
@@ -841,6 +856,47 @@ async fn open_results(app: AppHandle, inner: State<'_, Shared>) -> Result<(), St
     #[cfg(not(target_os = "linux"))]
     app.opener()
         .open_path(dir.display().to_string(), None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
+async fn download(
+    http: &reqwest::Client,
+    url: &str,
+    token: &str,
+    to: &std::path::Path,
+) -> Result<(), String> {
+    use futures_util::StreamExt;
+    use tokio::io::AsyncWriteExt;
+    let response = http
+        .get(url)
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !response.status().is_success() {
+        return Err(format!("{url}: {}", response.status()));
+    }
+    if let Some(parent) = to.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    let partial = to.with_file_name(format!(
+        "{}.part",
+        to.file_name().unwrap_or_default().to_string_lossy()
+    ));
+    let mut file = tokio::fs::File::create(&partial)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        file.write_all(&chunk.map_err(|e| e.to_string())?)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    file.flush().await.map_err(|e| e.to_string())?;
+    tokio::fs::rename(&partial, to)
+        .await
         .map_err(|e| e.to_string())
 }
 
@@ -901,6 +957,86 @@ async fn open_link(app: AppHandle, url: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+fn show_main(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
+/// Like JetBrains Toolbox: closing the window leaves DiffLab in the tray, where a running pod keeps
+/// its heartbeat; Quit is the menu's.
+fn tray(app: &tauri::App, inner: &Shared) -> tauri::Result<()> {
+    use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+    use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+    let status = MenuItem::with_id(app, "status", "Not running", false, None::<&str>)?;
+    let show = MenuItem::with_id(app, "show", "Show DiffLab", true, None::<&str>)?;
+    let studio = MenuItem::with_id(app, "studio", "Open studio", true, None::<&str>)?;
+    let stop = MenuItem::with_id(app, "stop", "Stop now", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+    let menu = Menu::with_items(
+        app,
+        &[
+            &status,
+            &PredefinedMenuItem::separator(app)?,
+            &show,
+            &studio,
+            &stop,
+            &PredefinedMenuItem::separator(app)?,
+            &quit,
+        ],
+    )?;
+    *inner.tray_status.lock().unwrap() = Some(status);
+    let mut builder = TrayIconBuilder::with_id("tray")
+        .tooltip("DiffLab")
+        .menu(&menu)
+        .show_menu_on_left_click(false);
+    if let Some(icon) = app.default_window_icon() {
+        builder = builder.icon(icon.clone());
+    }
+    builder
+        .on_menu_event(|app, event| {
+            let app = app.clone();
+            match event.id.as_ref() {
+                "show" => show_main(&app),
+                "studio" => {
+                    tauri::async_runtime::spawn(async move {
+                        let inner = app.state::<Shared>().inner().clone();
+                        let _ = open_studio(&app, &inner).await;
+                    });
+                }
+                "stop" => {
+                    tauri::async_runtime::spawn(async move {
+                        let inner = app.state::<Shared>().inner().clone();
+                        let _ = stop_now(&app, &inner, true).await;
+                    });
+                }
+                "quit" => {
+                    // The page installs a downloaded update first, then exits; this is the fallback.
+                    let _ = app.emit("quit-requested", ());
+                    tauri::async_runtime::spawn(async move {
+                        tokio::time::sleep(Duration::from_secs(20)).await;
+                        app.exit(0);
+                    });
+                }
+                _ => {}
+            }
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                show_main(tray.app_handle());
+            }
+        })
+        .build(app)?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -927,10 +1063,12 @@ pub fn run() {
                 logs: std::sync::Mutex::new(Default::default()),
                 boot: std::sync::Mutex::new(None),
                 follower: std::sync::Mutex::new(None),
+                tray_status: std::sync::Mutex::new(None),
                 store,
                 http: reqwest::Client::new(),
             });
             app.manage(inner.clone());
+            tray(app, &inner)?;
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 loop {
@@ -943,6 +1081,14 @@ pub fn run() {
                 }
             });
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             load,

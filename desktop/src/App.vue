@@ -4,8 +4,7 @@ import { computed, nextTick, onMounted, reactive, ref } from "vue";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { check, type Update } from "@tauri-apps/plugin-updater";
-import { relaunch } from "@tauri-apps/plugin-process";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { exit, relaunch } from "@tauri-apps/plugin-process";
 import * as api from "./api";
 import { usd, type Hardware, type Kind, type Prefs, type LogLine, type Status, type Versions } from "./api";
 import Wizard from "./Wizard.vue";
@@ -16,15 +15,13 @@ const loaded = ref(false);
 const wizard = ref(false);
 const tab = ref<Tab>("run");
 const status = ref<Status>({ phase: "none", kind: null, gpu: "", usd: 0, usd_per_hour: 0, uptime_s: 0, draining: false, message: "", progress: null });
-const prefs = reactive<Prefs>({ datacenter: "EU-RO-1", volume_id: "", idle_minutes: 5, stuck_minutes: 15, spend_limit_usd: 5, exit_when_done: false, results_dir: "", setup_done: false });
-const datacenters = ref<string[]>([]);
+const prefs = reactive<Prefs>({ idle_minutes: 5, stuck_minutes: 15, spend_limit_usd: 5, exit_when_done: false, results_dir: "", setup_done: false });
 const hasKey = ref(false);
-const hasS3 = ref(false);
 const hasLocal = ref(false);
 const balance = ref<number | null>(null);
 const resultsDir = ref("");
 const hardware = ref<Hardware | null>(null);
-const secrets = reactive({ runpodKey: "", s3Secret: "" });
+const secrets = reactive({ runpodKey: "" });
 const busy = ref("");
 const error = ref("");
 const saved = ref(false);
@@ -106,9 +103,7 @@ async function reload() {
   const got = await api.load();
   Object.assign(prefs, got.prefs);
   hasKey.value = got.has_runpod_key;
-  hasS3.value = got.has_s3;
   hasLocal.value = got.has_local_results;
-  datacenters.value = got.datacenters;
   status.value = got.status;
   resultsDir.value = got.results_dir;
   balance.value = got.balance;
@@ -137,7 +132,7 @@ const saveSettings = () =>
   act("save", async () => {
     await api.saveSettings({ ...prefs }, secrets);
     const newKey = !!secrets.runpodKey;
-    secrets.runpodKey = secrets.s3Secret = "";
+    secrets.runpodKey = "";
     await reload();
     if (newKey) balance.value = await api.balance();
     saved.value = true;
@@ -175,11 +170,11 @@ onMounted(async () => {
   await listen<Omit<Versions, "app" | "running_image">>("versions", (e) => {
     if (versions.value) versions.value = { ...versions.value, ...e.payload };
   });
-  await getCurrentWindow().onCloseRequested(async (event) => {
-    if (!pending) return;
-    event.preventDefault();
-    await pending.install().catch(() => undefined);
-    await getCurrentWindow().destroy();
+  // Closing the window only hides it to the tray; Quit in the tray menu ends the app, installing a
+  // downloaded update on the way out.
+  await listen("quit-requested", async () => {
+    if (pending) await pending.install().catch(() => undefined);
+    await exit(0);
   });
   await reload();
   wizard.value = !prefs.setup_done && !running.value;
@@ -212,7 +207,7 @@ onMounted(async () => {
     </header>
 
     <main class="screen">
-      <Wizard v-if="wizard" :prefs="prefs" :hardware="hardware" :datacenters="datacenters" :has-key="hasKey" @done="finishSetup" />
+      <Wizard v-if="wizard" :prefs="prefs" :hardware="hardware" :has-key="hasKey" @done="finishSetup" />
 
       <div v-else class="stack">
         <nav class="seg">
@@ -272,14 +267,14 @@ onMounted(async () => {
           <div class="body">
             <p class="mono muted path">{{ resultsDir }}</p>
             <div class="buttons">
-              <button class="primary" :disabled="(!hasS3 && !hasLocal) || !!busy" @click="download"><i v-if="busy === 'download'" class="spin" />{{ busy === "download" ? "Downloading…" : "Download results" }}</button>
+              <button class="primary" :disabled="(!hasLocal && !(running && status.kind === 'runpod')) || !!busy" @click="download"><i v-if="busy === 'download'" class="spin" />{{ busy === "download" ? "Downloading…" : "Download results" }}</button>
             </div>
             <template v-if="busy === 'download' && sync">
               <div class="bar"><i :style="{ width: `${sync.total ? (sync.done / sync.total) * 100 : 0}%` }" /></div>
               <p class="note mono">{{ sync.done }} / {{ sync.total }} · {{ sync.file }}</p>
             </template>
             <p v-else-if="syncNote" class="band hint">{{ syncNote }}</p>
-            <p v-if="!hasS3" class="note">Results made on this PC are copied from Docker. For RunPod, add an S3 key in Settings.</p>
+            <p class="note">Results made on this PC are copied from Docker; RunPod's download while a GPU is running there.</p>
           </div>
         </section>
 
@@ -288,14 +283,6 @@ onMounted(async () => {
           <div class="body">
             <label class="field"><span class="label">RunPod API key</span>
               <input v-model="secrets.runpodKey" type="password" :placeholder="hasKey ? 'saved; paste a new one to replace it' : 'rpa_…'" />
-            </label>
-            <label class="field"><span class="label">S3 key</span>
-              <input v-model="secrets.s3Secret" type="password" :placeholder="hasS3 ? 'saved; paste a new one to replace it' : 'rps_…'" />
-            </label>
-            <label class="field"><span class="label">Region</span>
-              <select v-model="prefs.datacenter">
-                <option v-for="dc in datacenters" :key="dc" :value="dc">{{ dc }}</option>
-              </select>
             </label>
             <div>
               <div class="knob">
@@ -326,7 +313,7 @@ onMounted(async () => {
           <div class="body">
             <div class="knob">
               <div><span class="name">App {{ versions.app }}</span>
-                <span v-if="appUpdate?.ready" class="hint">{{ appUpdate.version }} is downloaded and installs when you close the app.</span>
+                <span v-if="appUpdate?.ready" class="hint">{{ appUpdate.version }} is downloaded and installs when you quit from the tray.</span>
                 <span v-else-if="appUpdate" class="hint">Downloading {{ appUpdate.version }}…</span>
                 <span v-else class="hint">{{ appUpdateNote || "checking…" }}</span>
               </div>

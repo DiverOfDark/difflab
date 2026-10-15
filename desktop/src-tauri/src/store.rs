@@ -4,14 +4,10 @@ use std::path::{Path, PathBuf};
 
 const SERVICE: &str = "difflab";
 pub const RUNPOD_KEY: &str = "runpod_api_key";
-pub const S3_ACCESS: &str = "s3_access_key";
-pub const S3_SECRET: &str = "s3_secret";
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Prefs {
-    pub datacenter: String,
-    pub volume_id: String,
     pub idle_minutes: f64,
     pub stuck_minutes: f64,
     pub spend_limit_usd: f64,
@@ -23,8 +19,6 @@ pub struct Prefs {
 impl Default for Prefs {
     fn default() -> Self {
         Prefs {
-            datacenter: "EU-RO-1".into(),
-            volume_id: String::new(),
             idle_minutes: 5.0,
             stuck_minutes: 15.0,
             spend_limit_usd: 5.0,
@@ -53,6 +47,9 @@ pub struct Session {
     pub gpu: String,
     #[serde(default)]
     pub image: String,
+    /// What the pod's watchdog last said it was about to stop for.
+    #[serde(default)]
+    pub ending: String,
 }
 
 pub struct Store {

@@ -2,18 +2,17 @@
 import { computed, reactive, ref } from "vue";
 import { balance, openLink as openUrl, saveSettings, usd, type Hardware, type Kind, type Prefs } from "./api";
 
-const props = defineProps<{ prefs: Prefs; hardware: Hardware | null; datacenters: string[]; hasKey: boolean }>();
+const props = defineProps<{ prefs: Prefs; hardware: Hardware | null; hasKey: boolean }>();
 const emit = defineEmits<{ done: [kind: Kind] }>();
 
 const RUNPOD_SIGNUP = "https://runpod.io?ref=cazj8c05";
 const RUNPOD_KEYS = "https://console.runpod.io/user/credentials?tab=api-key&ref=cazj8c05";
-const RUNPOD_CREDENTIALS = "https://console.runpod.io/user/credentials?ref=cazj8c05";
 const RUNPOD_BILLING = "https://console.runpod.io/user/billing?ref=cazj8c05";
 
 const kind = ref<Kind | null>(null);
 const step = ref(0);
 const prefs = reactive<Prefs>({ ...props.prefs });
-const secrets = reactive({ runpodKey: "", s3Secret: "" });
+const secrets = reactive({ runpodKey: "" });
 const checked = ref<number | null>(null);
 const checking = ref(false);
 const problem = ref("");
@@ -116,19 +115,13 @@ async function next() {
     <section v-else-if="kind === 'runpod' && step === 2" class="stack">
       <div>
         <h2>Where your work is kept</h2>
-        <p class="muted">Models, projects and finished videos live on a 150 GB RunPod network volume. It stays between sessions and costs about $10 a month, whether or not a GPU is running. Pick the region closest to you; a GPU can only use storage in its own region.</p>
+        <p class="muted">Models, projects and finished videos live on a RunPod <strong>global volume</strong> named difflab, which the app creates the first time. Any GPU in any region can use it, so a start does not wait for one datacenter to have a free card.</p>
       </div>
-      <label class="field">
-        <span class="label">Region</span>
-        <select v-model="prefs.datacenter">
-          <option v-for="dc in datacenters" :key="dc" :value="dc">{{ dc }}</option>
-        </select>
-      </label>
-      <div>
-        <h3>Download results without a GPU <span class="pill waiting">optional</span></h3>
-        <p class="muted">With an S3 key the app can copy finished videos to this PC even when no GPU is running. RunPod only lets you create one on its site: open <a href="#" @click.prevent="openUrl(RUNPOD_CREDENTIALS)">Credentials → S3 API Keys</a>, create one, and paste the key that starts with rps_. You can add it later in Settings.</p>
-      </div>
-      <label class="field"><span class="label">S3 key</span><input v-model="secrets.s3Secret" type="password" placeholder="rps_…" /></label>
+      <ul class="how">
+        <li>It grows as you use it, and you pay RunPod for what it holds and for reads and writes. Models alone are about 96 GB.</li>
+        <li>It stays when no GPU is running. Delete it in RunPod's Storage page if you stop using DiffLab.</li>
+        <li>Finished videos download to this PC while a GPU is running.</li>
+      </ul>
     </section>
 
     <section v-else-if="kind === 'runpod' && step === 3" class="stack">

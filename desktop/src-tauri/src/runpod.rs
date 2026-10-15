@@ -3,15 +3,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 const API: &str = "https://rest.runpod.io/v1";
-// The REST API has no account route; the balance is only on GraphQL (runpodctl reads it there too).
+// Global volumes, pods that mount one, and the balance are only on GraphQL (RunPod's SDK uses it for them).
 const GRAPHQL: &str = "https://api.runpod.io/graphql";
 // Pod logs are on the v2 API (what `runpodctl pod logs` reads): server-sent events of
 // {source: system|container, line, ts}, the system lines narrating the image pull layer by layer.
 const LOGS: &str = "https://api.runpod.io/v2";
 pub const IMAGE: &str = "ghcr.io/diverofdark/difflab:latest";
 pub const VOLUME_NAME: &str = "difflab";
-// ~96 GB of weights, the 40 GiB KV cache (`VLM_DISK_CACHE_BYTES`), the database and finals.
-pub const VOLUME_GB: u32 = 150;
 // The pipeline offloads for a 24 GB card; README "Serving it" and `core/models.py` assume a 58 GB host.
 pub const GPUS: [&str; 3] = [
     "NVIDIA GeForce RTX 3090",
@@ -22,20 +20,6 @@ pub const MIN_RAM_GB: u32 = 64;
 // The unpacked image is ~10 GB; triton's kernels and HF caches live on the volume.
 pub const CONTAINER_DISK_GB: u32 = 40;
 pub const PORT: u16 = 8765;
-
-// Network volumes reachable through RunPod's S3 API; a volume elsewhere could not be read from here.
-pub const DATACENTERS: [&str; 15] = [
-    "EU-CZ-1", "EU-RO-1", "EUR-IS-1", "EUR-NO-1", "US-CA-2", "US-GA-2", "US-IL-1", "US-KS-2",
-    "US-MD-1", "US-MO-1", "US-MO-2", "US-NC-1", "US-NC-2", "US-NE-1", "US-WA-1",
-];
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Volume {
-    pub id: String,
-    pub name: String,
-    pub data_center_id: String,
-}
 
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
@@ -114,69 +98,91 @@ impl Client {
         Ok(Some(serde_json::from_str(&text).unwrap_or(Value::Null)))
     }
 
-    pub async fn volumes(&self) -> Result<Vec<Volume>, String> {
-        let found = self
-            .call(reqwest::Method::GET, "/networkvolumes", None)
-            .await?
-            .unwrap_or(Value::Null);
-        let list = match found {
-            Value::Object(fields) => fields
-                .into_iter()
-                .map(|(_, v)| v)
-                .find(Value::is_array)
-                .unwrap_or_default(),
-            other => other,
-        };
-        serde_json::from_value(list).map_err(|e| format!("unexpected volume list: {e}"))
+    async fn graphql(&self, query: &str, variables: Value) -> Result<Value, String> {
+        let response = self
+            .http
+            .post(GRAPHQL)
+            .query(&[("api_key", &self.key)])
+            .json(&json!({ "query": query, "variables": variables }))
+            .send()
+            .await
+            .map_err(|e| format!("RunPod is unreachable: {e}"))?;
+        let status = response.status();
+        let body: Value = response.json().await.unwrap_or(Value::Null);
+        if let Some(problem) = body["errors"][0]["message"].as_str() {
+            return Err(format!("RunPod: {problem}"));
+        }
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+            return Err("RunPod rejected the API key".into());
+        }
+        Ok(body["data"].clone())
     }
 
-    /// The volume named difflab in this datacenter, created when there is none.
-    pub async fn volume(&self, datacenter: &str) -> Result<Volume, String> {
-        let mut ours: Vec<Volume> = self
-            .volumes()
-            .await?
-            .into_iter()
-            .filter(|v| v.name == VOLUME_NAME && v.data_center_id == datacenter)
-            .collect();
-        if !ours.is_empty() {
-            return Ok(ours.remove(0));
+    /// The global volume named difflab, created when there is none. It is not in any datacenter, so a
+    /// pod on it can start wherever a GPU is free; there is nothing to size, it grows as it is used.
+    pub async fn global_volume(&self) -> Result<String, String> {
+        let found = self
+            .graphql(
+                "query { myself { globalStoreBuckets { id name } } }",
+                json!({}),
+            )
+            .await?;
+        let existing = found["myself"]["globalStoreBuckets"]
+            .as_array()
+            .and_then(|all| all.iter().find(|b| b["name"] == VOLUME_NAME))
+            .and_then(|b| b["id"].as_str());
+        if let Some(id) = existing {
+            return Ok(id.to_string());
         }
         let made = self
-            .call(
-                reqwest::Method::POST,
-                "/networkvolumes",
-                Some(json!({"name": VOLUME_NAME, "size": VOLUME_GB, "dataCenterId": datacenter})),
+            .graphql(
+                "mutation make($input: GlobalStoreBucketCreateInput!) { globalStoreBucketCreate(input: $input) { id } }",
+                json!({ "input": { "name": VOLUME_NAME } }),
             )
-            .await?
-            .ok_or("RunPod did not create the volume")?;
-        serde_json::from_value(made).map_err(|e| format!("unexpected volume: {e}"))
+            .await?;
+        made["globalStoreBucketCreate"]["id"]
+            .as_str()
+            .map(str::to_string)
+            .ok_or_else(|| "RunPod did not create the volume".into())
     }
 
-    /// `image` pinned by digest: a host that cached an older `latest` would otherwise start that.
+    /// Through GraphQL, as RunPod's SDK does: the REST pod has no way to mount a global volume.
+    /// `image` is pinned by digest, as a host that cached an older `latest` would otherwise start that.
     pub async fn create_pod(
         &self,
         volume_id: &str,
         image: &str,
-        env: Value,
+        env: &[(&str, String)],
     ) -> Result<Pod, String> {
-        let body = json!({
+        let input = json!({
             "name": "difflab",
             "imageName": image,
-            "gpuTypeIds": GPUS,
+            "gpuTypeIdList": GPUS,
             "gpuCount": 1,
             "cloudType": "SECURE",
-            "networkVolumeId": volume_id,
-            "volumeMountPath": "/app/output",
             "containerDiskInGb": CONTAINER_DISK_GB,
-            "minRAMPerGPU": MIN_RAM_GB,
-            "ports": [format!("{PORT}/http")],
-            "env": env,
+            "volumeInGb": 0,
+            "minMemoryInGb": MIN_RAM_GB,
+            "ports": format!("{PORT}/http"),
+            "env": env.iter().map(|(key, value)| json!({ "key": key, "value": value })).collect::<Vec<_>>(),
+            "volumeMounts": [{ "volumeId": volume_id, "volumeType": "OBJECT_STORE_VOLUME", "mountPath": "/app/output" }],
         });
         let made = self
-            .call(reqwest::Method::POST, "/pods", Some(body))
-            .await?
-            .ok_or("RunPod did not create the pod")?;
-        serde_json::from_value(made).map_err(|e| format!("unexpected pod: {e}"))
+            .graphql(
+                "mutation deploy($input: PodFindAndDeployOnDemandInput) { podFindAndDeployOnDemand(input: $input) { id costPerHr machine { gpuDisplayName } } }",
+                json!({ "input": input }),
+            )
+            .await?;
+        let pod = &made["podFindAndDeployOnDemand"];
+        let id = pod["id"].as_str().ok_or(
+            "RunPod found no free GPU with 24 GB and 64 GB of RAM; try again in a few minutes",
+        )?;
+        Ok(Pod {
+            id: id.to_string(),
+            cost_per_hr: pod["costPerHr"].as_f64().unwrap_or(0.0),
+            gpu: Some(json!({ "displayName": pod["machine"]["gpuDisplayName"] })),
+            ..Default::default()
+        })
     }
 
     pub async fn pod(&self, id: &str) -> Result<Option<Pod>, String> {
@@ -189,72 +195,25 @@ impl Client {
         }
     }
 
-    async fn myself(&self, fields: &str) -> Result<Value, String> {
-        let response = self
-            .http
-            .post(GRAPHQL)
-            .query(&[("api_key", &self.key)])
-            .json(&json!({ "query": format!("query {{ myself {{ {fields} }} }}") }))
-            .send()
-            .await
-            .map_err(|e| format!("RunPod is unreachable: {e}"))?;
-        let status = response.status();
-        let body: Value = response.json().await.unwrap_or(Value::Null);
-        match &body["data"]["myself"] {
-            Value::Object(_) => Ok(body["data"]["myself"].clone()),
-            _ if status.is_client_error()
-                || body["errors"].is_array()
-                || body["error"].is_object() =>
-            {
-                Err("RunPod rejected the API key".into())
-            }
-            _ => Err(format!("RunPod answered {status} without an account")),
-        }
-    }
-
     pub async fn balance(&self) -> Result<f64, String> {
-        self.myself("clientBalance")
+        self.graphql("query { myself { clientBalance } }", json!({}))
             .await?
-            .get("clientBalance")
+            .pointer("/myself/clientBalance")
             .and_then(Value::as_f64)
-            .ok_or_else(|| "RunPod answered without a balance".into())
-    }
-
-    /// The S3 access key: RunPod's S3 API takes the account's user id there, and only the secret
-    /// has to come from the console (no API creates S3 keys).
-    pub async fn user_id(&self) -> Result<String, String> {
-        self.myself("id")
-            .await?
-            .get("id")
-            .and_then(Value::as_str)
-            .map(str::to_string)
-            .ok_or_else(|| "RunPod answered without a user id".into())
+            .ok_or_else(|| "RunPod rejected the API key".into())
     }
 
     pub async fn gpu_name(&self, id: &str) -> Option<String> {
         let found = self
-            .graphql(&format!(
-                "pod(input: {{podId: \"{id}\"}}) {{ machine {{ gpuDisplayName }} }}"
-            ))
-            .await?;
+            .graphql(
+                "query pod($id: String!) { pod(input: {podId: $id}) { machine { gpuDisplayName } } }",
+                json!({ "id": id }),
+            )
+            .await
+            .ok()?;
         found["pod"]["machine"]["gpuDisplayName"]
             .as_str()
             .map(str::to_string)
-    }
-
-    async fn graphql(&self, query: &str) -> Option<Value> {
-        let body: Value = self
-            .http
-            .post(GRAPHQL)
-            .query(&[("api_key", &self.key)])
-            .json(&json!({ "query": format!("query {{ {query} }}") }))
-            .send()
-            .await
-            .ok()?
-            .json()
-            .await
-            .ok()?;
-        Some(body["data"].clone())
     }
 
     /// Streams the pod's log from after `cursor` (or its last `tail` lines) until the connection
