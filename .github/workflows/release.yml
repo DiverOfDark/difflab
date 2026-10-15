@@ -1,0 +1,191 @@
+name: release
+
+# Every push to main is one version: the image tagged with it, and the desktop app built as it. The
+# release, which the app's updater reads, is published only once both exist.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: true
+
+env:
+  # The updater compares versions, so every run needs a higher one than the last; 0.1.x were the
+  # desktop-only workflow's.
+  VERSION: 0.2.${{ github.run_number }}
+  # The Dockerfile's default, repeated because the kernels cache mount is named by it.
+  ARCHS: 80-real;86-real;89;90a-real;100f;120f
+  # The Dockerfile's kernels cache mount, carried between runs as an artifact beside the image: a changed
+  # lock then re-downloads packages instead of recompiling comfy-kitchen and exllamav3 for hours. The
+  # runner pods and the BuildKit container are both new each run, so nothing else outlives one.
+  KERNELS_CACHE: ghcr.io/diverofdark/difflab:kernels-cache
+
+jobs:
+  image:
+    runs-on: github-runner-difflab
+    timeout-minutes: 360
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: oras-project/setup-oras@v1
+
+      # The mount is filled and read by throwaway builds on the same builder, as buildkit-cache-dance
+      # does; that action extracts only in its post step, after anything here could push the result.
+      # Not --no-cache: a build with it does not keep what it wrote to a cache mount. The run id keeps
+      # the two RUN lines from ever matching a cached layer instead.
+      - name: Restore the kernels cache
+        run: |
+          mkdir -p "$RUNNER_TEMP/kernels" && cd "$RUNNER_TEMP/kernels"
+          if oras pull "$KERNELS_CACHE"; then
+            mkdir in && tar -xf kernels-cache.tar -C in && rm kernels-cache.tar
+            printf 'FROM busybox\nRUN --mount=type=cache,id=difflab-kernels-%s,target=/c --mount=type=bind,target=/in cp -a /in/. /c/ # %s\n' "$ARCHS" "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+              | docker buildx build -f - in
+            find in -type f -printf '%P %s\n' | sort > before
+          else
+            echo "no kernels cache yet: this build compiles them"
+            : > before
+          fi
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/diverofdark/difflab
+          tags: |
+            type=raw,value=latest
+            type=raw,value=${{ env.VERSION }}
+            type=sha,prefix=
+
+      - uses: docker/build-push-action@v6
+        env:
+          # With rewrite-timestamp, an unchanged file is the same bytes in every build, so an environment
+          # layer whose files did not change keeps its digest and no host pulls it twice.
+          SOURCE_DATE_EPOCH: 0
+        with:
+          context: .
+          # zstd unpacks a multi-gigabyte layer several times faster than gzip, which is single-threaded.
+          outputs: type=registry,compression=zstd,force-compression=true,rewrite-timestamp=true,oci-mediatypes=true
+          # Six architectures per CUTLASS unit: two at a time inside each of six nvcc jobs keeps it to
+          # twelve compilers.
+          build-args: |
+            COMFY_CUDA_ARCHS=${{ env.ARCHS }}
+            MAX_JOBS=6
+            NVCC_THREADS=2
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # The build stage is not in the image, so the layer cache is a tag of its own, every stage in it.
+          cache-from: type=registry,ref=ghcr.io/diverofdark/difflab:buildcache
+          cache-to: type=registry,ref=ghcr.io/diverofdark/difflab:buildcache,mode=max,compression=zstd
+
+      # Pushed only when the build changed the mount, which it does only when the environment layer
+      # was rebuilt.
+      - name: Save the kernels cache
+        run: |
+          cd "$RUNNER_TEMP/kernels"
+          printf 'FROM busybox AS mount\nRUN --mount=type=cache,id=difflab-kernels-%s,target=/c mkdir /out && cp -a /c/. /out/ # %s\nFROM scratch\nCOPY --from=mount /out /\n' "$ARCHS" "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+            | docker buildx build -o type=local,dest=out -f - "$(mktemp -d)"
+          find out -type f -printf '%P %s\n' | sort > after
+          if cmp -s before after; then
+            echo "kernels cache unchanged"
+          else
+            tar -cf kernels-cache.tar -C out .
+            oras push "$KERNELS_CACHE" kernels-cache.tar
+          fi
+
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      id: ${{ steps.create.outputs.id }}
+    steps:
+      # A cancelled run leaves its draft behind, and only one run is ever in flight.
+      - id: create
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release list --repo "$GITHUB_REPOSITORY" --json tagName,isDraft --jq '.[] | select(.isDraft) | .tagName' \
+            | xargs -r -n1 gh release delete --repo "$GITHUB_REPOSITORY" --yes
+          gh release create "desktop-v$VERSION" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --draft \
+            --title "DiffLab $VERSION" --notes "Built from $GITHUB_SHA. Image: ghcr.io/diverofdark/difflab:$VERSION."
+          echo "id=$(gh api "repos/$GITHUB_REPOSITORY/releases" --jq ".[] | select(.tag_name == \"desktop-v$VERSION\") | .id")" >> "$GITHUB_OUTPUT"
+
+  bundle:
+    needs: release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+          - os: windows-latest
+          - os: macos-latest
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libdbus-1-dev
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri -> target
+
+      - run: npm ci
+        working-directory: desktop
+
+      - name: Stamp the version
+        shell: bash
+        run: |
+          node -e 'const fs=require("fs"),f="desktop/src-tauri/tauri.conf.json",c=JSON.parse(fs.readFileSync(f));c.version=process.env.VERSION;fs.writeFileSync(f,JSON.stringify(c,null,2))'
+
+      # Each platform adds itself to the release's latest.json, which the app's updater reads.
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: desktop
+          releaseId: ${{ needs.release.outputs.id }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: difflab-desktop-${{ matrix.os }}
+          path: |
+            desktop/src-tauri/target/release/bundle/appimage/*.AppImage
+            desktop/src-tauri/target/release/bundle/deb/*.deb
+            desktop/src-tauri/target/release/bundle/rpm/*.rpm
+            desktop/src-tauri/target/release/bundle/nsis/*.exe
+            desktop/src-tauri/target/release/bundle/dmg/*.dmg
+
+  publish:
+    needs: [image, release, bundle]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "desktop-v$VERSION" --repo "$GITHUB_REPOSITORY" --draft=false --latest

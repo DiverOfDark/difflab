@@ -78,7 +78,8 @@ closing the app never leaves a GPU billing. Results download over RunPod's S3 AP
 running.
 
 For RunPod it needs an API key and an S3 API key (RunPod → Settings → S3 API Keys). Both are kept in
-the OS keychain. Installers are built by the `desktop` GitHub workflow. To build it yourself, see
+the OS keychain. Every push to `main` releases a new version of the installers and of the image together
+([Releases](https://github.com/DiverOfDark/difflab/releases)). To build it yourself, see
 [desktop/README.md](desktop/README.md).
 
 ### From source

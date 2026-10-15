@@ -9,7 +9,7 @@ leaves a GPU billing.
 
 Linux needs the WebKitGTK 4.1 headers to build (`webkit2gtk4.1-devel` on Fedora). On an immutable
 Fedora (Bazzite, Silverblue) build in a toolbox; the binary runs on the host. Installers for Windows,
-macOS and Linux come from the `desktop` workflow, run by hand.
+macOS and Linux come from the `release` workflow, on every push to main.
 
 What a RunPod user needs: an API key. The first pod creates a global volume named `difflab` (no
 datacenter, grows as used, billed for storage and requests) and mounts it at `/app/output`; the first
