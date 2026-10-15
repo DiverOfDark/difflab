@@ -30,6 +30,7 @@ struct Status {
     uptime_s: i64,
     draining: bool,
     message: String,
+    progress: Option<f64>,
 }
 
 struct Inner {
@@ -220,6 +221,8 @@ impl Inner {
         if let Some(answer) = self.heartbeat(&session, session.usd_per_hour).await {
             status.phase = "ready".into();
             status.usd = answer["usd"].as_f64().unwrap_or(0.0);
+        } else if session.kind == Kind::Local {
+            status.message = "Starting the server (about a minute)…".into();
         } else if session.kind == Kind::Runpod {
             status.usd = status.uptime_s as f64 / 3600.0 * session.usd_per_hour;
             if status.message.is_empty() {
@@ -368,7 +371,35 @@ async fn launch(app: &AppHandle, inner: &Inner, kind: Kind) -> Result<Session, S
                     Status {
                         phase: "starting".into(),
                         kind: Some(Kind::Local),
-                        message: "Pulling the image (3.6 GB the first time)…".into(),
+                        message: "Checking for a newer DiffLab…".into(),
+                        ..Default::default()
+                    },
+                )
+                .await;
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            let pulling = tokio::spawn(local::pull(tx));
+            while let Some(update) = rx.recv().await {
+                inner
+                    .set(
+                        app,
+                        Status {
+                            phase: "starting".into(),
+                            kind: Some(Kind::Local),
+                            message: update.message,
+                            progress: update.progress,
+                            ..Default::default()
+                        },
+                    )
+                    .await;
+            }
+            pulling.await.map_err(|e| e.to_string())??;
+            inner
+                .set(
+                    app,
+                    Status {
+                        phase: "starting".into(),
+                        kind: Some(Kind::Local),
+                        message: "Starting the container…".into(),
                         ..Default::default()
                     },
                 )

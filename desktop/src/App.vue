@@ -12,7 +12,7 @@ type Tab = "run" | "results" | "settings";
 const loaded = ref(false);
 const wizard = ref(false);
 const tab = ref<Tab>("run");
-const status = ref<Status>({ phase: "none", kind: null, gpu: "", usd: 0, usd_per_hour: 0, uptime_s: 0, draining: false, message: "" });
+const status = ref<Status>({ phase: "none", kind: null, gpu: "", usd: 0, usd_per_hour: 0, uptime_s: 0, draining: false, message: "", progress: null });
 const prefs = reactive<Prefs>({ datacenter: "EU-RO-1", volume_id: "", idle_minutes: 5, stuck_minutes: 15, spend_limit_usd: 5, exit_when_done: false, results_dir: "", setup_done: false });
 const datacenters = ref<string[]>([]);
 const hasKey = ref(false);
@@ -157,6 +157,7 @@ onMounted(async () => {
               <div><span class="label">Up</span><span class="mono">{{ uptime }}</span></div>
             </div>
             <p v-if="status.draining" class="band hint">It stops as soon as the queue is done.</p>
+            <div v-if="status.progress !== null" class="bar"><i :style="{ width: `${status.progress * 100}%` }" /></div>
             <p v-if="status.message" class="band" :class="status.phase === 'error' ? 'error' : 'hint'">{{ status.message }}</p>
 
             <div v-if="running" class="buttons">

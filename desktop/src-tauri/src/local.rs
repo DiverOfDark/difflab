@@ -1,5 +1,10 @@
 use serde::Serialize;
+use serde_json::Value;
+use std::collections::{HashMap, HashSet};
+use std::process::Stdio;
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
+use tokio::sync::mpsc;
 
 use crate::runpod::IMAGE;
 
@@ -125,6 +130,107 @@ async fn runtime() -> Option<String> {
     } else {
         "docker".into()
     })
+}
+
+const REGISTRY: &str = "https://ghcr.io";
+const REPOSITORY: &str = "diverofdark/difflab";
+const ACCEPT: &str = "application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, \
+                      application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json";
+
+/// Each layer's compressed size by the 12-character id `docker pull` prints: without a terminal it
+/// prints no byte counts, only which layers are done.
+pub async fn layer_sizes() -> Option<HashMap<String, u64>> {
+    let http = reqwest::Client::new();
+    let token: Value = http
+        .get(format!("{REGISTRY}/token?scope=repository:{REPOSITORY}:pull"))
+        .send()
+        .await
+        .ok()?
+        .json()
+        .await
+        .ok()?;
+    let token = token["token"].as_str()?.to_string();
+    let get = |reference: String| {
+        http.get(format!("{REGISTRY}/v2/{REPOSITORY}/manifests/{reference}"))
+            .bearer_auth(&token)
+            .header("Accept", ACCEPT)
+            .send()
+    };
+    let mut manifest: Value = get("latest".into()).await.ok()?.json().await.ok()?;
+    if let Some(list) = manifest["manifests"].as_array() {
+        let digest = list
+            .iter()
+            .find(|m| m["platform"]["os"] == "linux" && m["platform"]["architecture"] == "amd64")?["digest"]
+            .as_str()?
+            .to_string();
+        manifest = get(digest).await.ok()?.json().await.ok()?;
+    }
+    let sizes = manifest["layers"]
+        .as_array()?
+        .iter()
+        .filter_map(|layer| {
+            let digest = layer["digest"].as_str()?.strip_prefix("sha256:")?;
+            Some((digest.get(..12)?.to_string(), layer["size"].as_u64()?))
+        })
+        .collect::<HashMap<_, _>>();
+    (!sizes.is_empty()).then_some(sizes)
+}
+
+pub struct Pulled {
+    pub message: String,
+    pub progress: Option<f64>,
+}
+
+/// `docker pull`, reporting what it has fetched as it goes.
+pub async fn pull(progress: mpsc::UnboundedSender<Pulled>) -> Result<(), String> {
+    let sizes = layer_sizes().await.unwrap_or_default();
+    let total: u64 = sizes.values().sum();
+    let mut child = command("docker")
+        .args(["pull", IMAGE])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("docker pull: {e}"))?;
+    let mut lines = BufReader::new(child.stdout.take().expect("piped")).lines();
+    let (mut seen, mut fetched, mut unpacked) = (HashSet::new(), HashSet::new(), HashSet::new());
+    while let Ok(Some(line)) = lines.next_line().await {
+        let Some((id, state)) = line.split_once(": ") else {
+            continue;
+        };
+        if id.len() != 12 {
+            continue;
+        }
+        seen.insert(id.to_string());
+        if matches!(state, "Download complete" | "Already exists" | "Pull complete") {
+            fetched.insert(id.to_string());
+        }
+        if matches!(state, "Already exists" | "Pull complete") {
+            unpacked.insert(id.to_string());
+        }
+        let got: u64 = fetched.iter().filter_map(|id| sizes.get(id)).sum();
+        let update = if fetched.len() < seen.len() && total > 0 {
+            Pulled {
+                message: format!("Downloading DiffLab: {:.1} / {:.1} GB", got as f64 / 1e9, total as f64 / 1e9),
+                progress: Some(got as f64 / total as f64),
+            }
+        } else if fetched.len() < seen.len() {
+            Pulled {
+                message: format!("Downloading DiffLab: {} / {} parts", fetched.len(), seen.len()),
+                progress: Some(fetched.len() as f64 / seen.len() as f64),
+            }
+        } else {
+            Pulled {
+                message: format!("Unpacking: {} / {} parts", unpacked.len(), seen.len()),
+                progress: Some(unpacked.len() as f64 / seen.len() as f64),
+            }
+        };
+        let _ = progress.send(update);
+    }
+    let out = child.wait_with_output().await.map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Err(format!("docker pull failed: {}", String::from_utf8_lossy(&out.stderr).trim()));
+    }
+    Ok(())
 }
 
 pub async fn start(token: &str, runtime: &str) -> Result<(), String> {

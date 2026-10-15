@@ -11,6 +11,7 @@ export interface Status {
   uptime_s: number;
   draining: boolean;
   message: string;
+  progress: number | null;
 }
 
 export interface Prefs {
