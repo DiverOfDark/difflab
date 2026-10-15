@@ -24,11 +24,42 @@ pub struct Hardware {
     pub runtime: String,
 }
 
+// Where nvidia-smi lives besides PATH: WSL, and the host's /usr from inside a toolbox or Flatpak.
+const SMI: [&str; 4] = [
+    "nvidia-smi",
+    "/usr/bin/nvidia-smi",
+    "/usr/lib/wsl/lib/nvidia-smi",
+    "/run/host/usr/bin/nvidia-smi",
+];
+
+fn command(program: &str) -> Command {
+    let mut command = Command::new(program);
+    // An AppImage points LD_LIBRARY_PATH at its own bundled libraries, which docker and nvidia-smi
+    // must not load.
+    if std::env::var_os("APPIMAGE").is_some() {
+        command.env_remove("LD_LIBRARY_PATH");
+    }
+    command
+}
+
+async fn run(program: &str, args: &[&str]) -> Result<String, String> {
+    let out = command(program)
+        .args(args)
+        .output()
+        .await
+        .map_err(|e| format!("{program}: {e}"))?;
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    } else {
+        Err(format!(
+            "{program}: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ))
+    }
+}
+
 async fn output(program: &str, args: &[&str]) -> Option<String> {
-    let out = Command::new(program).args(args).output().await.ok()?;
-    out.status
-        .success()
-        .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+    run(program, args).await.ok()
 }
 
 pub async fn check() -> Hardware {
@@ -38,17 +69,26 @@ pub async fn check() -> Hardware {
         ram_gb: system.total_memory() as f64 / 1e9,
         ..Default::default()
     };
-    let smi = output(
-        "nvidia-smi",
-        &[
-            "--query-gpu=name,memory.total,compute_cap",
-            "--format=csv,noheader,nounits",
-        ],
-    )
-    .await;
-    let Some(line) = smi.as_deref().and_then(|s| s.lines().next()) else {
-        found.reason = "no NVIDIA GPU found".into();
-        return found;
+    let mut smi = Err(String::new());
+    for program in SMI {
+        smi = run(
+            program,
+            &[
+                "--query-gpu=name,memory.total,compute_cap",
+                "--format=csv,noheader,nounits",
+            ],
+        )
+        .await;
+        if smi.is_ok() {
+            break;
+        }
+    }
+    let line = match &smi {
+        Ok(text) => text.lines().next().unwrap_or("").to_string(),
+        Err(problem) => {
+            found.reason = format!("no NVIDIA GPU found ({problem})");
+            return found;
+        }
     };
     let fields: Vec<&str> = line.split(',').map(str::trim).collect();
     found.gpu = fields.first().unwrap_or(&"").to_string();
@@ -88,7 +128,7 @@ async fn runtime() -> Option<String> {
 }
 
 pub async fn start(token: &str, runtime: &str) -> Result<(), String> {
-    let _ = Command::new("docker")
+    let _ = command("docker")
         .args(["rm", "-f", CONTAINER])
         .output()
         .await;
@@ -106,7 +146,7 @@ pub async fn start(token: &str, runtime: &str) -> Result<(), String> {
     ];
     args.extend_from_slice(gpus);
     args.push(IMAGE);
-    let out = Command::new("docker")
+    let out = command("docker")
         .args(&args)
         .output()
         .await
@@ -131,7 +171,7 @@ pub async fn running() -> bool {
 }
 
 pub async fn stop() -> Result<(), String> {
-    let out = Command::new("docker")
+    let out = command("docker")
         .args(["rm", "-f", CONTAINER])
         .output()
         .await

@@ -177,6 +177,7 @@ onMounted(async () => {
         <button :disabled="!hardware?.ok || !!busy" @click="start('local')">Run on this PC</button>
       </div>
       <p v-if="!running && !hasKey" class="muted small">Add your RunPod API key in Settings to run in the cloud.</p>
+      <p v-if="!running && !hardware" class="muted small">Checking this PC…</p>
       <p v-if="!running && hardware && !hardware.ok" class="muted small">This PC: {{ hardware.reason }}.</p>
       <p v-if="!running && hardware?.ok" class="muted small">This PC: {{ hardware.gpu }}, {{ hardware.ram_gb.toFixed(0) }} GB RAM, {{ hardware.runtime }}.</p>
     </section>
