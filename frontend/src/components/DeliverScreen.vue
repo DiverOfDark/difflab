@@ -54,6 +54,16 @@ const folder = computed(() => {
  * and a panel that answers "what made this file" out of the box they are typing in is not provenance.
  */
 const spec = computed<Job | null>(() => props.record?.spec ?? null)
+const PICTURE = /\.(png|jpe?g|webp)$/i
+
+/** An edit's next take opens on the picture it made, keeping the references after it; anything else
+ *  is asked again as it was. */
+function takeFrom() {
+  const base = spec.value
+  if (!base) return
+  const made = current.value?.path
+  emit('again', base.mode === 'edit' && made && PICTURE.test(made) ? { ...base, photos: [made, ...base.photos.slice(1)] } : base)
+}
 const jobs = computed(() => props.record?.jobs ?? [])
 const took = (seconds: number | null | undefined) => (seconds == null ? '' : duration(seconds))
 
@@ -194,7 +204,7 @@ const facts = computed<[string, string][]>(() => [
             <button
               :disabled="!spec"
               :title="spec ? '' : 'this run recorded no spec to start from'"
-              @click="spec && emit('again', spec)"
+              @click="takeFrom"
             >
               New take from this
             </button>

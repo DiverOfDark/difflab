@@ -76,8 +76,8 @@ def listing() -> list[dict[str, Any]]:
 def preview_of(path: Path) -> Path | None:
     """A thumbnail for a picture the pod already holds, for a job made on the machine the card is in
     and naming photos under `sources/` or `output/`. The roots are an allow-list, because the
-    alternative is a route that reads any file on the pod."""
-    path = path.resolve()
+    alternative is a route that reads any file on the pod. Relative is under output/, as a job reads it."""
+    path = (path if path.is_absolute() else config.OUTPUT_DIR / path).resolve()
     roots = (ASSETS_DIR.resolve(), (config.PROJECT_DIR / "sources").resolve(), config.OUTPUT_DIR.resolve())
     if not path.is_file() or not any(path.is_relative_to(root) for root in roots):
         return None
