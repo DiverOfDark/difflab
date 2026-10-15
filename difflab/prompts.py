@@ -116,3 +116,23 @@ The editor was given these instructions, in order:
 {edits}
 
 List every clear change from Picture 1 to Picture 2 that none of them asks for or implies: a different face or person, a changed body, pose or garment, a main object added, lost or changed, the composition rearranged, or a visible loss of quality such as heavy noise or a smeared or painterly texture. Ignore small or distant background details, a slight reframing or crop, and slight differences in sharpness and colour. Answer {{"changes": ["one change", ...]}}, or {{"changes": []}} when there is none."""
+
+CHAIN_TRAITS_SYSTEM = """\
+You describe the people in a photo precisely, for a reviewer who will check an edited copy of it against your list. Judge only what you can see. Answer only JSON, in the shape the request shows."""
+
+CHAIN_TRAITS_USER = """\
+List the lasting physical traits of each person in the picture, the ones any picture of the same person must keep: face and identity, eye colour, hair colour and length, skin tone, height and build, the size and shape of the bust, waist and hips, the length of the arms and legs, the hands, and any visible marks, tattoos or piercings. One short statement per trait, naming the person by position when there are several ("the woman's eyes are blue"). Always give the face's shape and features, and each of the bust, waist and hips the picture shows even in part. Leave out clothing, pose, expression and anything the picture does not show at all. Answer {"traits": ["one trait", ...]}, or {"traits": []} when no person is shown."""
+
+CHAIN_TARGETED_USER = """\
+An image editor was given these instructions:
+{edits}
+
+A trait of a person in the original picture: {trait}
+
+Does any instruction ask to change this trait, or ask for a change that cannot be made without changing it? Answer {{"changes": true or false}}."""
+
+CHAIN_TRAIT_LIST_USER = """\
+These are traits of the people in Picture 1:
+{traits}
+
+For each, in order: is it still true of the same person in Picture 2? A new pose, framing or garment does not change a trait unless the trait itself now looks different. First say what Picture 2 shows of it. Answer {{"traits": [{{"seen": "what Picture 2 shows", "holds": true or false}}, ...]}}, one entry per trait."""

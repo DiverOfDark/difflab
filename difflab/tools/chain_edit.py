@@ -34,6 +34,13 @@ EDIT = _shape(edit=INSTRUCTION)
 DONE = _shape(seen=QUOTE, done={"type": "boolean"}, fix=QUOTE)
 UNASKED = _shape(changes={"type": "array", "items": QUOTE})
 UNASKED_PREFIX = "not asked for: "
+TRAITS = _shape(traits={"type": "array", "items": QUOTE})
+TARGETED = _shape(changes={"type": "boolean"})
+HOLDS = {
+    "type": "object", "properties": {"seen": QUOTE, "holds": {"type": "boolean"}}, "required": ["seen", "holds"],
+    "additionalProperties": False,
+}  # fmt: skip
+BODY_PREFIX = "the person changed: "
 
 
 @dataclass(frozen=True)
@@ -44,7 +51,9 @@ class Chained:
     issues: list[str]  # what the judge finds in the delivered picture, against the photo
 
 
-def chain(photo: Frame, idea: str, settings: EditSettings, retries: int, carry: bool = False) -> Chained:
+def chain(
+    photo: Frame, idea: str, settings: EditSettings, retries: int, carry: bool = False, body: bool = True
+) -> Chained:
     """`carry` conditions each edit on the last one's latent, never on its picture decoded and encoded again."""
     # Carried on the AIO, the sky turned to noise by the third edit, worse than from decoded pictures (beach test,
     # 2026-10-15).
@@ -70,7 +79,7 @@ def chain(photo: Frame, idea: str, settings: EditSettings, retries: int, carry: 
             image, latent = made(step - 1, edits[step - 1], settings)
             images.append(image)
             latents.append(latent)
-        held, issues = _held(images, edits, base)
+        held, issues = _held(images, edits, base, body)
         if held == len(edits):
             break
         # A picture that held stays held: the judge is greedy and kept by its question, so `held` only grows.
@@ -78,7 +87,7 @@ def chain(photo: Frame, idea: str, settings: EditSettings, retries: int, carry: 
         for attempt in range(1, retries + 1):
             edit = revise(images[held], tries[-1][1], tries[-1][2], tries[-1][0], settings.engine)
             image, latent = made(held, edit, settings.with_(seed=settings.seed + attempt))
-            tries.append((faults(images[base], image, [*edits[base:held], edit]), image, edit, latent))
+            tries.append((faults(images[base], image, [*edits[base:held], edit], body), image, edit, latent))
             if not tries[-1][0]:
                 break
         # By count alone a tie kept the first take: on the beach test (2026-10-14) a noisy sky without footprints
@@ -92,7 +101,7 @@ def chain(photo: Frame, idea: str, settings: EditSettings, retries: int, carry: 
             ui.note(f"chain · edit {held + 1} still fails after {retries} retries; carrying on with it flagged")
         edits[held], images[held + 1 :], latents[held + 1 :] = edit, [image], [latent]
         edits[held + 1 :] = plan(photo, image, idea, edits[: held + 1], settings.engine)
-    return Chained(edits, images, flagged, faults(photo, images[-1], edits))
+    return Chained(edits, images, flagged, faults(photo, images[-1], edits, body))
 
 
 def plan(original: Frame, current: Frame, idea: str, done: list[str], engine: str) -> list[str]:
@@ -124,7 +133,7 @@ def revise(before: Frame, after: Frame, edit: str, issues: list[str], engine: st
     return str(data["edit"]).strip()
 
 
-def faults(original: Frame, image: Frame, edits: list[str]) -> list[str]:
+def faults(original: Frame, image: Frame, edits: list[str], body: bool = True) -> list[str]:
     """What is wrong with `image` as `original` after `edits`; empty when it holds them all.
     One question per edit: in the screenplay's rulings (2026-10-03) a joint question let one item's verdict
     flip with a change to another."""
@@ -144,6 +153,7 @@ def faults(original: Frame, image: Frame, edits: list[str]) -> list[str]:
         "chain · judge the rest", h3.RULING_TOKENS, schema=UNASKED,
     )  # fmt: skip
     out += [f"{UNASKED_PREFIX}{change}" for change in map(str, data["changes"]) if change.strip()]
+    out += [f"{BODY_PREFIX}{change}" for change in changed(original, image, edits, body)]
     ui.panel(
         f"chain · after edit {len(edits)}",
         {str(n): issue for n, issue in enumerate(out, 1)} or {"holds": "every edit, nothing else changed"},
@@ -152,11 +162,47 @@ def faults(original: Frame, image: Frame, edits: list[str]) -> list[str]:
     return out
 
 
-def _held(images: list[Frame], edits: list[str], base: int) -> tuple[int, list[str]]:
+def traits(original: Frame) -> list[str]:
+    """The lasting physical traits of the people `original` shows, as checkable statements."""
+    data = direct.ask_json(
+        prompts.CHAIN_TRAITS_SYSTEM, prompts.CHAIN_TRAITS_USER, [_view(original)], lambda _: [], "chain · traits",
+        h3.DIRECTOR_WRITE_TOKENS, schema=TRAITS,
+    )  # fmt: skip
+    return list(dict.fromkeys(trait.strip() for trait in map(str, data["traits"]) if trait.strip()))
+
+
+def changed(original: Frame, image: Frame, edits: list[str], body: bool) -> list[str]:
+    """The traits of `original`'s people that `image` lost, leaving out those `edits` set out to change. All in one
+    question: on 26 planted and clean pictures (2026-10-15) it caught what one question per trait caught, 13 of 20
+    with no false alarm, at 9 s a picture against 37. Neither caught a body stretched or widened by a fifth."""
+    if not body:
+        return []
+    listed = _listed(edits)
+    kept = [
+        trait for trait in traits(original)
+        if not direct.ask_json(
+            prompts.CHAIN_TRAITS_SYSTEM, prompts.CHAIN_TARGETED_USER.format(edits=listed, trait=trait), [],
+            lambda _: [], "chain · targeted", h3.RULING_TOKENS, schema=TARGETED,
+        )["changes"]
+    ]  # fmt: skip
+    if not kept:
+        return []
+    data = direct.ask_json(
+        prompts.CHAIN_JUDGE_SYSTEM, prompts.CHAIN_TRAIT_LIST_USER.format(traits=_listed(kept)),
+        [_view(original), _view(image)], lambda _: [], "chain · judge the person", h3.RULING_TOKENS * 2,
+        schema=_shape(traits={"type": "array", "items": HOLDS, "minItems": len(kept), "maxItems": len(kept)}),
+    )  # fmt: skip
+    return [
+        f"{trait}, but {verdict['seen']}" for trait, verdict in zip(kept, data["traits"], strict=True)
+        if not verdict["holds"]
+    ]  # fmt: skip
+
+
+def _held(images: list[Frame], edits: list[str], base: int, body: bool) -> tuple[int, list[str]]:
     """The most edits a picture holds, walking back from the last to `base`, and what is wrong with the one after it."""
     after: list[str] = []
     for count in range(len(edits), base, -1):
-        found = faults(images[base], images[count], edits[base:count])
+        found = faults(images[base], images[count], edits[base:count], body)
         if not found:
             return count, after
         after = found

@@ -308,6 +308,13 @@ class ChainSettings(Settings):
         "picture; the size snaps to /32. The AIO always edits from pictures",
         advanced=True,
     )
+    body: bool = setting(
+        True,
+        "body check",
+        "the people's traits read from the photo (face, eyes, hair, build, bust, waist, hips, marks) and checked on "
+        "every picture; a fifth longer or wider body still passes",
+        advanced=True,
+    )
 
 
 @dataclass(frozen=True)

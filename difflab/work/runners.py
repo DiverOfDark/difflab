@@ -101,7 +101,9 @@ def run_chain_edit(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str
     chosen = EditSettings(**inputs["edit"])
     with direct.using(VlmSettings(**inputs["vlm"]).checkpoint):
         chain = ChainSettings(**settings)
-        chained = chain_edit.chain(_frame(inputs["photo"]), str(inputs["idea"]), chosen, chain.retries, chain.carry)
+        chained = chain_edit.chain(
+            _frame(inputs["photo"]), str(inputs["idea"]), chosen, chain.retries, chain.carry, chain.body
+        )
     png = media.save(chained.images[-1], chosen.model_stem, chosen.seed, announce=False)
     steps = []
     for edit, image in zip(chained.edits, chained.images[1:], strict=True):
