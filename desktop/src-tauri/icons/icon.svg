@@ -1,0 +1,13 @@
+<!-- The header's mark (frontend/src/App.vue) on the page's ground, inset the way desktop icons are:
+     the favicon fills its square, which on a dock or taskbar reads as a cropped picture. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <rect x="80" y="80" width="864" height="864" rx="192" fill="#0B0E14"/>
+  <rect x="81.5" y="81.5" width="861" height="861" rx="190.5" fill="none" stroke="#262B35" stroke-width="3"/>
+  <g transform="translate(512 512) scale(28) translate(-12 -12)">
+    <rect x="1" y="4" width="22" height="16" rx="2" fill="none" stroke="#F3B01D" stroke-width="1.6"/>
+    <line x1="7" y1="4" x2="7" y2="20" stroke="#F3B01D" stroke-width="1.6"/>
+    <line x1="17" y1="4" x2="17" y2="20" stroke="#F3B01D" stroke-width="1.6"/>
+    <rect x="1" y="4" width="6" height="16" rx="1" fill="#F3B01D"/>
+    <path d="M10.5 9v6l4.5-3z" fill="#F3B01D"/>
+  </g>
+</svg>
