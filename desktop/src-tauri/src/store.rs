@@ -17,6 +17,7 @@ pub struct Prefs {
     pub spend_limit_usd: f64,
     pub exit_when_done: bool,
     pub results_dir: String,
+    pub setup_done: bool,
 }
 
 impl Default for Prefs {
@@ -29,6 +30,7 @@ impl Default for Prefs {
             spend_limit_usd: 5.0,
             exit_when_done: false,
             results_dir: String::new(),
+            setup_done: false,
         }
     }
 }

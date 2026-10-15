@@ -2,6 +2,8 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 const API: &str = "https://rest.runpod.io/v1";
+// The REST API has no account route; the balance is only on GraphQL (runpodctl reads it there too).
+const GRAPHQL: &str = "https://api.runpod.io/graphql";
 pub const IMAGE: &str = "ghcr.io/diverofdark/difflab:latest";
 pub const VOLUME_NAME: &str = "difflab";
 // ~96 GB of weights, the 40 GiB KV cache (`VLM_DISK_CACHE_BYTES`), the database and finals.
@@ -164,6 +166,29 @@ impl Client {
         {
             Some(found) => Ok(serde_json::from_value(found).ok()),
             None => Ok(None),
+        }
+    }
+
+    pub async fn balance(&self) -> Result<f64, String> {
+        let response = self
+            .http
+            .post(GRAPHQL)
+            .query(&[("api_key", &self.key)])
+            .json(&json!({"query": "query { myself { clientBalance } }"}))
+            .send()
+            .await
+            .map_err(|e| format!("RunPod is unreachable: {e}"))?;
+        let status = response.status();
+        let body: Value = response.json().await.unwrap_or(Value::Null);
+        match body["data"]["myself"]["clientBalance"].as_f64() {
+            Some(usd) => Ok(usd),
+            None if status.is_client_error()
+                || body["errors"].is_array()
+                || body["error"].is_object() =>
+            {
+                Err("RunPod rejected the API key".into())
+            }
+            None => Err(format!("RunPod answered {status} without a balance")),
         }
     }
 

@@ -17,6 +17,7 @@ use store::{Kind, Prefs, Session, Store, RUNPOD_KEY, S3_ACCESS, S3_SECRET};
 
 // Also the status refresh; the pod's watchdog counts the app as gone after DIFFLAB_IDLE_MINUTES without one.
 const HEARTBEAT: Duration = Duration::from_secs(10);
+const BALANCE_EVERY: i64 = 60;
 const RESULT_PREFIXES: [&str; 2] = ["images/", "videos/"];
 
 #[derive(Serialize, Clone, Default)]
@@ -33,6 +34,7 @@ struct Status {
 
 struct Inner {
     store: Store,
+    balance: Mutex<(i64, Option<f64>)>,
     status: Mutex<Status>,
     session: Mutex<Option<Session>>,
     draining: Mutex<bool>,
@@ -62,6 +64,18 @@ impl Inner {
             access: self.store.secret(S3_ACCESS)?,
             secret: self.store.secret(S3_SECRET)?,
         })
+    }
+
+    async fn refresh_balance(&self, app: &AppHandle, force: bool) -> Option<f64> {
+        let mut held = self.balance.lock().await;
+        if !force && now() - held.0 < BALANCE_EVERY {
+            return held.1;
+        }
+        held.0 = now();
+        let client = self.runpod().ok()?;
+        held.1 = client.balance().await.ok();
+        let _ = app.emit("balance", held.1);
+        held.1
     }
 
     async fn set(&self, app: &AppHandle, status: Status) {
@@ -230,6 +244,7 @@ struct Loaded {
     datacenters: Vec<&'static str>,
     status: Status,
     results_dir: String,
+    balance: Option<f64>,
 }
 
 fn results_dir(app: &AppHandle, prefs: &Prefs) -> PathBuf {
@@ -251,8 +266,22 @@ async fn load(app: AppHandle, inner: State<'_, Shared>) -> Result<Loaded, String
         datacenters: runpod::DATACENTERS.to_vec(),
         status: inner.status.lock().await.clone(),
         results_dir: results_dir(&app, &prefs).display().to_string(),
+        balance: inner.balance.lock().await.1,
         prefs,
     })
+}
+
+/// A key typed into the wizard is checked before it is saved; with none, the saved one.
+#[tauri::command]
+async fn balance(
+    app: AppHandle,
+    inner: State<'_, Shared>,
+    key: Option<String>,
+) -> Result<Option<f64>, String> {
+    match key.map(|k| k.trim().to_string()).filter(|k| !k.is_empty()) {
+        Some(key) => runpod::Client::new(key).balance().await.map(Some),
+        None => Ok(inner.refresh_balance(&app, true).await),
+    }
 }
 
 #[tauri::command]
@@ -501,6 +530,7 @@ pub fn run() {
             let store = Store::new(dir);
             let session = store.session();
             let inner: Shared = Arc::new(Inner {
+                balance: Mutex::new((0, None)),
                 status: Mutex::new(Status {
                     phase: if session.is_some() { "booting" } else { "none" }.into(),
                     ..Default::default()
@@ -514,6 +544,7 @@ pub fn run() {
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 loop {
+                    inner.refresh_balance(&handle, false).await;
                     inner.tick(&handle).await;
                     tokio::time::sleep(HEARTBEAT).await;
                 }
@@ -522,6 +553,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             load,
+            balance,
             hardware,
             save_settings,
             start,

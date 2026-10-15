@@ -10,7 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [{ "label": "main", "title": "DiffLab", "width": 520, "height": 760 }],
+    "windows": [{ "label": "main", "title": "DiffLab", "width": 560, "height": 800 }],
     "security": { "csp": null }
   },
   "bundle": {
