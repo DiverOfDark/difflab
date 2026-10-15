@@ -6,8 +6,9 @@ import { balance, saveSettings, usd, type Hardware, type Kind, type Prefs } from
 const props = defineProps<{ prefs: Prefs; hardware: Hardware | null; datacenters: string[]; hasKey: boolean }>();
 const emit = defineEmits<{ done: [kind: Kind] }>();
 
-const RUNPOD_KEYS = "https://www.runpod.io/console/user/settings";
-const RUNPOD_BILLING = "https://www.runpod.io/console/user/billing";
+const RUNPOD_SIGNUP = "https://runpod.io?ref=cazj8c05";
+const RUNPOD_KEYS = "https://www.runpod.io/console/user/settings?ref=cazj8c05";
+const RUNPOD_BILLING = "https://www.runpod.io/console/user/billing?ref=cazj8c05";
 
 const kind = ref<Kind | null>(null);
 const step = ref(0);
@@ -97,7 +98,7 @@ async function next() {
         <p class="muted">The GPU is rented on your own account, so you pay RunPod directly and see every charge there.</p>
       </div>
       <ol class="how">
-        <li>Create an account at <a href="#" @click.prevent="openUrl('https://www.runpod.io')">runpod.io</a>.</li>
+        <li>Create an account at <a href="#" @click.prevent="openUrl(RUNPOD_SIGNUP)">runpod.io</a>.</li>
         <li>Add credit under <a href="#" @click.prevent="openUrl(RUNPOD_BILLING)">Billing</a>. $10 is enough to try it.</li>
         <li>Under <a href="#" @click.prevent="openUrl(RUNPOD_KEYS)">Settings → API Keys</a>, create a key with <em>All</em> access and paste it here.</li>
       </ol>
