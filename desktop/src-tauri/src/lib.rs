@@ -766,8 +766,10 @@ struct SyncProgress {
 #[tauri::command]
 async fn sync_results(app: AppHandle, inner: State<'_, Shared>) -> Result<String, String> {
     let dir = results_dir(&app, &inner.store.prefs());
-    let missing = |key: &str, size: u64| {
-        let to = dir.join(key);
+    // Kept apart, so the two can never overwrite each other's file of the same name.
+    let (here, pod) = (dir.join("This PC"), dir.join("RunPod"));
+    let missing = |base: &std::path::Path, key: &str, size: u64| {
+        let to = base.join(key);
         let have = std::fs::metadata(&to).map(|m| m.len()).ok();
         (have != Some(size)).then_some((key.to_string(), to))
     };
@@ -786,7 +788,7 @@ async fn sync_results(app: AppHandle, inner: State<'_, Shared>) -> Result<String
         let wanted: Vec<_> = local::list_results(&RESULT_PREFIXES)
             .await?
             .into_iter()
-            .filter_map(|(key, size)| missing(&key, size))
+            .filter_map(|(key, size)| missing(&here, &key, size))
             .collect();
         let total = wanted.len();
         local::copy_results(&wanted, |done, key| progress(done, total, key)).await?;
@@ -797,7 +799,7 @@ async fn sync_results(app: AppHandle, inner: State<'_, Shared>) -> Result<String
         for prefix in RESULT_PREFIXES {
             for object in volume.list(prefix).await? {
                 if !object.key.ends_with('/') {
-                    wanted.extend(missing(&object.key, object.size));
+                    wanted.extend(missing(&pod, &object.key, object.size));
                 }
             }
         }
