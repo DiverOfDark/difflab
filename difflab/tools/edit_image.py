@@ -11,8 +11,10 @@ import re
 from collections.abc import Sequence
 from typing import Any
 
+import torch
+
 from difflab import prompts
-from difflab.core import models
+from difflab.core import models, ui
 from difflab.core.cache import cache as default_cache
 from difflab.core.hub import HubFile, parse_file
 from difflab.core.imaging import megapixel_size, resize_to
@@ -104,6 +106,43 @@ def edit(
         **({"donors": [donor.pixels for donor in donors]} if donors else {}),
     )
     return default_cache.frame(made, produce)
+
+
+def carried_size(frame: Frame, megapixels: float) -> tuple[int, int]:
+    """A size Qwen-Image 2.1 resizes its condition image to unchanged, so an edit's latent is the next one's
+    condition latent cell for cell: /32 on both axes, and a fixed point of the pipeline's `calculate_dimensions`."""
+    width, height = (max(32, round(side / 32) * 32) for side in megapixel_size(frame.width, frame.height, megapixels))
+    for _ in range(8):
+        area, ratio = round(math.sqrt(width * height)) ** 2, width / height
+        again = round(math.sqrt(area * ratio) / 32) * 32, round(math.sqrt(area * ratio) / ratio / 32) * 32
+        if again == (width, height):
+            return width, height
+        width, height = again
+    raise ValueError(f"no size near {megapixel_size(frame.width, frame.height, megapixels)} holds its condition")
+
+
+def edit_carried(
+    frame: Frame, latent: torch.Tensor | None, instruction: str, settings: EditSettings, size: tuple[int, int]
+) -> tuple[Frame, torch.Tensor]:
+    """`edit` on Qwen-Image 2.1 that hands back the edit's latent, and takes `frame`'s as `latent` instead of
+    encoding its pixels again. `size` is a `carried_size`; `frame` is already at it after the first edit."""
+    made = key(
+        "edit_carried", 1, frame=frame.pixels, latent=latent, instruction=instruction, settings=settings, size=size
+    )
+    picture, kept = default_cache.path(made, ".png"), default_cache.path(made, ".pt")
+    if default_cache.enabled and picture.exists() and kept.exists():
+        ui.note(f"cached {made}")
+        return Frame.load_png(picture), torch.load(kept, map_location="cpu", weights_only=True)
+    model: Any = models.registry.acquire(spec(settings))
+    edited, own = model.edit_latent(
+        resize_to(frame.pil(), size), named(instruction, settings, 1), steps=settings.steps, cfg=settings.cfg,
+        seed=settings.seed, turbo=settings.turbo, carried=latent,
+    )  # fmt: skip
+    out = Frame.from_pil(edited, origin=f"edited({frame.origin})" if frame.origin else "edited")
+    if default_cache.enabled:
+        out.pil().save(picture)
+        torch.save(own, kept)
+    return out, own
 
 
 def vae_reference_size(frame: Frame, area: int = VAE_REFERENCE_AREA) -> tuple[int, int]:

@@ -12,6 +12,8 @@ export interface Job {
   finish_megapixels: number | null
   grade_strength: number | null
   retime_fps: number | null
+  /** An edit's idea made one logical change at a time, each judged against the photo. */
+  chain: boolean
   /** Each is a tool's whole effective settings, advanced fields the form does not draw included, so a
    *  machine's overrides reach a quick job; a field absent falls back to the code default. */
   video: VideoKnobs & Record<string, unknown>

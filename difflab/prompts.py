@@ -69,3 +69,50 @@ RESOLVE, THEN COMMIT
 # Fixed negative prompt of the edit stage (TextEncodeQwenImageEdit).
 NEGATIVE_PROMPT = """\
 ugly, blurry, distorted, artifacts, bad, wrong, low quality, anime, digital art, semirealistic, cartoon, manga, drawing, unreal, change pose, freckles, mole"""
+
+# A chained edit (`tools/chain_edit.py`). CHAIN_SYSTEM follows the engine's own prompt above, so every
+# instruction it writes is still in the words that engine was trained on.
+CHAIN_SYSTEM = """\
+CHAINED EDITS - these replace the OUTPUT RULES above and the rule of one instruction per idea.
+The editor carries out one instruction at a time, each on the picture the one before it made. Split the idea into its logical edits: one instruction per change the idea asks for, as many as it has and no more. A change and what it implies stay one edit (night falls, and the street lamps light up); two changes that could be made on their own are two edits. Order them so that no edit undoes, hides or depends on a later one.
+Write each instruction in full by the rules above, for the picture it will be applied to, as if it were the only one: never refer to another instruction, and keep a preserve clause in each.
+Answer only JSON, in the shape the request shows."""
+
+CHAIN_SPLIT_USER = """\
+The picture is the photo to edit.
+
+Idea: {idea}
+
+Answer {{"edits": ["the first instruction", ...]}}."""
+
+CHAIN_REPLAN_USER = """\
+Picture 1 is the original photo. Picture 2 is it after these edits, which are done:
+{done}
+
+Idea: {idea}
+
+Write the edits still needed to carry out the idea on Picture 2, none of them repeating one that is done. Answer {{"edits": ["the next instruction", ...]}}, or {{"edits": []}} when the idea is already carried out."""
+
+CHAIN_REVISE_USER = """\
+Picture 1 is the photo the editor was given. It was told:
+{edit}
+
+Picture 2 is what it made. Compared with the original photo, a reviewer found:
+{issues}
+
+Write a new instruction for Picture 1 that makes this one change and avoids what the reviewer found, keeping every earlier edit already in Picture 1. Answer {{"edit": "the instruction"}}."""
+
+CHAIN_JUDGE_SYSTEM = """\
+You review an image editor's work. Picture 1 is the original photo, Picture 2 the edited one. Judge only what you can see in the pictures. Answer only JSON, in the shape the request shows."""
+
+CHAIN_DONE_USER = """\
+The editor was given these instructions, in order, each applied to the picture the one before made:
+{edits}
+
+Is instruction {number} carried out in Picture 2, as it should look after all of them? First say what Picture 2 shows where that change belongs. Answer {{"seen": "what Picture 2 shows there", "done": true or false, "fix": "when not done, what must change to get there; otherwise empty"}}."""
+
+CHAIN_UNASKED_USER = """\
+The editor was given these instructions, in order:
+{edits}
+
+List every clear change from Picture 1 to Picture 2 that none of them asks for or implies: a different face or person, a changed body, pose or garment, a main object added, lost or changed, the composition rearranged, or a visible loss of quality such as heavy noise or a smeared or painterly texture. Ignore small or distant background details, a slight reframing or crop, and slight differences in sharpness and colour. Answer {{"changes": ["one change", ...]}}, or {{"changes": []}} when there is none."""

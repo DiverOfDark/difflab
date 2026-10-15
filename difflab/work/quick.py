@@ -40,6 +40,8 @@ class Job:
     # it runs `tools.retime` over the finished file.
     retime_fps: int | None = None
     video: VideoSettings = field(default_factory=VideoSettings)
+    # An edit's idea split into its logical edits, made one at a time and each judged (`tools/chain_edit`).
+    chain: bool = False
     edit: EditSettings = field(default_factory=EditSettings)
     vlm: VlmSettings = field(default_factory=VlmSettings)  # writes the edit instruction
     video_vlm: VideoPromptSettings = field(default_factory=VideoPromptSettings)  # writes the H3 caption
@@ -65,6 +67,10 @@ class Job:
         problems = []
         if self.mode in ("edit", "video") and bool(self.idea) == bool(self.prompt):
             problems.append("give exactly one of idea / prompt")
+        if self.chain and self.mode != "edit":
+            problems.append("chain: only an edit is made in steps")
+        elif self.chain and not self.idea:
+            problems.append("chain needs an idea: the VLM splits it into edits")
         if self.mode == "upscale":
             if self.clip is None:
                 problems.append("upscale needs a clip to enlarge")

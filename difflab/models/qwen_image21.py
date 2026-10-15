@@ -225,35 +225,72 @@ class Editor21:
         turbo: bool = True,
     ) -> Image.Image:
         """`image` is already at the target size, and every input is encoded at that area."""
+        return self.edit_latent(image, prompt, steps, cfg, seed, negative_prompt, donors, turbo)[0]
+
+    def edit_latent(
+        self,
+        image: Image.Image,
+        prompt: str,
+        steps: int,
+        cfg: float,
+        seed: int,
+        negative_prompt: str = prompts.NEGATIVE_PROMPT,
+        donors: Sequence[Image.Image] = (),
+        turbo: bool = True,
+        carried: torch.Tensor | None = None,
+    ) -> tuple[Image.Image, torch.Tensor]:
+        """The edit and its latent, as the VAE would encode it. `carried` is `image`'s own latent, used in place of
+        encoding `image`; the text encoder still reads its pixels. It needs a size the condition resize leaves
+        alone (`edit_image.carried_size`)."""
         pipe = self.pipe
+        pending = carried
+
+        def encode(pixels: torch.Tensor, generator: torch.Generator) -> torch.Tensor:
+            nonlocal pending
+            if pending is None:
+                return cast(torch.Tensor, type(pipe)._encode_vae_image(pipe, pixels, generator))
+            given, pending = pending, None
+            wanted = (pixels.shape[-2] // pipe.vae_scale_factor, pixels.shape[-1] // pipe.vae_scale_factor)
+            if tuple(given.shape[-2:]) != wanted:
+                raise ValueError(f"a carried latent is {tuple(given.shape[-2:])}, the condition wants {wanted}")
+            return given.to(pixels.device, pixels.dtype)
+
         base = cast(dict[str, object], FlowMatchEulerDiscreteScheduler.load_config(OFFICIAL.path / "scheduler"))
         pipe.scheduler = FlowMatchEulerDiscreteScheduler.from_config({**base, **(TURBO_SCHEDULER if turbo else {})})
         sigmas = TURBO_SIGMAS if turbo else None
         steps = len(TURBO_SIGMAS) if turbo else steps
         with ui.EditProgress(pipe.transformer, steps) as progress:
-            result = pipe(
-                image=[image, *donors],
-                prompt=prompt,
-                negative_prompt=negative_prompt if cfg > 1 else None,
-                true_cfg_scale=cfg,
-                num_inference_steps=steps,
-                sigmas=sigmas,
-                height=image.height,
-                width=image.width,
-                # The condition images are resized to this area; the target's keeps them 1:1 with the output.
-                output_resolution=round(math.sqrt(image.width * image.height)),
-                generator=torch.Generator("cpu").manual_seed(seed),
-                callback_on_step_end=progress.on_step_end,
-                # Decoded below instead: inside the call the step-0 prefix KV cache is still held, and a 2 MP
-                # decode then asked for 2.13 GB more with 21.6 GB in use. Tiling fits but seams the sky every
-                # 192 px, its tile stride (2026-10-10).
-                output_type="latent",
-            )
+            pipe._encode_vae_image = encode
+            try:
+                result = pipe(
+                    image=[image, *donors],
+                    prompt=prompt,
+                    negative_prompt=negative_prompt if cfg > 1 else None,
+                    true_cfg_scale=cfg,
+                    num_inference_steps=steps,
+                    sigmas=sigmas,
+                    height=image.height,
+                    width=image.width,
+                    # The condition images are resized to this area; the target's keeps them 1:1 with the output.
+                    output_resolution=round(math.sqrt(image.width * image.height)),
+                    generator=torch.Generator("cpu").manual_seed(seed),
+                    callback_on_step_end=progress.on_step_end,
+                    # Decoded below instead: inside the call the step-0 prefix KV cache is still held, and a 2 MP
+                    # decode then asked for 2.13 GB more with 21.6 GB in use. Tiling fits but seams the sky every
+                    # 192 px, its tile stride (2026-10-10).
+                    output_type="latent",
+                )
+            finally:
+                del pipe._encode_vae_image
             latents = result.images
             del result
             torch.cuda.empty_cache()
             edited = _decode(pipe, latents, image.height, image.width)
-        return edited
+        align = pipe.vae_scale_factor * 2
+        own = pipe._unpack_latents(
+            latents, image.height // align * align, image.width // align * align, pipe.vae_scale_factor
+        )
+        return edited, own.float().cpu()  # float32: `keys.canonical` hashes through numpy, which has no bf16
 
     def unload(self) -> None:
         self._pipe = None
