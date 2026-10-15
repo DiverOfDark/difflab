@@ -148,7 +148,8 @@ def _end(reason: str) -> None:
     request = urllib.request.Request(
         POD_URL.format(config.POD_ID),
         method="DELETE",
-        headers={"Authorization": f"Bearer {config.POD_API_KEY}"},
+        # RunPod's API answers urllib's default "Python-urllib/3.x" agent with 403, key or no key.
+        headers={"Authorization": f"Bearer {config.POD_API_KEY}", "User-Agent": "difflab-watchdog"},
     )
     try:
         urllib.request.urlopen(request, timeout=30).close()
