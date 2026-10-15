@@ -51,24 +51,44 @@ const APPIMAGE_VARS: [&str; 11] = [
     "GTK_EXE_PREFIX",
 ];
 
+/// The environment changes that undo an AppImage's: variables to drop, and PATH-like ones to set.
+fn scrubbed() -> (Vec<&'static str>, Vec<(&'static str, String)>) {
+    let Some(dir) = std::env::var_os("APPDIR").filter(|_| std::env::var_os("APPIMAGE").is_some())
+    else {
+        return (Vec::new(), Vec::new());
+    };
+    let dir = dir.to_string_lossy().trim_end_matches('/').to_string();
+    let set = ["PATH", "XDG_DATA_DIRS"]
+        .into_iter()
+        .filter_map(|name| {
+            let value = std::env::var(name).ok()?;
+            let kept: Vec<&str> = value
+                .split(':')
+                .filter(|p| !p.is_empty() && !p.starts_with(&dir))
+                .collect();
+            Some((name, kept.join(":")))
+        })
+        .collect();
+    (APPIMAGE_VARS.to_vec(), set)
+}
+
 pub fn command(program: &str) -> Command {
     let mut command = Command::new(program);
-    if let Some(dir) = std::env::var_os("APPDIR").filter(|_| std::env::var_os("APPIMAGE").is_some())
-    {
-        let dir = dir.to_string_lossy().trim_end_matches('/').to_string();
-        for name in APPIMAGE_VARS {
-            command.env_remove(name);
-        }
-        for name in ["PATH", "XDG_DATA_DIRS"] {
-            if let Ok(value) = std::env::var(name) {
-                let kept: Vec<&str> = value
-                    .split(':')
-                    .filter(|p| !p.is_empty() && !p.starts_with(&dir))
-                    .collect();
-                command.env(name, kept.join(":"));
-            }
-        }
+    let (drop, set) = scrubbed();
+    for name in drop {
+        command.env_remove(name);
     }
+    command.envs(set);
+    command
+}
+
+pub fn std_command(program: &str) -> std::process::Command {
+    let mut command = std::process::Command::new(program);
+    let (drop, set) = scrubbed();
+    for name in drop {
+        command.env_remove(name);
+    }
+    command.envs(set);
     command
 }
 

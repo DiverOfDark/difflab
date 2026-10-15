@@ -9,7 +9,9 @@ use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+use tauri::webview::DownloadEvent;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
+use tauri_plugin_notification::NotificationExt;
 #[cfg(not(target_os = "linux"))]
 use tauri_plugin_opener::OpenerExt;
 use tokio::sync::Mutex;
@@ -690,6 +692,10 @@ async fn open_ui(app: AppHandle, inner: State<'_, Shared>) -> Result<(), String>
         return window.set_focus().map_err(|e| e.to_string());
     }
     let url = format!("{}/auth?token={}", session.base_url, session.token);
+    let dir = results_dir(&app, &inner.store.prefs());
+    let notifier = app.clone();
+    let base = session.base_url.clone();
+    let opener = app.clone();
     WebviewWindowBuilder::new(
         &app,
         "ui",
@@ -697,6 +703,54 @@ async fn open_ui(app: AppHandle, inner: State<'_, Shared>) -> Result<(), String>
     )
     .title("DiffLab")
     .inner_size(1440.0, 900.0)
+    // A web view drops downloads unless the app says where they go; a save dialog here would block
+    // the window's own event loop, so they go to the results folder and a notification says so.
+    .on_download(move |_, event| {
+        match event {
+            DownloadEvent::Requested { url, destination } => {
+                let name = destination
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .or_else(|| {
+                        url.path_segments()
+                            .and_then(|mut s| s.next_back())
+                            .map(str::to_string)
+                    })
+                    .filter(|n| !n.is_empty())
+                    .unwrap_or_else(|| "download".into());
+                *destination = free_name(&dir, &name);
+            }
+            DownloadEvent::Finished { path, success, .. } => {
+                let shown = path
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| dir.display().to_string());
+                let (title, body) = if success {
+                    ("Downloaded", shown)
+                } else {
+                    ("Download failed", shown)
+                };
+                let _ = notifier
+                    .notification()
+                    .builder()
+                    .title(title)
+                    .body(body)
+                    .show();
+            }
+            _ => {}
+        }
+        true
+    })
+    .on_navigation(move |to| {
+        if to.as_str().starts_with(&base)
+            || to.scheme() == "blob"
+            || to.scheme() == "data"
+            || to.scheme() == "about"
+        {
+            return true;
+        }
+        let _ = open_external(&opener, to.as_str());
+        false
+    })
     .build()
     .map(|_| ())
     .map_err(|e| e.to_string())
@@ -788,6 +842,43 @@ async fn open_results(app: AppHandle, inner: State<'_, Shared>) -> Result<(), St
         .map_err(|e| e.to_string())
 }
 
+/// `name` in `dir`, or "name (2).ext" and so on when that is taken.
+fn free_name(dir: &std::path::Path, name: &str) -> PathBuf {
+    let _ = std::fs::create_dir_all(dir);
+    let path = std::path::Path::new(name);
+    let (stem, ext) = (
+        path.file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default(),
+        path.extension()
+            .map(|e| format!(".{}", e.to_string_lossy()))
+            .unwrap_or_default(),
+    );
+    let mut candidate = dir.join(name);
+    let mut n = 2;
+    while candidate.exists() {
+        candidate = dir.join(format!("{stem} ({n}){ext}"));
+        n += 1;
+    }
+    candidate
+}
+
+fn open_external(app: &AppHandle, url: &str) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        let _ = app;
+        local::std_command("xdg-open")
+            .arg(url)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "linux"))]
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 async fn open_link(app: AppHandle, url: String) -> Result<(), String> {
     if !url.starts_with("https://") {
@@ -815,6 +906,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             #[cfg(target_os = "linux")]
             local::integrate();
