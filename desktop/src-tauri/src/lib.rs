@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
+#[cfg(not(target_os = "linux"))]
 use tauri_plugin_opener::OpenerExt;
 use tokio::sync::Mutex;
 
@@ -645,6 +646,16 @@ async fn open_results(app: AppHandle, inner: State<'_, Shared>) -> Result<(), St
     tokio::fs::create_dir_all(&dir)
         .await
         .map_err(|e| e.to_string())?;
+    #[cfg(target_os = "linux")]
+    {
+        let _ = app;
+        local::command("xdg-open")
+            .arg(&dir)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| format!("could not open {}: {e}", dir.display()))
+    }
+    #[cfg(not(target_os = "linux"))]
     app.opener()
         .open_path(dir.display().to_string(), None::<&str>)
         .map_err(|e| e.to_string())
@@ -658,6 +669,8 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
+            #[cfg(target_os = "linux")]
+            local::integrate();
             let dir = app.path().app_config_dir()?;
             let store = Store::new(dir);
             let session = store.session();

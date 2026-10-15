@@ -35,12 +35,39 @@ const SMI: [&str; 4] = [
     "/run/host/usr/bin/nvidia-smi",
 ];
 
-fn command(program: &str) -> Command {
+// What an AppImage's AppRun points at its own bundle: inherited by docker, nvidia-smi or xdg-open,
+// they load the bundle's libraries and Qt plugins instead of the system's (xdg-open then fails silently).
+const APPIMAGE_VARS: [&str; 11] = [
+    "LD_LIBRARY_PATH",
+    "QT_PLUGIN_PATH",
+    "PYTHONHOME",
+    "PYTHONPATH",
+    "PERLLIB",
+    "GDK_PIXBUF_MODULE_FILE",
+    "GSETTINGS_SCHEMA_DIR",
+    "GI_TYPELIB_PATH",
+    "GTK_PATH",
+    "GIO_MODULE_DIR",
+    "GTK_EXE_PREFIX",
+];
+
+pub fn command(program: &str) -> Command {
     let mut command = Command::new(program);
-    // An AppImage points LD_LIBRARY_PATH at its own bundled libraries, which docker and nvidia-smi
-    // must not load.
-    if std::env::var_os("APPIMAGE").is_some() {
-        command.env_remove("LD_LIBRARY_PATH");
+    if let Some(dir) = std::env::var_os("APPDIR").filter(|_| std::env::var_os("APPIMAGE").is_some())
+    {
+        let dir = dir.to_string_lossy().trim_end_matches('/').to_string();
+        for name in APPIMAGE_VARS {
+            command.env_remove(name);
+        }
+        for name in ["PATH", "XDG_DATA_DIRS"] {
+            if let Ok(value) = std::env::var(name) {
+                let kept: Vec<&str> = value
+                    .split(':')
+                    .filter(|p| !p.is_empty() && !p.starts_with(&dir))
+                    .collect();
+                command.env(name, kept.join(":"));
+            }
+        }
     }
     command
 }
@@ -488,4 +515,36 @@ pub async fn copy_results(
         .output()
         .await;
     result
+}
+
+/// An AppImage installs nothing, so without this the taskbar finds no icon for the window's app id.
+#[cfg(target_os = "linux")]
+pub fn integrate() {
+    let (Some(appimage), Some(home)) = (std::env::var_os("APPIMAGE"), std::env::var_os("HOME"))
+    else {
+        return;
+    };
+    let data = std::env::var_os("XDG_DATA_HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::Path::new(&home).join(".local/share"));
+    let icons = data.join("icons/hicolor");
+    for (size, bytes) in [
+        ("32x32", &include_bytes!("../icons/32x32.png")[..]),
+        ("128x128", &include_bytes!("../icons/128x128.png")[..]),
+        ("256x256", &include_bytes!("../icons/128x128@2x.png")[..]),
+    ] {
+        let dir = icons.join(size).join("apps");
+        let _ = std::fs::create_dir_all(&dir);
+        let _ = std::fs::write(dir.join("difflab-desktop.png"), bytes);
+    }
+    let entry = format!(
+        "[Desktop Entry]\nType=Application\nName=DiffLab\nComment=Run DiffLab on this PC or on RunPod\nExec=\"{}\"\nIcon=difflab-desktop\nStartupWMClass=difflab-desktop\nCategories=Graphics;Video;\nTerminal=false\n",
+        appimage.to_string_lossy()
+    );
+    let apps = data.join("applications");
+    let _ = std::fs::create_dir_all(&apps);
+    let path = apps.join("difflab-desktop.desktop");
+    if std::fs::read_to_string(&path).ok().as_deref() != Some(entry.as_str()) {
+        let _ = std::fs::write(path, entry);
+    }
 }
