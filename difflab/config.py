@@ -63,6 +63,17 @@ DASHBOARD = True  # serve it whenever something runs; runs are recorded under RU
 DASHBOARD_HOST = os.environ.get("DIFFLAB_HOST", "0.0.0.0")  # LAN-reachable; "127.0.0.1" for this machine only
 DASHBOARD_PORT = int(os.environ.get("DIFFLAB_PORT", "8765"))
 RUNS_DIR = OUTPUT_DIR / "runs"
+
+# `work/watchdog.py`. RunPod sets the first two on every pod; the desktop app sets the rest on the pod it
+# creates. Off RunPod POD_ID is empty and nothing watches.
+POD_ID = os.environ.get("RUNPOD_POD_ID", "")
+POD_API_KEY = os.environ.get("RUNPOD_API_KEY", "")
+POD_IDLE_MINUTES = float(os.environ.get("DIFFLAB_IDLE_MINUTES", "5"))
+POD_STUCK_MINUTES = float(os.environ.get("DIFFLAB_STUCK_MINUTES", "15"))
+POD_USD_PER_HOUR = float(os.environ.get("DIFFLAB_USD_PER_HOUR", "0"))  # 0: unknown, so no spend limit
+POD_SPEND_LIMIT_USD = float(os.environ.get("DIFFLAB_SPEND_LIMIT_USD", "5"))
+POD_EXIT_WHEN_DONE = os.environ.get("DIFFLAB_EXIT_WHEN_DONE", "") == "1"
+POD_ENDED = OUTPUT_DIR / "pod-ended.json"  # on the network volume, where the app reads why the last pod went
 RUNS_KEEP = 10  # newest run directories kept whatever their age; final images and videos are kept
 # `work/cleanup.py`, run by the worker between jobs. Blobs on 2026-10-11 were 22 G, 12 G of it handoff
 # tails at ~37 MB a shot; a cache hit refreshes a blob's mtime, so the age is since last use.

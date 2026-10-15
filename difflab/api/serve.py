@@ -47,11 +47,14 @@ def ensure_running() -> bool:
 
 def serve_forever() -> None:
     """What a container runs as its command: the page, and the worker that renders what it asks for."""
+    from difflab.work.watchdog import Watchdog
     from difflab.work.worker import Worker
 
     print(f"DiffLab: {url()}  (runs from {config.RUNS_DIR})")
     _warn()
     Worker().start()
+    if config.POD_ID:
+        Watchdog().start()
     _run(quiet=False)
 
 

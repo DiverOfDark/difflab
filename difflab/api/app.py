@@ -39,7 +39,7 @@ from difflab.screenplay import (
     rendering,
     settings,
 )
-from difflab.work import queue
+from difflab.work import queue, watchdog
 from difflab.work.quick import Job
 
 STATIC = Path(__file__).parent / "static"  # the built Vue app, when there is one
@@ -843,6 +843,12 @@ def restart() -> dict[str, str]:
 
     worker.RESTART.set()
     return {"restart": "when the queue is idle"}
+
+
+@app.post("/api/pod/heartbeat")
+def heartbeat() -> dict[str, Any]:
+    """The desktop app's sign that someone is still there; the answer is what the pod has cost so far."""
+    return watchdog.beat()
 
 
 @app.get("/api/profile")
