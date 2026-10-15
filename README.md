@@ -504,12 +504,15 @@ serves it with hot reload and passes the API through to the Python process.
 
 ### Serving it
 
-**There is no authentication.** On a LAN that is a choice; on a pod's public URL it is an open card
-and a public gallery of everything it makes, and the server says so on every start that is not bound
-to localhost. Put it behind something, or set `DIFFLAB_HOST=127.0.0.1` and reach it through a tunnel.
+**Set `DIFFLAB_TOKEN` on anything public.** Without it there is no authentication: on a LAN that is a
+choice; on a pod's public URL it is an open card and a public gallery of everything it makes. With it,
+every request needs `Authorization: Bearer <token>` or the cookie `/auth?token=<token>` sets; the desktop
+app (`desktop/`) generates one per pod.
 
-`DIFFLAB_HOST` and `DIFFLAB_PORT` are the only two knobs that read the environment, so a container
-can be configured without editing `config.py`. The `Dockerfile` builds the page and the package with the
+On RunPod (`RUNPOD_POD_ID` set) the server deletes its own pod when nobody needs it (`work/watchdog.py`):
+the `DIFFLAB_IDLE_MINUTES`, `DIFFLAB_STUCK_MINUTES`, `DIFFLAB_SPEND_LIMIT_USD` and `DIFFLAB_EXIT_WHEN_DONE`
+knobs are read from the environment, like `DIFFLAB_HOST` and `DIFFLAB_PORT`, so a container can be
+configured without editing `config.py`. The `Dockerfile` builds the page and the package with the
 same `pyproject.toml` and `pixi.lock` and runs the server. One image serves every card from Ampere to Blackwell (`ghcr.io/diverofdark/difflab:latest`): comfy-kitchen
 is compiled for its own release list less Turing plus `86-real`, and exllamav3 for the same cards, so each card runs
 code built for it. `--build-arg COMFY_CUDA_ARCHS=89-real --build-arg TORCH_CUDA_ARCH_LIST=8.9` builds for one card only,

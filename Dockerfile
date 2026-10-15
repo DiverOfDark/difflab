@@ -113,6 +113,6 @@ COPY --link --from=page /app/difflab/api/static ./difflab/api/static
 VOLUME ["/app/output"]
 
 EXPOSE 8765
-# DIFFLAB_HOST above makes it reachable from outside, with no authentication: see README, "Serving it".
+# DIFFLAB_HOST above makes it reachable from outside, open to anyone unless DIFFLAB_TOKEN is set: see README, "Serving it".
 ENTRYPOINT ["/bin/bash", "/app/activate.sh"]
 CMD ["python", "-m", "difflab.api"]

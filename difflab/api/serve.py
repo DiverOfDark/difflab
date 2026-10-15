@@ -5,8 +5,8 @@ worker that takes jobs off the queue. `ensure_running` is for the other directio
 from an editor brings a server up in a thread so the take can be watched, with no worker, since the
 editor's own process is doing the rendering - and it does nothing when the port is already held.
 
-Neither asks who is connecting. On a LAN that is a choice; on a pod's public URL it is an open card
-and a public gallery, so binding to anything but localhost says so on every start.
+Without `DIFFLAB_TOKEN` neither asks who is connecting. On a LAN that is a choice; on a pod's public URL
+it is an open card and a public gallery, so binding to anything but localhost says so on every start.
 """
 
 from __future__ import annotations
@@ -73,5 +73,5 @@ def _run(quiet: bool) -> None:
 
 
 def _warn() -> None:
-    if config.DASHBOARD_HOST not in ("127.0.0.1", "localhost"):
+    if not config.TOKEN and config.DASHBOARD_HOST not in ("127.0.0.1", "localhost"):
         print(f"  !  {BANNER}")

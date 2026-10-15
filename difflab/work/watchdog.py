@@ -17,14 +17,18 @@ from difflab import config, store
 TICK = 30.0
 # Container disk: it outlives `/api/restart`'s exec but not the pod.
 STARTED = Path("/tmp/difflab-pod-started")
-DELETE_URL = "https://rest.runpod.io/v1/pods/{}"
+POD_URL = "https://rest.runpod.io/v1/pods/{}"
 
 _heard = time.time()
+# The app learns the price only from the pod it created, so it cannot be in that pod's environment.
+_rate = config.POD_USD_PER_HOUR
 
 
-def beat() -> dict[str, Any]:
-    global _heard
+def beat(usd_per_hour: float | None = None) -> dict[str, Any]:
+    global _heard, _rate
     _heard = time.time()
+    if usd_per_hour:
+        _rate = usd_per_hour
     return state()
 
 
@@ -32,6 +36,7 @@ def state() -> dict[str, Any]:
     return {
         "pod": config.POD_ID,
         "usd": round(_spent(), 2),
+        "usd_per_hour": _rate,
         "spend_limit_usd": config.POD_SPEND_LIMIT_USD,
         "idle_minutes": config.POD_IDLE_MINUTES,
         "exit_when_done": config.POD_EXIT_WHEN_DONE,
@@ -63,7 +68,7 @@ class Watchdog(threading.Thread):
         with store.connect() as connection:
             active = _active_runs(connection)
             progress = _progress(connection, active)
-        if config.POD_USD_PER_HOUR and _spent() >= config.POD_SPEND_LIMIT_USD:
+        if _rate and _spent() >= config.POD_SPEND_LIMIT_USD:
             return f"spend limit ${config.POD_SPEND_LIMIT_USD:.2f} reached"
         if active:
             self.busy_since = self.busy_since or now
@@ -105,7 +110,7 @@ def _started() -> float:
 
 
 def _spent() -> float:
-    return (time.time() - _started()) / 3600 * config.POD_USD_PER_HOUR
+    return max(0.0, time.time() - _started()) / 3600 * _rate
 
 
 def _end(reason: str) -> None:
@@ -115,7 +120,7 @@ def _end(reason: str) -> None:
         json.dumps({"pod": config.POD_ID, "reason": reason, "usd": usd, "ended_at": time.time()})
     )
     request = urllib.request.Request(
-        DELETE_URL.format(config.POD_ID),
+        POD_URL.format(config.POD_ID),
         method="DELETE",
         headers={"Authorization": f"Bearer {config.POD_API_KEY}"},
     )

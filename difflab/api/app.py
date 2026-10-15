@@ -12,13 +12,14 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import hmac
 import sqlite3
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from difflab import config
@@ -43,6 +44,7 @@ from difflab.work import queue, watchdog
 from difflab.work.quick import Job
 
 STATIC = Path(__file__).parent / "static"  # the built Vue app, when there is one
+COOKIE = "difflab_token"
 
 app = FastAPI(title="difflab", docs_url=None, redoc_url=None)
 
@@ -54,6 +56,32 @@ async def _never_stale(request: Request, call_next: Callable[[Request], Awaitabl
     response = await call_next(request)
     if not request.url.path.startswith("/assets/"):
         response.headers.setdefault("Cache-Control", "no-cache")
+    return response
+
+
+@app.middleware("http")
+async def _token(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
+    if not config.TOKEN or request.url.path == "/auth":
+        return await call_next(request)
+    given = request.cookies.get(COOKIE) or request.headers.get("authorization", "").removeprefix("Bearer ")
+    if not _matches(given):
+        return Response("difflab: this server needs its token", status_code=401)
+    return await call_next(request)
+
+
+def _matches(given: str) -> bool:
+    return hmac.compare_digest(given.encode(), config.TOKEN.encode())
+
+
+@app.get("/auth")
+def auth(token: str, request: Request) -> Response:
+    """Swaps the token in the URL the desktop app opens for a cookie, so it is not left in the address bar."""
+    if not config.TOKEN or not _matches(token):
+        raise HTTPException(401, "wrong token")
+    response = RedirectResponse("/", status_code=303)
+    # RunPod's proxy ends TLS, so the server itself sees http.
+    secure = request.headers.get("x-forwarded-proto", request.url.scheme) == "https"
+    response.set_cookie(COOKIE, token, max_age=30 * 86400, httponly=True, secure=secure, samesite="lax")
     return response
 
 
@@ -846,9 +874,10 @@ def restart() -> dict[str, str]:
 
 
 @app.post("/api/pod/heartbeat")
-def heartbeat() -> dict[str, Any]:
+async def heartbeat(request: Request) -> dict[str, Any]:
     """The desktop app's sign that someone is still there; the answer is what the pod has cost so far."""
-    return watchdog.beat()
+    body = await request.json() if await request.body() else {}
+    return watchdog.beat(body.get("usd_per_hour"))
 
 
 @app.get("/api/profile")
