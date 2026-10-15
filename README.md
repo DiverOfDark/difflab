@@ -62,24 +62,24 @@ make stale before you commit to it.
 
 ### The desktop app: your PC or RunPod
 
-![The desktop app, idle and running on RunPod](screenshots/desktop.png)
+![The desktop app: setup, a pod booting, a pod running](screenshots/desktop.png)
 
 `desktop/` is a small app for Windows, macOS and Linux that starts difflab for you:
 
 - **On this PC** if it has the hardware (an NVIDIA card with 24 GB, 64 GB of RAM, and Docker). If it
   doesn't, the app says what is missing.
-- **On a RunPod pod** otherwise. On the first start it creates a 150 GB network volume named `difflab`
-  in the region you pick. The models (~96 GB) download onto that volume once and are reused by every
-  later pod.
+- **On a RunPod pod** otherwise: an RTX 3090, 4090 or 5090, billed by the second. The first pod creates
+  a global volume named `difflab` that any GPU in any region can mount. The models (~96 GB) download
+  onto it once and are reused by every later pod.
 
-The app opens the difflab page, shows the GPU, uptime and money spent, and stops the pod on request
-or when the queue is done. The pod also deletes itself when idle, stuck, or over a spend limit, so
-closing the app never leaves a GPU billing. Results download over RunPod's S3 API, with no pod
-running.
+A setup wizard walks through where to run, the RunPod account, storage and the safety limits. After
+that the app opens the difflab page and shows the GPU, the money spent, your balance, the image pull
+layer by layer and the pod's log. It stops the pod on request or when the queue is done, and the pod
+also deletes itself when idle, stuck, or over a spend limit, so closing the app never leaves a GPU
+billing. Results download to your PC by themselves while a pod runs.
 
-For RunPod it needs an API key and an S3 API key (RunPod → Settings → S3 API Keys). Both are kept in
-the OS keychain. Every push to `main` releases a new version of the installers and of the image together
-([Releases](https://github.com/DiverOfDark/difflab/releases)). To build it yourself, see
+For RunPod it needs only an API key, kept in the OS keychain. Every push to `main` releases a new
+version of the installers and of the image together ([Releases](https://github.com/DiverOfDark/difflab/releases)). To build it yourself, see
 [desktop/README.md](desktop/README.md).
 
 ### From source
