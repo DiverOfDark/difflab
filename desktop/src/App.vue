@@ -14,7 +14,7 @@ type Tab = "run" | "results" | "settings";
 const loaded = ref(false);
 const wizard = ref(false);
 const tab = ref<Tab>("run");
-const status = ref<Status>({ phase: "none", kind: null, gpu: "", usd: 0, usd_per_hour: 0, uptime_s: 0, draining: false, message: "", progress: null, slow: false });
+const status = ref<Status>({ phase: "none", kind: null, gpu: "", usd: 0, usd_per_hour: 0, uptime_s: 0, draining: false, message: "", progress: null, slow: false, layers: [] });
 const prefs = reactive<Prefs>({ idle_minutes: 5, stuck_minutes: 15, spend_limit_usd: 5, exit_when_done: false, auto_download: true, results_dir: "", setup_done: false });
 const hasKey = ref(false);
 const hasLocal = ref(false);
@@ -97,6 +97,9 @@ async function checkNow() {
   versions.value = await api.versions(true);
   await checkApp();
 }
+
+const LAYER_PILL: Record<string, string> = { done: "done", downloaded: "done", downloading: "live", extracting: "live", retrying: "failed", waiting: "stopped" };
+const size = (bytes: number) => (bytes >= 1e9 ? `${(bytes / 1e9).toFixed(2)} GB` : bytes >= 1e6 ? `${Math.round(bytes / 1e6)} MB` : bytes ? `${Math.round(bytes / 1e3)} kB` : "");
 
 const where = computed(() => (status.value.kind === "local" ? "this PC" : "RunPod"));
 
@@ -238,6 +241,14 @@ onMounted(async () => {
               <div><span class="label">Up</span><span class="mono">{{ uptime }}</span></div>
             </div>
             <p v-if="status.draining" class="band hint">It stops as soon as the queue is done.</p>
+            <div v-if="running && status.layers.length" class="layer-list mono">
+              <div v-for="l in status.layers" :key="l.id">
+                <span class="dim">{{ l.id }}</span>
+                <span class="num">{{ size(l.bytes) }}</span>
+                <span class="pill" :class="LAYER_PILL[l.state]">{{ l.state }}</span>
+                <span class="dim">{{ l.retries ? `retried ${l.retries}×` : "" }}</span>
+              </div>
+            </div>
             <div v-if="status.progress !== null" class="bar"><i :style="{ width: `${status.progress * 100}%` }" /></div>
             <p v-if="status.message" class="band" :class="status.phase === 'error' ? 'error' : 'hint'">{{ status.message }}</p>
 
@@ -395,6 +406,20 @@ button {
   to {
     transform: rotate(360deg);
   }
+}
+.layer-list {
+  display: grid;
+  gap: 4px;
+  font-size: 11px;
+}
+.layer-list > div {
+  display: grid;
+  grid-template-columns: 110px 70px 110px 1fr;
+  align-items: center;
+}
+.layer-list .num {
+  text-align: right;
+  padding-right: var(--space-2);
 }
 .logs .lines {
   max-height: 260px;

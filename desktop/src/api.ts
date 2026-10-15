@@ -13,6 +13,14 @@ export interface Status {
   message: string;
   progress: number | null;
   slow: boolean;
+  layers: Layer[];
+}
+
+export interface Layer {
+  id: string;
+  bytes: number;
+  state: "waiting" | "downloading" | "downloaded" | "extracting" | "retrying" | "done";
+  retries: number;
 }
 
 export interface Prefs {

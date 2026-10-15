@@ -1,6 +1,5 @@
 use serde::Serialize;
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
 use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
@@ -300,7 +299,7 @@ pub async fn local_image() -> Option<ImageVersion> {
 
 /// Each layer's compressed size by the 12-character id `docker pull` prints: without a terminal it
 /// prints no byte counts, only which layers are done.
-pub async fn layer_sizes() -> Option<HashMap<String, u64>> {
+pub async fn layer_sizes() -> Option<Vec<(String, u64)>> {
     let (_, manifest) = Registry::open().await?.latest().await?;
     let sizes = manifest["layers"]
         .as_array()?
@@ -309,7 +308,7 @@ pub async fn layer_sizes() -> Option<HashMap<String, u64>> {
             let digest = layer["digest"].as_str()?.strip_prefix("sha256:")?;
             Some((digest.get(..12)?.to_string(), layer["size"].as_u64()?))
         })
-        .collect::<HashMap<_, _>>();
+        .collect::<Vec<_>>();
     (!sizes.is_empty()).then_some(sizes)
 }
 
@@ -317,28 +316,43 @@ pub async fn layer_sizes() -> Option<HashMap<String, u64>> {
 pub struct Pulled {
     pub message: String,
     pub progress: Option<f64>,
+    pub layers: Vec<Layer>,
 }
 
-/// Turns image-pull lines into gigabytes: both `docker pull` ("<id>: Download complete") and RunPod's
-/// system log ("<id> Download complete") name layers by the id `layer_sizes` keys on.
+#[derive(Serialize, Clone)]
+pub struct Layer {
+    pub id: String,
+    pub bytes: u64,
+    /// waiting, downloading, downloaded, extracting or done.
+    pub state: String,
+    pub retries: u32,
+}
+
+/// Turns image-pull lines into per-layer states and gigabytes: both `docker pull` ("<id>: Download
+/// complete") and RunPod's system log ("<id> Download complete") name layers by the id
+/// `layer_sizes` keys on. Neither carries byte counts, and RunPod's "Downloading" lines come on a
+/// timer rather than per chunk, so a layer in flight has a state, not a percentage.
 pub struct PullTracker {
-    sizes: HashMap<String, u64>,
+    layers: Vec<Layer>,
     total: u64,
-    seen: HashSet<String>,
-    fetched: HashSet<String>,
-    unpacked: HashSet<String>,
     pub place: &'static str,
 }
 
 impl PullTracker {
-    pub fn new(sizes: HashMap<String, u64>, place: &'static str) -> Self {
-        let total = sizes.values().sum();
+    pub fn new(sizes: Vec<(String, u64)>, place: &'static str) -> Self {
+        let total = sizes.iter().map(|(_, b)| b).sum();
+        let layers = sizes
+            .into_iter()
+            .map(|(id, bytes)| Layer {
+                id,
+                bytes,
+                state: "waiting".into(),
+                retries: 0,
+            })
+            .collect();
         PullTracker {
-            sizes,
+            layers,
             total,
-            seen: HashSet::new(),
-            fetched: HashSet::new(),
-            unpacked: HashSet::new(),
             place,
         }
     }
@@ -350,48 +364,62 @@ impl PullTracker {
             return None;
         }
         let state = state.trim();
-        self.seen.insert(id.to_string());
-        if matches!(
-            state,
-            "Download complete" | "Already exists" | "Pull complete"
-        ) {
-            self.fetched.insert(id.to_string());
+        let layer = match self.layers.iter().position(|l| l.id == id) {
+            Some(at) => &mut self.layers[at],
+            None => {
+                self.layers.push(Layer {
+                    id: id.to_string(),
+                    bytes: 0,
+                    state: "waiting".into(),
+                    retries: 0,
+                });
+                self.layers.last_mut().expect("just pushed")
+            }
+        };
+        // docker counts a retry down ("Retrying in 5 seconds" ... "1 second"): one retry per countdown.
+        if state.starts_with("Retrying in") {
+            if layer.state != "retrying" {
+                layer.retries += 1;
+            }
+            layer.state = "retrying".into();
+        } else {
+            let next = match state {
+                "Pulling fs layer" | "Waiting" => "waiting",
+                "Downloading" => "downloading",
+                "Verifying Checksum" | "Download complete" => "downloaded",
+                "Extracting" => "extracting",
+                "Pull complete" | "Already exists" => "done",
+                _ => return None,
+            };
+            layer.state = next.into();
         }
-        if matches!(state, "Already exists" | "Pull complete") {
-            self.unpacked.insert(id.to_string());
-        }
-        let (seen, fetched, unpacked) = (self.seen.len(), self.fetched.len(), self.unpacked.len());
-        let got: u64 = self
-            .fetched
-            .iter()
-            .filter_map(|id| self.sizes.get(id))
-            .sum();
-        Some(if fetched < seen && self.total > 0 {
-            Pulled {
-                message: format!(
+        let fetched = |l: &&Layer| matches!(l.state.as_str(), "downloaded" | "extracting" | "done");
+        let got: u64 = self.layers.iter().filter(fetched).map(|l| l.bytes).sum();
+        let (count, done) = (
+            self.layers.len(),
+            self.layers.iter().filter(|l| l.state == "done").count(),
+        );
+        let all_fetched = self.layers.iter().filter(fetched).count() == count;
+        let (message, progress) = if !all_fetched && self.total > 0 {
+            (
+                format!(
                     "Downloading DiffLab {}: {:.1} / {:.1} GB",
                     self.place,
                     got as f64 / 1e9,
                     self.total as f64 / 1e9
                 ),
-                progress: Some(got as f64 / self.total as f64),
-            }
-        } else if fetched < seen {
-            Pulled {
-                message: format!(
-                    "Downloading DiffLab {}: {fetched} / {seen} parts",
-                    self.place
-                ),
-                progress: Some(fetched as f64 / seen as f64),
-            }
+                got as f64 / self.total as f64,
+            )
         } else {
-            Pulled {
-                message: format!(
-                    "Unpacking DiffLab {}: {unpacked} / {seen} parts",
-                    self.place
-                ),
-                progress: Some(unpacked as f64 / seen as f64),
-            }
+            (
+                format!("Unpacking DiffLab {}: {done} / {count} parts", self.place),
+                done as f64 / count as f64,
+            )
+        };
+        Some(Pulled {
+            message,
+            progress: Some(progress),
+            layers: self.layers.clone(),
         })
     }
 }

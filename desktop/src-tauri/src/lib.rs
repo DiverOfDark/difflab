@@ -41,6 +41,7 @@ struct Status {
     message: String,
     progress: Option<f64>,
     slow: bool,
+    layers: Vec<local::Layer>,
 }
 
 #[derive(Serialize, Clone, Default)]
@@ -321,6 +322,9 @@ impl Inner {
             if session.kind == Kind::Runpod {
                 status.usd = status.uptime_s as f64 / 3600.0 * session.usd_per_hour;
             }
+            if let Some(boot) = self.boot.lock().unwrap().as_ref() {
+                status.layers = boot.layers.clone();
+            }
             let pulling = session.kind == Kind::Runpod && !*self.container_started.lock().unwrap();
             let retrying = *self.retrying.lock().unwrap();
             if pulling && (retrying || status.uptime_s > SLOW_BOOT_S) {
@@ -334,7 +338,10 @@ impl Inner {
             if status.message.is_empty() {
                 let boot = self.boot.lock().unwrap().clone();
                 (status.message, status.progress) = match (boot, &session.kind) {
-                    (Some(b), _) => (b.message, b.progress),
+                    (Some(b), _) => {
+                        status.layers = b.layers;
+                        (b.message, b.progress)
+                    }
                     (None, Kind::Runpod) => {
                         ("Waiting for RunPod to set up the machine…".into(), None)
                     }
@@ -371,6 +378,7 @@ async fn follow_pod(app: &AppHandle, inner: &Inner, session: &Session) {
                     *inner.boot.lock().unwrap() = Some(local::Pulled {
                         message: "Starting the server…".into(),
                         progress: None,
+                        layers: Vec::new(),
                     });
                 }
                 inner.push_log(app, line);
@@ -614,6 +622,7 @@ async fn launch(app: &AppHandle, inner: &Inner, kind: Kind) -> Result<Session, S
                             kind: Some(Kind::Local),
                             message: update.message,
                             progress: update.progress,
+                            layers: update.layers,
                             ..Default::default()
                         },
                     )
