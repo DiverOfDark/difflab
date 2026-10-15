@@ -257,7 +257,7 @@ fn results_dir(app: &AppHandle, prefs: &Prefs) -> PathBuf {
     app.path()
         .home_dir()
         .unwrap_or_default()
-        .join("DiffLab results")
+        .join("DiffLab")
 }
 
 #[tauri::command]
