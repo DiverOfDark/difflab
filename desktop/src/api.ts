@@ -46,7 +46,6 @@ export interface Loaded {
 
 export interface Secrets {
   runpodKey?: string;
-  s3Access?: string;
   s3Secret?: string;
 }
 
@@ -57,7 +56,6 @@ export const saveSettings = (prefs: Prefs, secrets: Secrets = {}) =>
   invoke("save_settings", {
     prefs,
     runpodKey: secrets.runpodKey || null,
-    s3Access: secrets.s3Access || null,
     s3Secret: secrets.s3Secret || null,
   });
 export const start = (kind: Kind) => invoke("start", { kind });

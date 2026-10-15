@@ -57,14 +57,19 @@ impl Inner {
         Ok(runpod::Client::new(key))
     }
 
-    fn volume(&self) -> Option<s3::Volume> {
+    async fn volume(&self) -> Option<s3::Volume> {
         let prefs = self.store.prefs();
-        Some(s3::Volume {
-            datacenter: prefs.datacenter,
-            id: Some(prefs.volume_id).filter(|v| !v.is_empty())?,
-            access: self.store.secret(S3_ACCESS)?,
-            secret: self.store.secret(S3_SECRET)?,
-        })
+        let id = Some(prefs.volume_id).filter(|v| !v.is_empty())?;
+        let secret = self.store.secret(S3_SECRET)?;
+        let access = match self.store.secret(S3_ACCESS) {
+            Some(access) => access,
+            None => {
+                let access = self.runpod().ok()?.user_id().await.ok()?;
+                let _ = self.store.set_secret(S3_ACCESS, &access);
+                access
+            }
+        };
+        Some(s3::Volume { datacenter: prefs.datacenter, id, access, secret })
     }
 
     async fn refresh_balance(&self, app: &AppHandle, force: bool) -> Option<f64> {
@@ -128,7 +133,7 @@ impl Inner {
 
     /// Why the pod ended, from what its watchdog wrote on the volume.
     async fn ended_reason(&self, pod_id: &str) -> String {
-        let Some(volume) = self.volume() else {
+        let Some(volume) = self.volume().await else {
             return "The pod is gone.".into();
         };
         match volume.get("pod-ended.json").await {
@@ -265,7 +270,7 @@ async fn load(app: AppHandle, inner: State<'_, Shared>) -> Result<Loaded, String
     let prefs = inner.store.prefs();
     Ok(Loaded {
         has_runpod_key: inner.store.secret(RUNPOD_KEY).is_some(),
-        has_s3: inner.store.secret(S3_ACCESS).is_some() && inner.store.secret(S3_SECRET).is_some(),
+        has_s3: inner.store.secret(S3_SECRET).is_some(),
         datacenters: runpod::DATACENTERS.to_vec(),
         status: inner.status.lock().await.clone(),
         results_dir: results_dir(&app, &prefs).display().to_string(),
@@ -297,7 +302,6 @@ async fn save_settings(
     inner: State<'_, Shared>,
     prefs: Prefs,
     runpod_key: Option<String>,
-    s3_access: Option<String>,
     s3_secret: Option<String>,
 ) -> Result<(), String> {
     let mut prefs = prefs;
@@ -307,8 +311,7 @@ async fn save_settings(
     }
     inner.store.save_prefs(&prefs)?;
     for (name, value) in [
-        (RUNPOD_KEY, runpod_key),
-        (S3_ACCESS, s3_access),
+        (RUNPOD_KEY, runpod_key.clone()),
         (S3_SECRET, s3_secret),
     ] {
         if let Some(v) = value
@@ -316,6 +319,11 @@ async fn save_settings(
             .filter(|v| !v.is_empty())
         {
             inner.store.set_secret(name, &v)?;
+        }
+    }
+    if runpod_key.is_some_and(|k| !k.trim().is_empty()) {
+        if let Ok(id) = inner.runpod()?.user_id().await {
+            inner.store.set_secret(S3_ACCESS, &id)?;
         }
     }
     Ok(())

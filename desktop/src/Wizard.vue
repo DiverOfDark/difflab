@@ -12,7 +12,7 @@ const RUNPOD_BILLING = "https://www.runpod.io/console/user/billing";
 const kind = ref<Kind | null>(null);
 const step = ref(0);
 const prefs = reactive<Prefs>({ ...props.prefs });
-const secrets = reactive({ runpodKey: "", s3Access: "", s3Secret: "" });
+const secrets = reactive({ runpodKey: "", s3Secret: "" });
 const checked = ref<number | null>(null);
 const checking = ref(false);
 const problem = ref("");
@@ -125,10 +125,9 @@ async function next() {
       </label>
       <div>
         <h3>Download results without a GPU <span class="pill waiting">optional</span></h3>
-        <p class="muted">With an S3 key the app can copy finished videos to this PC even when no GPU is running. In RunPod, open Settings → S3 API Keys, create one, and paste both parts. You can add it later in Settings.</p>
+        <p class="muted">With an S3 key the app can copy finished videos to this PC even when no GPU is running. RunPod only lets you create one on its site: open Settings → S3 API Keys, create one, and paste the key that starts with rps_. You can add it later in Settings.</p>
       </div>
-      <label class="field"><span class="label">S3 access key</span><input v-model="secrets.s3Access" type="password" placeholder="user_…" /></label>
-      <label class="field"><span class="label">S3 secret</span><input v-model="secrets.s3Secret" type="password" placeholder="rps_…" /></label>
+      <label class="field"><span class="label">S3 key</span><input v-model="secrets.s3Secret" type="password" placeholder="rps_…" /></label>
     </section>
 
     <section v-else-if="kind === 'runpod' && step === 3" class="stack">

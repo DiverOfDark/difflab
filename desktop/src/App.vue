@@ -20,7 +20,7 @@ const hasS3 = ref(false);
 const balance = ref<number | null>(null);
 const resultsDir = ref("");
 const hardware = ref<Hardware | null>(null);
-const secrets = reactive({ runpodKey: "", s3Access: "", s3Secret: "" });
+const secrets = reactive({ runpodKey: "", s3Secret: "" });
 const busy = ref("");
 const error = ref("");
 const saved = ref(false);
@@ -79,7 +79,7 @@ const saveSettings = () =>
   act("Saving", async () => {
     await api.saveSettings({ ...prefs }, secrets);
     const newKey = !!secrets.runpodKey;
-    secrets.runpodKey = secrets.s3Access = secrets.s3Secret = "";
+    secrets.runpodKey = secrets.s3Secret = "";
     await reload();
     if (newKey) balance.value = await api.balance();
     saved.value = true;
@@ -200,10 +200,7 @@ onMounted(async () => {
             <label class="field"><span class="label">RunPod API key</span>
               <input v-model="secrets.runpodKey" type="password" :placeholder="hasKey ? 'saved; paste a new one to replace it' : 'rpa_…'" />
             </label>
-            <label class="field"><span class="label">S3 access key</span>
-              <input v-model="secrets.s3Access" type="password" :placeholder="hasS3 ? 'saved; paste a new one to replace it' : 'user_…'" />
-            </label>
-            <label class="field"><span class="label">S3 secret</span>
+            <label class="field"><span class="label">S3 key</span>
               <input v-model="secrets.s3Secret" type="password" :placeholder="hasS3 ? 'saved; paste a new one to replace it' : 'rps_…'" />
             </label>
             <label class="field"><span class="label">Region</span>

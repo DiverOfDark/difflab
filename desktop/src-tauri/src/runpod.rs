@@ -169,27 +169,43 @@ impl Client {
         }
     }
 
-    pub async fn balance(&self) -> Result<f64, String> {
+    async fn myself(&self, fields: &str) -> Result<Value, String> {
         let response = self
             .http
             .post(GRAPHQL)
             .query(&[("api_key", &self.key)])
-            .json(&json!({"query": "query { myself { clientBalance } }"}))
+            .json(&json!({ "query": format!("query {{ myself {{ {fields} }} }}") }))
             .send()
             .await
             .map_err(|e| format!("RunPod is unreachable: {e}"))?;
         let status = response.status();
         let body: Value = response.json().await.unwrap_or(Value::Null);
-        match body["data"]["myself"]["clientBalance"].as_f64() {
-            Some(usd) => Ok(usd),
-            None if status.is_client_error()
-                || body["errors"].is_array()
-                || body["error"].is_object() =>
-            {
+        match &body["data"]["myself"] {
+            Value::Object(_) => Ok(body["data"]["myself"].clone()),
+            _ if status.is_client_error() || body["errors"].is_array() || body["error"].is_object() => {
                 Err("RunPod rejected the API key".into())
             }
-            None => Err(format!("RunPod answered {status} without a balance")),
+            _ => Err(format!("RunPod answered {status} without an account")),
         }
+    }
+
+    pub async fn balance(&self) -> Result<f64, String> {
+        self.myself("clientBalance")
+            .await?
+            .get("clientBalance")
+            .and_then(Value::as_f64)
+            .ok_or_else(|| "RunPod answered without a balance".into())
+    }
+
+    /// The S3 access key: RunPod's S3 API takes the account's user id there, and only the secret
+    /// has to come from the console (no API creates S3 keys).
+    pub async fn user_id(&self) -> Result<String, String> {
+        self.myself("id")
+            .await?
+            .get("id")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| "RunPod answered without a user id".into())
     }
 
     pub async fn delete_pod(&self, id: &str) -> Result<(), String> {
