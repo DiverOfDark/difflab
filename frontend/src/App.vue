@@ -7,13 +7,13 @@ import { halt, queued, start, state } from './store'
 const route = useRoute()
 const SCREENS = [
   { to: '/quick', label: 'Take', here: (p: string) => p.startsWith('/quick') },
-  { to: '/', label: 'Production', here: (p: string) => p === '/' || p.startsWith('/productions') },
+  { to: '/productions', label: 'Production', here: (p: string) => p.startsWith('/productions') },
   { to: '/runs', label: 'Runs', here: (p: string) => p.startsWith('/runs') },
   { to: '/settings', label: 'Settings', here: (p: string) => p.startsWith('/settings') },
 ]
 
 const playing = computed(() => state.runs.find((one) => one.status === 'live'))
-const onProduction = computed(() => route.path === '/' || route.path.startsWith('/productions'))
+const onProduction = computed(() => route.path.startsWith('/productions'))
 const line = computed(() => {
   if (onProduction.value) return state.heading
   const r = playing.value

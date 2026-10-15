@@ -183,7 +183,7 @@ const discard = () => {
   if (confirm('Delete this production, its cast and its shots? What was rendered stays on disk.'))
     props.act('discard', async () => {
       await deleteProduction(props.production!.id)
-      router.push('/')
+      router.push('/productions')
     })
 }
 </script>

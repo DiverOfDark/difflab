@@ -541,7 +541,7 @@ onUnmounted(() => (state.heading = ''))
           <span class="links">
             <RouterLink v-if="production" class="link" :to="`/settings?production=${production.id}`">settings</RouterLink>
             <button v-if="fresh" class="link" :disabled="!state.productions.length" @click="cancelFresh">cancel</button>
-            <button v-else class="link" @click="router.push('/')">new production</button>
+            <button v-else class="link" @click="router.push('/productions')">new production</button>
           </span>
         </span>
         <button class="title" @click="listOpen = !listOpen">
@@ -561,7 +561,7 @@ onUnmounted(() => (state.heading = ''))
           <span class="segs"><i v-for="(c, i) in p.seg" :key="i" :style="{ background: c }" /></span>
           <span class="line mono small"><span class="st" :style="{ color: p.color }">{{ p.state }}</span><span class="dim">{{ p.meta }}</span></span>
         </button>
-        <button class="new mono" @click="router.push('/')">+ new production</button>
+        <button class="new mono" @click="router.push('/productions')">+ new production</button>
       </div>
 
       <label v-if="production" class="chapter">
@@ -684,7 +684,7 @@ onUnmounted(() => (state.heading = ''))
       </template>
     </main>
   </div>
-  <main v-else class="screen empty"><p class="note">No such production. <RouterLink to="/">Begin one.</RouterLink></p></main>
+  <main v-else class="screen empty"><p class="note">No such production. <RouterLink to="/productions">Begin one.</RouterLink></p></main>
 </template>
 
 <style scoped>

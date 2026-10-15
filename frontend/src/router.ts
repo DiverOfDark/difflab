@@ -10,7 +10,8 @@ import Settings from './screens/Settings.vue'
 export const router = createRouter({
   history: createWebHashHistory(),
   routes: [
-    { path: '/', component: Production },
+    { path: '/', redirect: '/quick' },
+    { path: '/productions', component: Production },
     { path: '/productions/:id', component: Production, props: (route) => ({ id: Number(route.params.id) }) },
     { path: '/quick', component: Quick },
     { path: '/runs', component: Runs },
@@ -21,7 +22,7 @@ export const router = createRouter({
 })
 
 const TITLES: Record<string, string> = {
-  '/': 'Productions',
+  '/productions': 'Productions',
   '/quick': 'Quick',
   '/runs': 'Runs',
   '/settings': 'Settings',
