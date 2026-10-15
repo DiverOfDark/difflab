@@ -948,6 +948,21 @@ def run_file(run_id: str, path: str) -> FileResponse:
 SERVED_OUTPUT = ("blobs", "images", "videos")  # every path a job delivers, or an event names, is under one
 
 
+@app.get("/api/results")
+def list_results() -> list[dict[str, Any]]:
+    """Every finished image and video, as `output/` names it, for the desktop app to copy what it lacks."""
+    found = []
+    for folder in ("images", "videos"):
+        root = config.OUTPUT_DIR / folder
+        if root.is_dir():
+            found += [
+                {"path": file.relative_to(config.OUTPUT_DIR).as_posix(), "size": file.stat().st_size}
+                for file in root.rglob("*")
+                if file.is_file()
+            ]
+    return found
+
+
 @app.get("/output/{path:path}")
 def output_file(path: str) -> FileResponse:
     # Not the rest of output/: it holds the database, with the saved Hugging Face and Civitai tokens,

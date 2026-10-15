@@ -23,6 +23,9 @@ _heard = time.time()
 # The app learns the price only from the pod it created, so it cannot be in that pod's environment.
 _rate = config.POD_USD_PER_HOUR
 _drain = False  # the app's "stop when the queue is done"
+# Why the pod is about to go, in every heartbeat answer for one tick before it does: the volume is no
+# longer readable from the desktop once the pod is gone, so this is how the app learns the reason.
+_ending = ""
 
 
 def beat(usd_per_hour: float | None = None, drain: bool = False) -> dict[str, Any]:
@@ -43,6 +46,7 @@ def state() -> dict[str, Any]:
         "idle_minutes": config.POD_IDLE_MINUTES,
         "exit_when_done": config.POD_EXIT_WHEN_DONE,
         "draining": _drain,
+        "ending": _ending,
     }
 
 
@@ -52,19 +56,23 @@ class Watchdog(threading.Thread):
         self.busy_since: float | None = None
         self.busy_at = time.time()
         self.worked = False
-        self.ending = ""
 
     def run(self) -> None:
         _started()
         while True:
             time.sleep(TICK)
             try:
-                self.ending = self.ending or self._verdict()
+                verdict = self._verdict()
             except sqlite3.Error as problem:
                 print(f"difflab: the watchdog could not read the queue ({problem})", flush=True)
                 continue
-            if self.ending:
-                _end(self.ending)
+            # Asked again a tick later: work queued in between keeps the pod.
+            if not verdict:
+                _announce("")
+            elif _ending:
+                _end(verdict)
+            else:
+                _announce(verdict)
 
     def _verdict(self) -> str:
         now = time.time()
@@ -114,6 +122,13 @@ def _started() -> float:
 
 def _spent() -> float:
     return max(0.0, time.time() - _started()) / 3600 * _rate
+
+
+def _announce(reason: str) -> None:
+    global _ending
+    if reason and reason != _ending:
+        print(f"difflab: deleting pod {config.POD_ID} in {TICK:g} s: {reason}", flush=True)
+    _ending = reason
 
 
 def _end(reason: str) -> None:
