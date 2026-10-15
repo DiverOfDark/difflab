@@ -22,13 +22,15 @@ POD_URL = "https://rest.runpod.io/v1/pods/{}"
 _heard = time.time()
 # The app learns the price only from the pod it created, so it cannot be in that pod's environment.
 _rate = config.POD_USD_PER_HOUR
+_drain = False  # the app's "stop when the queue is done"
 
 
-def beat(usd_per_hour: float | None = None) -> dict[str, Any]:
-    global _heard, _rate
+def beat(usd_per_hour: float | None = None, drain: bool = False) -> dict[str, Any]:
+    global _heard, _rate, _drain
     _heard = time.time()
     if usd_per_hour:
         _rate = usd_per_hour
+    _drain = _drain or drain
     return state()
 
 
@@ -40,6 +42,7 @@ def state() -> dict[str, Any]:
         "spend_limit_usd": config.POD_SPEND_LIMIT_USD,
         "idle_minutes": config.POD_IDLE_MINUTES,
         "exit_when_done": config.POD_EXIT_WHEN_DONE,
+        "draining": _drain,
     }
 
 
@@ -78,7 +81,7 @@ class Watchdog(threading.Thread):
                 return f"no progress for {config.POD_STUCK_MINUTES:g} min"
             return ""
         self.busy_since = None
-        if config.POD_EXIT_WHEN_DONE and self.worked:
+        if _drain or (config.POD_EXIT_WHEN_DONE and self.worked):
             return "queue done"
         if now - max(_heard, self.busy_at) > config.POD_IDLE_MINUTES * 60:
             return f"idle for {config.POD_IDLE_MINUTES:g} min with the app closed"

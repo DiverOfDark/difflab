@@ -877,7 +877,7 @@ def restart() -> dict[str, str]:
 async def heartbeat(request: Request) -> dict[str, Any]:
     """The desktop app's sign that someone is still there; the answer is what the pod has cost so far."""
     body = await request.json() if await request.body() else {}
-    return watchdog.beat(body.get("usd_per_hour"))
+    return watchdog.beat(body.get("usd_per_hour"), bool(body.get("drain")))
 
 
 @app.get("/api/profile")
