@@ -29,6 +29,7 @@
       "deb",
       "rpm",
       "nsis",
+      "app",
       "dmg"
     ],
     "icon": [
