@@ -7,7 +7,11 @@ pub const VOLUME_NAME: &str = "difflab";
 // ~96 GB of weights, the 40 GiB KV cache (`VLM_DISK_CACHE_BYTES`), the database and finals.
 pub const VOLUME_GB: u32 = 150;
 // The pipeline offloads for a 24 GB card; README "Serving it" and `core/models.py` assume a 58 GB host.
-pub const GPUS: [&str; 3] = ["NVIDIA GeForce RTX 3090", "NVIDIA GeForce RTX 4090", "NVIDIA GeForce RTX 5090"];
+pub const GPUS: [&str; 3] = [
+    "NVIDIA GeForce RTX 3090",
+    "NVIDIA GeForce RTX 4090",
+    "NVIDIA GeForce RTX 5090",
+];
 pub const MIN_RAM_GB: u32 = 64;
 // The unpacked image is ~10 GB; triton's kernels and HF caches live on the volume.
 pub const CONTAINER_DISK_GB: u32 = 40;
@@ -15,8 +19,8 @@ pub const PORT: u16 = 8765;
 
 // Network volumes reachable through RunPod's S3 API; a volume elsewhere could not be read from here.
 pub const DATACENTERS: [&str; 15] = [
-    "EU-CZ-1", "EU-RO-1", "EUR-IS-1", "EUR-NO-1", "US-CA-2", "US-GA-2", "US-IL-1", "US-KS-2", "US-MD-1",
-    "US-MO-1", "US-MO-2", "US-NC-1", "US-NC-2", "US-NE-1", "US-WA-1",
+    "EU-CZ-1", "EU-RO-1", "EUR-IS-1", "EUR-NO-1", "US-CA-2", "US-GA-2", "US-IL-1", "US-KS-2",
+    "US-MD-1", "US-MO-1", "US-MO-2", "US-NC-1", "US-NC-2", "US-NE-1", "US-WA-1",
 ];
 
 #[derive(Deserialize)]
@@ -54,15 +58,29 @@ pub struct Client {
 
 impl Client {
     pub fn new(key: String) -> Self {
-        Client { http: reqwest::Client::new(), key }
+        Client {
+            http: reqwest::Client::new(),
+            key,
+        }
     }
 
-    async fn call(&self, method: reqwest::Method, path: &str, body: Option<Value>) -> Result<Option<Value>, String> {
-        let mut request = self.http.request(method, format!("{API}{path}")).bearer_auth(&self.key);
+    async fn call(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<Value>,
+    ) -> Result<Option<Value>, String> {
+        let mut request = self
+            .http
+            .request(method, format!("{API}{path}"))
+            .bearer_auth(&self.key);
         if let Some(body) = body {
             request = request.json(&body);
         }
-        let response = request.send().await.map_err(|e| format!("RunPod is unreachable: {e}"))?;
+        let response = request
+            .send()
+            .await
+            .map_err(|e| format!("RunPod is unreachable: {e}"))?;
         let status = response.status();
         if status == reqwest::StatusCode::NOT_FOUND {
             return Ok(None);
@@ -72,15 +90,25 @@ impl Client {
             return Err("RunPod rejected the API key".into());
         }
         if !status.is_success() {
-            return Err(format!("RunPod answered {status}: {}", text.chars().take(400).collect::<String>()));
+            return Err(format!(
+                "RunPod answered {status}: {}",
+                text.chars().take(400).collect::<String>()
+            ));
         }
         Ok(Some(serde_json::from_str(&text).unwrap_or(Value::Null)))
     }
 
     pub async fn volumes(&self) -> Result<Vec<Volume>, String> {
-        let found = self.call(reqwest::Method::GET, "/networkvolumes", None).await?.unwrap_or(Value::Null);
+        let found = self
+            .call(reqwest::Method::GET, "/networkvolumes", None)
+            .await?
+            .unwrap_or(Value::Null);
         let list = match found {
-            Value::Object(fields) => fields.into_iter().map(|(_, v)| v).find(Value::is_array).unwrap_or_default(),
+            Value::Object(fields) => fields
+                .into_iter()
+                .map(|(_, v)| v)
+                .find(Value::is_array)
+                .unwrap_or_default(),
             other => other,
         };
         serde_json::from_value(list).map_err(|e| format!("unexpected volume list: {e}"))
@@ -122,19 +150,27 @@ impl Client {
             "ports": [format!("{PORT}/http")],
             "env": env,
         });
-        let made = self.call(reqwest::Method::POST, "/pods", Some(body)).await?.ok_or("RunPod did not create the pod")?;
+        let made = self
+            .call(reqwest::Method::POST, "/pods", Some(body))
+            .await?
+            .ok_or("RunPod did not create the pod")?;
         serde_json::from_value(made).map_err(|e| format!("unexpected pod: {e}"))
     }
 
     pub async fn pod(&self, id: &str) -> Result<Option<Pod>, String> {
-        match self.call(reqwest::Method::GET, &format!("/pods/{id}"), None).await? {
+        match self
+            .call(reqwest::Method::GET, &format!("/pods/{id}"), None)
+            .await?
+        {
             Some(found) => Ok(serde_json::from_value(found).ok()),
             None => Ok(None),
         }
     }
 
     pub async fn delete_pod(&self, id: &str) -> Result<(), String> {
-        self.call(reqwest::Method::DELETE, &format!("/pods/{id}"), None).await.map(|_| ())
+        self.call(reqwest::Method::DELETE, &format!("/pods/{id}"), None)
+            .await
+            .map(|_| ())
     }
 }
 

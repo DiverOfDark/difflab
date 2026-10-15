@@ -8,7 +8,11 @@ use sha2::{Digest, Sha256};
 use std::path::Path;
 use tokio::io::AsyncWriteExt;
 
-const UNRESERVED: &AsciiSet = &NON_ALPHANUMERIC.remove(b'-').remove(b'_').remove(b'.').remove(b'~');
+const UNRESERVED: &AsciiSet = &NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'_')
+    .remove(b'.')
+    .remove(b'~');
 // SHA-256 of an empty body: every request here is a GET.
 const EMPTY: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
@@ -50,21 +54,31 @@ impl Volume {
             .header("authorization", authorization)
     }
 
-    fn sign(&self, path: &str, query: &[(&str, &str)], now: chrono::DateTime<chrono::Utc>) -> (String, String, String) {
+    fn sign(
+        &self,
+        path: &str,
+        query: &[(&str, &str)],
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> (String, String, String) {
         let stamp = now.format("%Y%m%dT%H%M%SZ").to_string();
         let day = now.format("%Y%m%d").to_string();
         let host = self.host();
-        let mut pairs: Vec<(String, String)> = query
-            .iter()
-            .map(|(k, v)| (enc(k), enc(v)))
-            .collect();
+        let mut pairs: Vec<(String, String)> =
+            query.iter().map(|(k, v)| (enc(k), enc(v))).collect();
         pairs.sort();
-        let canonical_query = pairs.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join("&");
+        let canonical_query = pairs
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join("&");
         let canonical = format!(
             "GET\n{path}\n{canonical_query}\nhost:{host}\nx-amz-content-sha256:{EMPTY}\nx-amz-date:{stamp}\n\nhost;x-amz-content-sha256;x-amz-date\n{EMPTY}"
         );
         let scope = format!("{day}/{}/s3/aws4_request", self.datacenter);
-        let to_sign = format!("AWS4-HMAC-SHA256\n{stamp}\n{scope}\n{}", hex::encode(Sha256::digest(canonical)));
+        let to_sign = format!(
+            "AWS4-HMAC-SHA256\n{stamp}\n{scope}\n{}",
+            hex::encode(Sha256::digest(canonical))
+        );
         let mut key = hmac(format!("AWS4{}", self.secret).as_bytes(), day.as_bytes());
         for part in [self.datacenter.as_str(), "s3", "aws4_request"] {
             key = hmac(&key, part.as_bytes());
@@ -103,9 +117,13 @@ impl Volume {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
             if !status.is_success() {
-                return Err(format!("the volume answered {status}: {}", body.chars().take(300).collect::<String>()));
+                return Err(format!(
+                    "the volume answered {status}: {}",
+                    body.chars().take(300).collect::<String>()
+                ));
             }
-            let page: Listing = quick_xml::de::from_str(&body).map_err(|e| format!("unexpected listing: {e}"))?;
+            let page: Listing =
+                quick_xml::de::from_str(&body).map_err(|e| format!("unexpected listing: {e}"))?;
             all.extend(page.contents);
             match (page.is_truncated, page.next_continuation_token) {
                 (true, Some(next)) => token = Some(next),
@@ -115,32 +133,55 @@ impl Volume {
     }
 
     pub async fn get(&self, key: &str) -> Result<Option<Vec<u8>>, String> {
-        let response = self.signed(&self.object_path(key), &[]).send().await.map_err(|e| e.to_string())?;
+        let response = self
+            .signed(&self.object_path(key), &[])
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
         if response.status() == reqwest::StatusCode::NOT_FOUND {
             return Ok(None);
         }
         if !response.status().is_success() {
             return Err(format!("the volume answered {}", response.status()));
         }
-        response.bytes().await.map(|b| Some(b.to_vec())).map_err(|e| e.to_string())
+        response
+            .bytes()
+            .await
+            .map(|b| Some(b.to_vec()))
+            .map_err(|e| e.to_string())
     }
 
     pub async fn download(&self, key: &str, to: &Path) -> Result<(), String> {
-        let response = self.signed(&self.object_path(key), &[]).send().await.map_err(|e| e.to_string())?;
+        let response = self
+            .signed(&self.object_path(key), &[])
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
         if !response.status().is_success() {
             return Err(format!("{key}: the volume answered {}", response.status()));
         }
         if let Some(parent) = to.parent() {
-            tokio::fs::create_dir_all(parent).await.map_err(|e| e.to_string())?;
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| e.to_string())?;
         }
-        let partial = to.with_file_name(format!("{}.part", to.file_name().unwrap_or_default().to_string_lossy()));
-        let mut file = tokio::fs::File::create(&partial).await.map_err(|e| e.to_string())?;
+        let partial = to.with_file_name(format!(
+            "{}.part",
+            to.file_name().unwrap_or_default().to_string_lossy()
+        ));
+        let mut file = tokio::fs::File::create(&partial)
+            .await
+            .map_err(|e| e.to_string())?;
         let mut stream = response.bytes_stream();
         while let Some(chunk) = stream.next().await {
-            file.write_all(&chunk.map_err(|e| e.to_string())?).await.map_err(|e| e.to_string())?;
+            file.write_all(&chunk.map_err(|e| e.to_string())?)
+                .await
+                .map_err(|e| e.to_string())?;
         }
         file.flush().await.map_err(|e| e.to_string())?;
-        tokio::fs::rename(&partial, to).await.map_err(|e| e.to_string())
+        tokio::fs::rename(&partial, to)
+            .await
+            .map_err(|e| e.to_string())
     }
 }
 
@@ -153,4 +194,3 @@ fn hmac(key: &[u8], data: &[u8]) -> Vec<u8> {
     mac.update(data);
     mac.finalize().into_bytes().to_vec()
 }
-

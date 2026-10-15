@@ -47,7 +47,10 @@ fn now() -> i64 {
 
 impl Inner {
     fn runpod(&self) -> Result<runpod::Client, String> {
-        let key = self.store.secret(RUNPOD_KEY).ok_or("add your RunPod API key first")?;
+        let key = self
+            .store
+            .secret(RUNPOD_KEY)
+            .ok_or("add your RunPod API key first")?;
         Ok(runpod::Client::new(key))
     }
 
@@ -67,10 +70,21 @@ impl Inner {
     }
 
     async fn end(&self, app: &AppHandle, message: String) {
+        if let Some(window) = app.get_webview_window("ui") {
+            let _ = window.close();
+        }
         *self.session.lock().await = None;
         *self.draining.lock().await = false;
         let _ = self.store.save_session(None);
-        self.set(app, Status { phase: "ended".into(), message, ..Default::default() }).await;
+        self.set(
+            app,
+            Status {
+                phase: "ended".into(),
+                message,
+                ..Default::default()
+            },
+        )
+        .await;
     }
 
     async fn heartbeat(&self, session: &Session, rate: f64) -> Option<Value> {
@@ -133,19 +147,45 @@ impl Inner {
             Kind::Runpod => {
                 let client = match self.runpod() {
                     Ok(c) => c,
-                    Err(e) => return self.set(app, Status { phase: "error".into(), message: e, ..status }).await,
+                    Err(e) => {
+                        return self
+                            .set(
+                                app,
+                                Status {
+                                    phase: "error".into(),
+                                    message: e,
+                                    ..status
+                                },
+                            )
+                            .await
+                    }
                 };
                 match client.pod(&session.pod_id).await {
+                    // A pod just created may not be listed yet.
+                    Ok(None) if status.uptime_s < 120 => {}
                     Ok(None) => {
                         let reason = self.ended_reason(&session.pod_id).await;
                         return self.end(app, reason).await;
                     }
-                    Ok(Some(pod)) if pod.desired_status == "TERMINATED" || pod.desired_status == "EXITED" => {
+                    Ok(Some(pod)) if pod.desired_status == "TERMINATED" => {
                         let reason = self.ended_reason(&session.pod_id).await;
                         return self.end(app, reason).await;
                     }
+                    // Its container exited: the watchdog is gone with it, and the pod still holds its disk.
+                    Ok(Some(pod)) if pod.desired_status == "EXITED" => {
+                        let _ = client.delete_pod(&session.pod_id).await;
+                        let reason = self.ended_reason(&session.pod_id).await;
+                        let reason = if reason.starts_with("Pod shut down") {
+                            reason
+                        } else {
+                            "The server on the pod exited; the app deleted the pod.".into()
+                        };
+                        return self.end(app, reason).await;
+                    }
                     Ok(Some(pod)) => {
-                        if pod.cost_per_hr > 0.0 && (pod.cost_per_hr != session.usd_per_hour || session.gpu.is_empty()) {
+                        if pod.cost_per_hr > 0.0
+                            && (pod.cost_per_hr != session.usd_per_hour || session.gpu.is_empty())
+                        {
                             session.usd_per_hour = pod.cost_per_hr;
                             session.gpu = pod.gpu_name();
                             let _ = self.store.save_session(Some(&session));
@@ -196,7 +236,10 @@ fn results_dir(app: &AppHandle, prefs: &Prefs) -> PathBuf {
     if !prefs.results_dir.is_empty() {
         return PathBuf::from(&prefs.results_dir);
     }
-    app.path().home_dir().unwrap_or_default().join("DiffLab results")
+    app.path()
+        .home_dir()
+        .unwrap_or_default()
+        .join("DiffLab results")
 }
 
 #[tauri::command]
@@ -231,8 +274,15 @@ async fn save_settings(
         prefs.volume_id = String::new();
     }
     inner.store.save_prefs(&prefs)?;
-    for (name, value) in [(RUNPOD_KEY, runpod_key), (S3_ACCESS, s3_access), (S3_SECRET, s3_secret)] {
-        if let Some(v) = value.map(|v| v.trim().to_string()).filter(|v| !v.is_empty()) {
+    for (name, value) in [
+        (RUNPOD_KEY, runpod_key),
+        (S3_ACCESS, s3_access),
+        (S3_SECRET, s3_secret),
+    ] {
+        if let Some(v) = value
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+        {
             inner.store.set_secret(name, &v)?;
         }
     }
@@ -244,7 +294,11 @@ async fn start(app: AppHandle, inner: State<'_, Shared>, kind: Kind) -> Result<(
     if inner.session.lock().await.is_some() {
         return Err("difflab is already running".into());
     }
-    let starting = Status { phase: "starting".into(), kind: Some(kind.clone()), ..Default::default() };
+    let starting = Status {
+        phase: "starting".into(),
+        kind: Some(kind.clone()),
+        ..Default::default()
+    };
     inner.set(&app, starting.clone()).await;
     let result = launch(&app, &inner, kind).await;
     match result {
@@ -255,7 +309,16 @@ async fn start(app: AppHandle, inner: State<'_, Shared>, kind: Kind) -> Result<(
             Ok(())
         }
         Err(e) => {
-            inner.set(&app, Status { phase: "error".into(), message: e.clone(), ..Default::default() }).await;
+            inner
+                .set(
+                    &app,
+                    Status {
+                        phase: "error".into(),
+                        message: e.clone(),
+                        ..Default::default()
+                    },
+                )
+                .await;
             Err(e)
         }
     }
@@ -271,10 +334,26 @@ async fn launch(app: &AppHandle, inner: &Inner, kind: Kind) -> Result<Session, S
                 return Err(found.reason);
             }
             inner
-                .set(app, Status { phase: "starting".into(), kind: Some(Kind::Local), message: "Pulling the image (3.6 GB the first time)…".into(), ..Default::default() })
+                .set(
+                    app,
+                    Status {
+                        phase: "starting".into(),
+                        kind: Some(Kind::Local),
+                        message: "Pulling the image (3.6 GB the first time)…".into(),
+                        ..Default::default()
+                    },
+                )
                 .await;
             local::start(&token, &found.runtime).await?;
-            Ok(Session { kind, pod_id: local::CONTAINER.into(), token, base_url: local::url(), started_at: now(), usd_per_hour: 0.0, gpu: found.gpu })
+            Ok(Session {
+                kind,
+                pod_id: local::CONTAINER.into(),
+                token,
+                base_url: local::url(),
+                started_at: now(),
+                usd_per_hour: 0.0,
+                gpu: found.gpu,
+            })
         }
         Kind::Runpod => {
             let client = inner.runpod()?;
@@ -326,17 +405,26 @@ async fn stop(app: AppHandle, inner: State<'_, Shared>, immediately: bool) -> Re
 
 #[tauri::command]
 async fn open_ui(app: AppHandle, inner: State<'_, Shared>) -> Result<(), String> {
-    let session = inner.session.lock().await.clone().ok_or("difflab is not running")?;
+    let session = inner
+        .session
+        .lock()
+        .await
+        .clone()
+        .ok_or("difflab is not running")?;
     if let Some(window) = app.get_webview_window("ui") {
         return window.set_focus().map_err(|e| e.to_string());
     }
     let url = format!("{}/auth?token={}", session.base_url, session.token);
-    WebviewWindowBuilder::new(&app, "ui", WebviewUrl::External(url.parse().map_err(|e| format!("{e}"))?))
-        .title("DiffLab")
-        .inner_size(1440.0, 900.0)
-        .build()
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+    WebviewWindowBuilder::new(
+        &app,
+        "ui",
+        WebviewUrl::External(url.parse().map_err(|e| format!("{e}"))?),
+    )
+    .title("DiffLab")
+    .inner_size(1440.0, 900.0)
+    .build()
+    .map(|_| ())
+    .map_err(|e| e.to_string())
 }
 
 #[derive(Serialize, Clone)]
@@ -348,7 +436,9 @@ struct SyncProgress {
 
 #[tauri::command]
 async fn sync_results(app: AppHandle, inner: State<'_, Shared>) -> Result<String, String> {
-    let volume = inner.volume().ok_or("add your S3 key and start a pod once, so the app knows your volume")?;
+    let volume = inner
+        .volume()
+        .ok_or("add your S3 key and start a pod once, so the app knows your volume")?;
     let dir = results_dir(&app, &inner.store.prefs());
     let mut wanted = Vec::new();
     for prefix in RESULT_PREFIXES {
@@ -365,18 +455,40 @@ async fn sync_results(app: AppHandle, inner: State<'_, Shared>) -> Result<String
     }
     let total = wanted.len();
     for (done, (key, to)) in wanted.into_iter().enumerate() {
-        let _ = app.emit("sync", SyncProgress { done, total, file: key.clone() });
+        let _ = app.emit(
+            "sync",
+            SyncProgress {
+                done,
+                total,
+                file: key.clone(),
+            },
+        );
         volume.download(&key, &to).await?;
     }
-    let _ = app.emit("sync", SyncProgress { done: total, total, file: String::new() });
-    Ok(if total == 0 { "Everything is already downloaded.".into() } else { format!("Downloaded {total} files.") })
+    let _ = app.emit(
+        "sync",
+        SyncProgress {
+            done: total,
+            total,
+            file: String::new(),
+        },
+    );
+    Ok(if total == 0 {
+        "Everything is already downloaded.".into()
+    } else {
+        format!("Downloaded {total} files.")
+    })
 }
 
 #[tauri::command]
 async fn open_results(app: AppHandle, inner: State<'_, Shared>) -> Result<(), String> {
     let dir = results_dir(&app, &inner.store.prefs());
-    tokio::fs::create_dir_all(&dir).await.map_err(|e| e.to_string())?;
-    app.opener().open_path(dir.display().to_string(), None::<&str>).map_err(|e| e.to_string())
+    tokio::fs::create_dir_all(&dir)
+        .await
+        .map_err(|e| e.to_string())?;
+    app.opener()
+        .open_path(dir.display().to_string(), None::<&str>)
+        .map_err(|e| e.to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -389,7 +501,10 @@ pub fn run() {
             let store = Store::new(dir);
             let session = store.session();
             let inner: Shared = Arc::new(Inner {
-                status: Mutex::new(Status { phase: if session.is_some() { "booting" } else { "none" }.into(), ..Default::default() }),
+                status: Mutex::new(Status {
+                    phase: if session.is_some() { "booting" } else { "none" }.into(),
+                    ..Default::default()
+                }),
                 session: Mutex::new(session),
                 draining: Mutex::new(false),
                 store,
@@ -405,7 +520,16 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![load, hardware, save_settings, start, stop, open_ui, sync_results, open_results])
+        .invoke_handler(tauri::generate_handler![
+            load,
+            hardware,
+            save_settings,
+            start,
+            stop,
+            open_ui,
+            sync_results,
+            open_results
+        ])
         .run(tauri::generate_context!())
         .expect("error while running DiffLab");
 }

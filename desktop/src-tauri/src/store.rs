@@ -93,7 +93,10 @@ impl Store {
 
     // The OS keychain first; a desktop with no Secret Service (a bare window manager) gets a 0600 file.
     pub fn set_secret(&self, name: &str, value: &str) -> Result<(), String> {
-        if keyring::Entry::new(SERVICE, name).and_then(|e| e.set_password(value)).is_ok() {
+        if keyring::Entry::new(SERVICE, name)
+            .and_then(|e| e.set_password(value))
+            .is_ok()
+        {
             return Ok(());
         }
         let mut all = self.fallback();
