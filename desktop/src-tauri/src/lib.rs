@@ -69,7 +69,12 @@ impl Inner {
                 access
             }
         };
-        Some(s3::Volume { datacenter: prefs.datacenter, id, access, secret })
+        Some(s3::Volume {
+            datacenter: prefs.datacenter,
+            id,
+            access,
+            secret,
+        })
     }
 
     async fn refresh_balance(&self, app: &AppHandle, force: bool) -> Option<f64> {
@@ -259,10 +264,7 @@ fn results_dir(app: &AppHandle, prefs: &Prefs) -> PathBuf {
     if !prefs.results_dir.is_empty() {
         return PathBuf::from(&prefs.results_dir);
     }
-    app.path()
-        .home_dir()
-        .unwrap_or_default()
-        .join("DiffLab")
+    app.path().home_dir().unwrap_or_default().join("DiffLab")
 }
 
 #[tauri::command]
@@ -310,10 +312,7 @@ async fn save_settings(
         prefs.volume_id = String::new();
     }
     inner.store.save_prefs(&prefs)?;
-    for (name, value) in [
-        (RUNPOD_KEY, runpod_key.clone()),
-        (S3_SECRET, s3_secret),
-    ] {
+    for (name, value) in [(RUNPOD_KEY, runpod_key.clone()), (S3_SECRET, s3_secret)] {
         if let Some(v) = value
             .map(|v| v.trim().to_string())
             .filter(|v| !v.is_empty())
@@ -507,6 +506,7 @@ struct SyncProgress {
 async fn sync_results(app: AppHandle, inner: State<'_, Shared>) -> Result<String, String> {
     let volume = inner
         .volume()
+        .await
         .ok_or("add your S3 key and start a pod once, so the app knows your volume")?;
     let dir = results_dir(&app, &inner.store.prefs());
     let mut wanted = Vec::new();

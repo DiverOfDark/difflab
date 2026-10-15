@@ -182,7 +182,10 @@ impl Client {
         let body: Value = response.json().await.unwrap_or(Value::Null);
         match &body["data"]["myself"] {
             Value::Object(_) => Ok(body["data"]["myself"].clone()),
-            _ if status.is_client_error() || body["errors"].is_array() || body["error"].is_object() => {
+            _ if status.is_client_error()
+                || body["errors"].is_array()
+                || body["error"].is_object() =>
+            {
                 Err("RunPod rejected the API key".into())
             }
             _ => Err(format!("RunPod answered {status} without an account")),

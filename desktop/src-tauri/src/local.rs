@@ -140,7 +140,9 @@ const ACCEPT: &str = "application/vnd.oci.image.index.v1+json, application/vnd.o
 pub async fn layer_sizes() -> Option<HashMap<String, u64>> {
     let http = reqwest::Client::new();
     let token: Value = http
-        .get(format!("{REGISTRY}/token?scope=repository:{REPOSITORY}:pull"))
+        .get(format!(
+            "{REGISTRY}/token?scope=repository:{REPOSITORY}:pull"
+        ))
         .send()
         .await
         .ok()?
@@ -158,7 +160,8 @@ pub async fn layer_sizes() -> Option<HashMap<String, u64>> {
     if let Some(list) = manifest["manifests"].as_array() {
         let digest = list
             .iter()
-            .find(|m| m["platform"]["os"] == "linux" && m["platform"]["architecture"] == "amd64")?["digest"]
+            .find(|m| m["platform"]["os"] == "linux" && m["platform"]["architecture"] == "amd64")?
+            ["digest"]
             .as_str()?
             .to_string();
         manifest = get(digest).await.ok()?.json().await.ok()?;
@@ -199,7 +202,10 @@ pub async fn pull(progress: mpsc::UnboundedSender<Pulled>) -> Result<(), String>
             continue;
         }
         seen.insert(id.to_string());
-        if matches!(state, "Download complete" | "Already exists" | "Pull complete") {
+        if matches!(
+            state,
+            "Download complete" | "Already exists" | "Pull complete"
+        ) {
             fetched.insert(id.to_string());
         }
         if matches!(state, "Already exists" | "Pull complete") {
@@ -208,12 +214,20 @@ pub async fn pull(progress: mpsc::UnboundedSender<Pulled>) -> Result<(), String>
         let got: u64 = fetched.iter().filter_map(|id| sizes.get(id)).sum();
         let update = if fetched.len() < seen.len() && total > 0 {
             Pulled {
-                message: format!("Downloading DiffLab: {:.1} / {:.1} GB", got as f64 / 1e9, total as f64 / 1e9),
+                message: format!(
+                    "Downloading DiffLab: {:.1} / {:.1} GB",
+                    got as f64 / 1e9,
+                    total as f64 / 1e9
+                ),
                 progress: Some(got as f64 / total as f64),
             }
         } else if fetched.len() < seen.len() {
             Pulled {
-                message: format!("Downloading DiffLab: {} / {} parts", fetched.len(), seen.len()),
+                message: format!(
+                    "Downloading DiffLab: {} / {} parts",
+                    fetched.len(),
+                    seen.len()
+                ),
                 progress: Some(fetched.len() as f64 / seen.len() as f64),
             }
         } else {
@@ -226,7 +240,10 @@ pub async fn pull(progress: mpsc::UnboundedSender<Pulled>) -> Result<(), String>
     }
     let out = child.wait_with_output().await.map_err(|e| e.to_string())?;
     if !out.status.success() {
-        return Err(format!("docker pull failed: {}", String::from_utf8_lossy(&out.stderr).trim()));
+        return Err(format!(
+            "docker pull failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
     }
     Ok(())
 }
@@ -262,8 +279,15 @@ pub async fn start(token: &str, runtime: &str) -> Result<u16, String> {
         .map_err(|e| e.to_string())?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
-        let said = stderr.lines().filter(|l| !l.trim().is_empty() && !l.contains("--help")).collect::<Vec<_>>().join("\n");
-        return Err(format!("Docker could not start DiffLab: {}", said.trim_start_matches("docker: ")));
+        let said = stderr
+            .lines()
+            .filter(|l| !l.trim().is_empty() && !l.contains("--help"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Err(format!(
+            "Docker could not start DiffLab: {}",
+            said.trim_start_matches("docker: ")
+        ));
     }
     Ok(free)
 }
