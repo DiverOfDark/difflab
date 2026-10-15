@@ -121,7 +121,7 @@ async function finishSetup(kind: Kind) {
 }
 
 const saveSettings = () =>
-  act("Saving", async () => {
+  act("save", async () => {
     await api.saveSettings({ ...prefs }, secrets);
     const newKey = !!secrets.runpodKey;
     secrets.runpodKey = secrets.s3Secret = "";
@@ -139,13 +139,13 @@ async function chooseFolder() {
   }
 }
 
-const start = (kind: Kind) => act("Starting", () => api.start(kind));
-const stopNow = () => act("Stopping", () => api.stop(true));
-const stopWhenDone = () => act("Stopping", () => api.stop(false));
-const openUi = () => act("Opening", () => api.openUi());
-const openResults = () => act("Opening", () => api.openResults());
+const start = (kind: Kind) => act(kind, () => api.start(kind));
+const stopNow = () => act("stop", () => api.stop(true));
+const stopWhenDone = () => act("drain", () => api.stop(false));
+const openUi = () => act("open", () => api.openUi());
+const openResults = () => act("folder", () => api.openResults());
 const download = () =>
-  act("Downloading", async () => {
+  act("download", async () => {
     syncNote.value = await api.syncResults();
   });
 
@@ -219,14 +219,14 @@ onMounted(async () => {
             <p v-if="status.message" class="band" :class="status.phase === 'error' ? 'error' : 'hint'">{{ status.message }}</p>
 
             <div v-if="running" class="buttons">
-              <button class="primary" :disabled="status.phase !== 'ready'" @click="openUi">Open DiffLab</button>
-              <button v-if="status.kind === 'runpod' && !status.draining" @click="stopWhenDone">Stop when queue is done</button>
-              <button class="danger" @click="stopNow">Stop now</button>
+              <button class="primary" :disabled="status.phase !== 'ready' || !!busy" @click="openUi"><i v-if="busy === 'open'" class="spin" />Open DiffLab</button>
+              <button v-if="status.kind === 'runpod' && !status.draining" :disabled="!!busy" @click="stopWhenDone"><i v-if="busy === 'drain'" class="spin" />Stop when queue is done</button>
+              <button class="danger" :disabled="!!busy" @click="stopNow"><i v-if="busy === 'stop'" class="spin" />{{ busy === "stop" ? "Stopping…" : "Stop now" }}</button>
             </div>
             <template v-else>
               <div class="buttons">
-                <button class="primary" :disabled="!hasKey || !!busy" @click="start('runpod')">Run on RunPod</button>
-                <button :disabled="!hardware?.ok || !!busy" @click="start('local')">Run on this PC</button>
+                <button class="primary" :disabled="!hasKey || !!busy" @click="start('runpod')"><i v-if="busy === 'runpod'" class="spin" />{{ busy === "runpod" ? "Starting…" : "Run on RunPod" }}</button>
+                <button :disabled="!hardware?.ok || !!busy" @click="start('local')"><i v-if="busy === 'local'" class="spin" />{{ busy === "local" ? "Starting…" : "Run on this PC" }}</button>
               </div>
               <p v-if="!hasKey" class="note">Connect a RunPod account in Settings to run in the cloud.</p>
               <p v-if="!hardware" class="note">Checking this PC…</p>
@@ -241,9 +241,9 @@ onMounted(async () => {
           <div class="body">
             <p class="mono muted path">{{ resultsDir }}</p>
             <div class="buttons">
-              <button class="primary" :disabled="(!hasS3 && !hasLocal) || !!busy" @click="download">Download results</button>
+              <button class="primary" :disabled="(!hasS3 && !hasLocal) || !!busy" @click="download"><i v-if="busy === 'download'" class="spin" />{{ busy === "download" ? "Downloading…" : "Download results" }}</button>
             </div>
-            <template v-if="busy === 'Downloading' && sync">
+            <template v-if="busy === 'download' && sync">
               <div class="bar"><i :style="{ width: `${sync.total ? (sync.done / sync.total) * 100 : 0}%` }" /></div>
               <p class="note mono">{{ sync.done }} / {{ sync.total }} · {{ sync.file }}</p>
             </template>
@@ -285,7 +285,7 @@ onMounted(async () => {
               <div class="row"><input :value="resultsDir" readonly /><button @click="chooseFolder">Choose…</button></div>
             </label>
             <div class="buttons">
-              <button class="primary" :disabled="!!busy" @click="saveSettings">{{ saved ? "Saved" : "Save" }}</button>
+              <button class="primary" :disabled="!!busy" @click="saveSettings"><i v-if="busy === 'save'" class="spin" />{{ saved ? "Saved" : "Save" }}</button>
             </div>
           </div>
         </section>
@@ -348,6 +348,24 @@ onMounted(async () => {
   gap: var(--space-2);
   font-size: var(--text-xs);
   color: var(--text-secondary);
+}
+button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.spin {
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 .update {
   color: var(--accent);
