@@ -115,10 +115,10 @@ async function next() {
     <section v-else-if="kind === 'runpod' && step === 2" class="stack">
       <div>
         <h2>Where your work is kept</h2>
-        <p class="muted">Models, projects and finished videos live on a RunPod <strong>global volume</strong> named difflab, which the app creates the first time. Any GPU in any region can use it, so a start does not wait for one datacenter to have a free card.</p>
+        <p class="muted">Projects and finished videos live on a RunPod <strong>global volume</strong> named difflab, which the app creates the first time. Any GPU in any region can use it, so a start does not wait for one datacenter to have a free card.</p>
       </div>
       <ul class="how">
-        <li>It grows as you use it, and you pay RunPod for what it holds and for reads and writes. Models alone are about 96 GB.</li>
+        <li>It grows as you use it, and you pay RunPod for what it holds and for reads and writes. The models are not kept there: each GPU downloads the ones it needs from Hugging Face, a few minutes at most.</li>
         <li>It stays when no GPU is running. Delete it in RunPod's Storage page if you stop using DiffLab.</li>
         <li>Finished videos download to this PC while a GPU is running.</li>
       </ul>
@@ -151,7 +151,7 @@ async function next() {
       <ol v-if="kind === 'runpod'" class="how">
         <li><strong>Run on RunPod</strong> rents a GPU. The first time it also creates your storage; the machine takes a few minutes to boot.</li>
         <li><strong>Open DiffLab</strong> opens the studio in its own window, as if it ran on this PC.</li>
-        <li>The <strong>first render</strong> downloads about 96 GB of models onto your storage, so it is slow. Every later session starts from them.</li>
+        <li>Each session's <strong>first render</strong> of a kind downloads its models (about 96 GB in all) onto the GPU's own disk, a few minutes at most.</li>
         <li>The cost so far and your balance stay on screen. Close the app whenever you like: the GPU deletes itself after {{ prefs.idle_minutes }} idle minutes.</li>
         <li><strong>Results</strong> copies finished videos to this PC.</li>
       </ol>

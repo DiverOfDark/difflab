@@ -676,7 +676,7 @@ async fn launch(app: &AppHandle, inner: &Inner, kind: Kind) -> Result<Session, S
             let client = inner.runpod()?;
             let key = inner.store.secret(RUNPOD_KEY).unwrap_or_default();
             let volume = client.global_volume().await?;
-            let env = [
+            let mut env = vec![
                 ("DIFFLAB_TOKEN", token.clone()),
                 ("DIFFLAB_RUNPOD_API_KEY", key),
                 ("DIFFLAB_IDLE_MINUTES", prefs.idle_minutes.to_string()),
@@ -687,6 +687,7 @@ async fn launch(app: &AppHandle, inner: &Inner, kind: Kind) -> Result<Session, S
                     if prefs.exit_when_done { "1" } else { "" }.to_string(),
                 ),
             ];
+            env.extend(runpod::MODELS.map(|(key, value)| (key, value.to_string())));
             let latest = local::latest_image().await;
             let image = match &latest {
                 Some(v) => format!("{}@{}", runpod::IMAGE.trim_end_matches(":latest"), v.digest),
