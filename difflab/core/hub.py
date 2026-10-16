@@ -74,7 +74,7 @@ class Checkpoint:
     def fetch(self) -> Path:
         """The snapshot folder, with every wanted file in it: downloaded now if a fetch never completed."""
         marker = self.path / f".difflab-fetched-{hashlib.sha256(repr(self.files).encode()).hexdigest()[:8]}"
-        if not marker.exists():
+        if not marker.exists() or not _intact(self.path, marker):
             from difflab.core import ui  # not at the top: config names checkpoints, and ui imports config
 
             listed = (
@@ -94,8 +94,19 @@ class Checkpoint:
                     allow_patterns=list(self.files) or None,
                     token=token(HUGGINGFACE),
                 )
-            marker.touch()
+            marker.write_text(json.dumps({f.rfilename: f.size for f in wanted if f.size is not None}))
         return self.path
+
+
+def _intact(folder: Path, marker: Path) -> bool:
+    """Every file the marker lists, at the size it was fetched at. An object-store mount kept a marker
+    and handed back an empty config.json (a RunPod global volume, 2026-10-16); a marker from before the
+    sizes were kept lists nothing and passes."""
+    try:
+        sizes: dict[str, int] = json.loads(marker.read_text() or "{}")
+        return all((folder / name).stat().st_size == size for name, size in sizes.items())
+    except (OSError, ValueError):
+        return False
 
 
 @dataclass(frozen=True)
