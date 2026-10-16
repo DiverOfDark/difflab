@@ -813,6 +813,8 @@ async fn open_studio(app: &AppHandle, inner: &Shared) -> Result<(), String> {
     )
     .title("DiffLab")
     .inner_size(1440.0, 900.0)
+    // Tauri takes file drops for itself by default, and the page's own drop zones never see one.
+    .disable_drag_drop_handler()
     // A web view drops downloads unless the app says where they go; a save dialog here would block
     // the window's own event loop, so they go to the results folder and a notification says so.
     .on_download(move |_, event| {
