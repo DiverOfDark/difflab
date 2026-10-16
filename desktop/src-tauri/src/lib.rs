@@ -734,12 +734,16 @@ async fn stop_now(app: &AppHandle, inner: &Shared, immediately: bool) -> Result<
         && inner.status.lock().await.phase == "ready"
         && inner.store.prefs().auto_download
     {
+        // The clone must land in a local first: a status guard held inside set()'s argument would
+        // still be held when set() locks status again, and the non-reentrant mutex would deadlock -
+        // Stop then spun forever (0.2.8).
+        let base = inner.status.lock().await.clone();
         inner
             .set(
                 &app,
                 Status {
                     message: "Downloading results before stopping…".into(),
-                    ..inner.status.lock().await.clone()
+                    ..base
                 },
             )
             .await;
