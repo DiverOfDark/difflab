@@ -821,15 +821,19 @@ async fn open_studio(app: &AppHandle, inner: &Shared) -> Result<(), String> {
     let notifier = app.clone();
     let base = session.base_url.clone();
     let opener = app.clone();
-    WebviewWindowBuilder::new(
+    let builder = WebviewWindowBuilder::new(
         &app,
         format!("ui-{}", chrono::Utc::now().timestamp_millis()),
         WebviewUrl::External(url.parse().map_err(|e| format!("{e}"))?),
     )
     .title("DiffLab")
-    .inner_size(1440.0, 900.0)
-    // Tauri takes file drops for itself by default, and the page's own drop zones never see one.
-    .disable_drag_drop_handler()
+    .inner_size(1440.0, 900.0);
+    // Tauri takes file drops for itself by default, and the page's own drop zones never see one. On
+    // Linux the bundled WebKitGTK gives the page no files even with Tauri out of the way, so there
+    // Tauri keeps the drop and hand_drop_to_page passes it on.
+    #[cfg(not(target_os = "linux"))]
+    let builder = builder.disable_drag_drop_handler();
+    let window = builder
     // A web view drops downloads unless the app says where they go; a save dialog here would block
     // the window's own event loop, so they go to the results folder and a notification says so.
     .on_download(move |_, event| {
@@ -879,8 +883,105 @@ async fn open_studio(app: &AppHandle, inner: &Shared) -> Result<(), String> {
         false
     })
     .build()
-    .map(|_| ())
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+    #[cfg(target_os = "linux")]
+    {
+        let page = window.clone();
+        window.on_window_event(move |event| {
+            if let tauri::WindowEvent::DragDrop(drag) = event {
+                hand_drop_to_page(&page, drag);
+            }
+        });
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = window;
+    Ok(())
+}
+
+/// Replays a drop Tauri caught as DOM drag events, files and all, on the element under the cursor.
+#[cfg(target_os = "linux")]
+fn hand_drop_to_page(page: &tauri::WebviewWindow, drag: &tauri::DragDropEvent) {
+    use base64::Engine;
+    // GTK reports drag positions in logical pixels, which are CSS pixels at page zoom 1.
+    let at = |p: &tauri::PhysicalPosition<f64>| format!("{}, {}", p.x, p.y);
+    let fire = |kind: &str, xy: &str, files: &str| {
+        format!(
+            "{{const [x, y] = [{xy}]; const el = document.elementFromPoint(x, y) ?? document.body; \
+             const e = new Event('{kind}', {{bubbles: true, cancelable: true}}); \
+             Object.defineProperty(e, 'dataTransfer', {{value: {{files: {files}, types: ['Files'], dropEffect: 'copy'}}}}); \
+             (window.__dropOver = el).dispatchEvent(e);}}"
+        )
+    };
+    match drag {
+        tauri::DragDropEvent::Enter { position, .. } | tauri::DragDropEvent::Over { position } => {
+            let _ = page.eval(fire("dragover", &at(position), "[]"));
+        }
+        tauri::DragDropEvent::Leave => {
+            let _ = page.eval(
+                "window.__dropOver?.dispatchEvent(new Event('dragleave', {bubbles: true})); window.__dropOver = null;",
+            );
+        }
+        tauri::DragDropEvent::Drop { paths, position } => {
+            let page = page.clone();
+            let paths = paths.clone();
+            let finish = fire("drop", &at(position), "d.files");
+            // A dropped video can run to gigabytes: read off the event loop, and send in pieces the
+            // page decodes natively through data: URLs rather than as one script.
+            std::thread::spawn(move || {
+                let _ = page.eval("window.__drop = {files: [], parts: [], chain: Promise.resolve()};");
+                for path in paths.iter().filter(|p| p.is_file()) {
+                    let Ok(mut file) = std::fs::File::open(path) else { continue };
+                    let mut chunk = vec![0u8; 4 << 20];
+                    loop {
+                        let n = match std::io::Read::read(&mut file, &mut chunk) {
+                            Ok(0) | Err(_) => break,
+                            Ok(n) => n,
+                        };
+                        let b64 = base64::engine::general_purpose::STANDARD.encode(&chunk[..n]);
+                        let _ = page.eval(format!(
+                            "{{const d = window.__drop; d.chain = d.chain.then(() => fetch('data:;base64,{b64}')).then(r => r.blob()).then(b => d.parts.push(b));}}"
+                        ));
+                    }
+                    let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                    let _ = page.eval(format!(
+                        "{{const d = window.__drop; d.chain = d.chain.then(() => {{d.files.push(new File(d.parts, {}, {{type: {}}})); d.parts = [];}});}}",
+                        json!(name),
+                        json!(mime_of(path)),
+                    ));
+                }
+                let _ = page.eval(format!("{{const d = window.__drop; d.chain.then(() => {finish});}}"));
+            });
+        }
+        _ => {}
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn mime_of(path: &std::path::Path) -> &'static str {
+    let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+    match ext.as_str() {
+        "jpg" | "jpeg" => "image/jpeg",
+        "png" => "image/png",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        "avif" => "image/avif",
+        "heic" => "image/heic",
+        "mp4" | "m4v" => "video/mp4",
+        "mov" => "video/quicktime",
+        "webm" => "video/webm",
+        "mkv" => "video/x-matroska",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "m4a" => "audio/mp4",
+        "flac" => "audio/flac",
+        "ogg" => "audio/ogg",
+        "pdf" => "application/pdf",
+        "epub" => "application/epub+zip",
+        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "txt" => "text/plain",
+        "md" => "text/markdown",
+        _ => "",
+    }
 }
 
 #[derive(Serialize, Clone)]

@@ -31,3 +31,4 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 sysinfo = { version = "0.33", default-features = false, features = ["system"] }
 quick-xml = { version = "0.37", features = ["serialize"] }
 percent-encoding = "2"
+base64 = "0.22"
