@@ -68,6 +68,7 @@ export const start = (kind: Kind) => invoke("start", { kind });
 export const stop = (immediately: boolean) => invoke("stop", { immediately });
 export const retryMachine = () => invoke("retry_machine");
 export const openUi = () => invoke("open_ui");
+export const openUiBrowser = () => invoke("open_ui_browser");
 export const syncResults = () => invoke<string>("sync_results");
 export const openResults = () => invoke("open_results");
 export const openLink = (url: string) => invoke("open_link", { url });

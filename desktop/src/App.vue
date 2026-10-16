@@ -165,6 +165,7 @@ const retryMachine = () =>
     await api.retryMachine();
   });
 const openUi = () => act("open", () => api.openUi());
+const openUiBrowser = () => act("browser", () => api.openUiBrowser());
 const openResults = () => act("folder", () => api.openResults());
 const download = () =>
   act("download", async () => {
@@ -255,6 +256,7 @@ onMounted(async () => {
             <div v-if="running" class="buttons">
               <button v-if="status.slow" class="primary" :disabled="!!busy" @click="retryMachine"><i v-if="busy === 'retry'" class="spin" />{{ busy === "retry" ? "Starting another…" : "Try another machine" }}</button>
               <button class="primary" :disabled="status.phase !== 'ready' || !!busy" @click="openUi"><i v-if="busy === 'open'" class="spin" />Open DiffLab</button>
+              <button class="link" :disabled="status.phase !== 'ready' || !!busy" @click="openUiBrowser">in browser →</button>
               <button v-if="status.kind === 'runpod' && !status.draining" :disabled="!!busy" @click="stopWhenDone"><i v-if="busy === 'drain'" class="spin" />Stop when queue is done</button>
               <button class="danger" :disabled="!!busy" @click="stopNow"><i v-if="busy === 'stop'" class="spin" />{{ busy === "stop" ? "Stopping…" : "Stop now" }}</button>
             </div>

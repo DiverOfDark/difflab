@@ -788,6 +788,17 @@ async fn open_ui(app: AppHandle, inner: State<'_, Shared>) -> Result<(), String>
     open_studio(&app, inner.inner()).await
 }
 
+#[tauri::command]
+async fn open_ui_browser(app: AppHandle, inner: State<'_, Shared>) -> Result<(), String> {
+    let session = inner
+        .session
+        .lock()
+        .await
+        .clone()
+        .ok_or("difflab is not running")?;
+    open_external(&app, &format!("{}/auth?token={}", session.base_url, session.token))
+}
+
 async fn open_studio(app: &AppHandle, inner: &Shared) -> Result<(), String> {
     let app = app.clone();
     let session = inner
@@ -1346,6 +1357,7 @@ pub fn run() {
             stop,
             retry_machine,
             open_ui,
+            open_ui_browser,
             sync_results,
             open_results,
             open_link
