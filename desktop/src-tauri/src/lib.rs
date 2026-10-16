@@ -23,6 +23,11 @@ const BALANCE_EVERY: i64 = 60;
 const VERSIONS_EVERY: i64 = 6 * 3600;
 const LOG_KEEP: usize = 2000;
 const SYNC_EVERY: i64 = 60;
+// How long Stop waits for results before deleting the pod; the rest stay on the volume for the next session.
+const STOP_SYNC_LIMIT: Duration = Duration::from_secs(60);
+// A result download that receives nothing for this long is dropped: RunPod's proxy can stall a stream
+// without closing it, and the sync it belongs to holds every later one, Stop's included.
+const STALL: Duration = Duration::from_secs(60);
 // A first pod answered 118 s after creation (4090, EU-RO-1); one whose host retried a 2 GB layer for
 // 7 minutes (3090, EU-CZ-1) never got there. Past this the user is offered another machine.
 const SLOW_BOOT_S: i64 = 480;
@@ -738,8 +743,13 @@ async fn stop_now(app: &AppHandle, inner: &Shared, immediately: bool) -> Result<
                 },
             )
             .await;
-        if let Err(problem) = sync_pod(&app, inner, false).await {
-            note = format!(" Results could not be downloaded first: {problem}");
+        match tokio::time::timeout(STOP_SYNC_LIMIT, sync_pod(&app, inner, false)).await {
+            Ok(Ok(_)) => {}
+            Ok(Err(problem)) => note = format!(" Results could not be downloaded first: {problem}"),
+            Err(_) => {
+                note =
+                    " Some results were still downloading; the next session downloads them.".into()
+            }
         }
     }
     match session.kind {
@@ -1061,7 +1071,10 @@ async fn download(
         .await
         .map_err(|e| e.to_string())?;
     let mut stream = response.bytes_stream();
-    while let Some(chunk) = stream.next().await {
+    while let Some(chunk) = tokio::time::timeout(STALL, stream.next())
+        .await
+        .map_err(|_| format!("{url}: no data for {} s", STALL.as_secs()))?
+    {
         file.write_all(&chunk.map_err(|e| e.to_string())?)
             .await
             .map_err(|e| e.to_string())?;

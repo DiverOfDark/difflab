@@ -20,9 +20,12 @@ pub const MIN_RAM_GB: u32 = 64;
 // The unpacked image (~10 GB) and every weight (~96 GB) with room to spare: see MODELS.
 pub const CONTAINER_DISK_GB: u32 = 150;
 // Weights and downloads on the container disk, not the global volume: the object store kept none of what
-// the Hub wrote through its mount across a container restart (2026-10-16, a config.json read back empty),
+// the Hub wrote through its mount for the next pod (2026-10-16, a config.json read back empty),
 // and read a 16.5 GB VLM in 889 s where the Hub itself delivers it in 39 s and 28.4 GB in 83 s.
-pub const MODELS: [(&str, &str); 2] = [("HF_HOME", "/models/hf"), ("XDG_CACHE_HOME", "/models/cache")];
+pub const MODELS: [(&str, &str); 2] = [
+    ("HF_HOME", "/models/hf"),
+    ("XDG_CACHE_HOME", "/models/cache"),
+];
 pub const PORT: u16 = 8765;
 
 #[derive(Deserialize, Default)]
@@ -63,7 +66,11 @@ pub struct Client {
 impl Client {
     pub fn new(key: String) -> Self {
         Client {
-            http: reqwest::Client::new(),
+            // Without one a hung request held Stop on "Stopping…" for good.
+            http: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(60))
+                .build()
+                .unwrap_or_default(),
             key,
         }
     }
