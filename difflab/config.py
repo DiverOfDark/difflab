@@ -43,6 +43,7 @@ VLM_DRAFT_TOKENS = 4
 # tokens and never answered (production 16's opening, 2026-10-11).
 VLM_REASONING_EFFORT = "low"
 VLM_THINK_TOKENS = 4096
+VLM_ODDS_TOKENS = 20  # the candidates a verdict's probability of true is read from
 VLM_RECURRENT_CACHE_BYTES = 1024**3  # host RAM, for reusing a prefix's linear-attention state
 # Host RAM for images already embedded. A picture embedded afresh gets new placeholder token ids, so no
 # prompt holding it ever matches the paged cache past it; a repair re-read the whole plan or clip. A
@@ -88,3 +89,6 @@ RUNS_KEEP_DAYS = 14
 PRODUCTIONS_KEEP = 15  # newest by last edit or run, whatever their age
 PRODUCTIONS_IDLE_DAYS = 7
 BACKUPS_KEEP = 5
+
+# A chained edit's check fails at this probability that its fault is real (`tools/chain_edit.faults`).
+CHAIN_FAULT_ODDS = 0.5

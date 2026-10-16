@@ -58,6 +58,12 @@ export interface Artifact {
   name: string
 }
 
+export interface Picture {
+  label: string
+  /** Relative to the run directory. */
+  image: string
+}
+
 export interface RunState {
   id: string
   title: string
@@ -75,6 +81,8 @@ export interface RunState {
   finalVideo: string
   /** Newest last, and relative to output/ like finalVideo. */
   artifacts: Artifact[]
+  /** On the way to an artifact, oldest first: a chained edit's every step and amendment. */
+  pictures: Picture[]
   /**
    * Set by `plan` only, never inferred from "are there items": a single clip emits a preview per
    * sampling step and the fold gives each one an item, so it would read as a chain.
@@ -111,6 +119,7 @@ export function emptyRun(id = ''): RunState {
     error: '',
     finalVideo: '',
     artifacts: [],
+    pictures: [],
     planned: false,
     startedAt: 0,
     stage: '',
@@ -285,6 +294,9 @@ export function apply(run: RunState, event: Event): void {
       }
       break
     }
+    case 'picture':
+      run.pictures.push({ label: event.label ?? '', image: event.image ?? '' })
+      break
     case 'log':
       push(run, event.text ?? '')
       break

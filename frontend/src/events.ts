@@ -72,6 +72,7 @@ export interface StageEndEvent {
   ok: boolean
   seconds: number
   detail?: string | null
+  numbers?: Record<string, number> | null
 }
 
 export interface TallyEvent {
@@ -144,6 +145,13 @@ export interface PreviewEvent {
   poster: string
 }
 
+export interface PictureEvent {
+  kind: 'picture'
+  t: number
+  label: string
+  image: string
+}
+
 export interface ArtifactEvent {
   kind: 'artifact'
   t: number
@@ -209,10 +217,11 @@ export type Event =
   | ItemInfoEvent
   | ItemVideoEvent
   | PreviewEvent
+  | PictureEvent
   | ArtifactEvent
   | FinalEvent
   | JobBeginEvent
   | JobEndEvent
   | FoundEvent
 
-export const KINDS = ['run.start', 'run.end', 'error', 'stats', 'log', 'panel', 'stage.start', 'stage.progress', 'stage.end', 'tally', 'tally.end', 'plan', 'item.begin', 'item.end', 'item.info', 'item.video', 'preview', 'artifact', 'final', 'job.begin', 'job.end', 'found'] as const
+export const KINDS = ['run.start', 'run.end', 'error', 'stats', 'log', 'panel', 'stage.start', 'stage.progress', 'stage.end', 'tally', 'tally.end', 'plan', 'item.begin', 'item.end', 'item.info', 'item.video', 'preview', 'picture', 'artifact', 'final', 'job.begin', 'job.end', 'found'] as const

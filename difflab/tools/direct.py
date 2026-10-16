@@ -120,8 +120,9 @@ def ask(
     seed: int = SEED,
     schema: dict[str, Any] | None = None,
     steady: int = 0,
+    odds: bool = False,
 ) -> str:
-    """One answer, uncached and unchecked: `ask_json` is the one that gates and keeps. `steady` as in
+    """One answer, uncached and unchecked: `ask_json` is the one that gates and keeps. `steady` and `odds` as in
     `Exl3VL.ask`."""
     vlm: Exl3VL = models.registry.acquire(ask_vlm.spec(MODEL.get()))
     return vlm.ask(
@@ -138,6 +139,7 @@ def ask(
         as_json=True,
         schema=schema,
         steady=steady,
+        odds=odds,
     )
 
 
@@ -193,6 +195,7 @@ def ask_json(
     repairs: int = h3.DIRECTOR_REPAIRS,
     schema: dict[str, Any] | None = None,
     steady: int = 0,
+    odds: bool = False,
 ) -> Any:
     """Ask, check, and on failure ask again with the gate's own messages as the instructions.
 
@@ -217,6 +220,7 @@ def ask_json(
     asked_key = key(
         "director", 1, model=MODEL.get(), system=system, question=question, images=seen, tokens=tokens,
         temperature=temperature, **({"take": take} if take else {}), **({"schema": schema} if schema else {}),
+        **({"odds": True} if odds else {}),
     )  # fmt: skip
     kept, failed, marked = (cache.path(asked_key, suffix) for suffix in (".txt", ".failed", ".settled"))
     was_settled = cache.enabled and marked.exists()
@@ -234,7 +238,7 @@ def ask_json(
             fresh = attempt or failures or take
             warmth = max(temperature, h3.DIRECTOR_REPAIR_TEMPERATURE) if fresh else temperature
             seed = (SEED + attempt + failures * (repairs + 1) + take * 1000) % 2**32  # the sampler's range
-            raw = ask(system, asked, images, heading, tokens, warmth, seed, schema, steady)
+            raw = ask(system, asked, images, heading, tokens, warmth, seed, schema, steady, odds)
             # Shown its answer and told to keep what the issues do not name, the model has copied all
             # 2,185 characters of it back on a new seed; the same words fail the same way.
             if raw.strip() == before:

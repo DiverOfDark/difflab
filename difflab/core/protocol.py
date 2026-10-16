@@ -198,6 +198,15 @@ class Preview(Event):
         return f"preview:{self.item}"
 
 
+@dataclass(frozen=True)
+class Picture(Event):
+    """A picture a job made on its way to its result: a chained edit's every step and amendment."""
+
+    KIND = "picture"
+    label: str
+    image: str  # relative to the run directory, so it goes when the run is pruned
+
+
 # --- what was made ----------------------------------------------------------------------------
 @dataclass(frozen=True)
 class Artifact(Event):

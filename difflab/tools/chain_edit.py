@@ -3,14 +3,15 @@ the step before it, so drift that each step adds a little of still fails."""
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any
 
 import torch
 from PIL import Image
 
-from difflab import prompts
-from difflab.core import ui
+from difflab import config, prompts
+from difflab.core import events, protocol, ui
 from difflab.core.settings import EditSettings
 from difflab.core.types import Frame
 from difflab.models.exl3vl import ANY_JSON
@@ -32,7 +33,7 @@ def _shape(**properties: Any) -> dict[str, Any]:
 EDITS = _shape(edits={"type": "array", "items": INSTRUCTION})
 EDIT = _shape(edit=INSTRUCTION)
 DONE = _shape(seen=QUOTE, done={"type": "boolean"}, fix=QUOTE)
-UNASKED = _shape(changes={"type": "array", "items": QUOTE})
+UNASKED = _shape(changed={"type": "boolean"}, changes={"type": "array", "items": QUOTE})
 UNASKED_PREFIX = "not asked for: "
 TRAITS = _shape(traits={"type": "array", "items": QUOTE})
 TARGETED = _shape(changes={"type": "boolean"})
@@ -44,17 +45,28 @@ BODY_PREFIX = "the person changed: "
 
 
 @dataclass(frozen=True)
+class Fault:
+    issue: str
+    chance: float  # the judge's probability that the fault is real
+
+    def __str__(self) -> str:
+        return f"{self.issue} ({self.chance:.0%})"
+
+
+@dataclass(frozen=True)
 class Chained:
     edits: list[str]
     images: list[Frame]  # images[k] is the photo after the first k edits; images[0] is the photo
-    flagged: list[int]  # the edits no retry got right, 0-based; the chain carries on past each
+    flagged: list[int]  # the edits no amendment got right, 0-based; the chain carries on past each
     issues: list[str]  # what the judge finds in the delivered picture, against the photo
 
 
 def chain(
     photo: Frame, idea: str, settings: EditSettings, retries: int, carry: bool = False, body: bool = True
 ) -> Chained:
-    """`carry` conditions each edit on the last one's latent, never on its picture decoded and encoded again."""
+    """`carry` conditions each edit on the last one's latent, never on its picture decoded and encoded again.
+    A picture that fails is amended, not redrawn: the editor gets it with the judge's base as a second picture, so
+    each edit costs at most 1 + `retries` pictures."""
     # Carried on the AIO, the sky turned to noise by the third edit, worse than from decoded pictures (beach test,
     # 2026-10-15).
     carry = carry and settings.engine == "qwen-image-2.1"
@@ -64,44 +76,41 @@ def chain(
     latents: list[torch.Tensor | None] = [None]
     flagged: list[int] = []
     # Pictures are judged against images[base]. A flagged picture becomes the base: judged against the photo,
-    # what it got wrong would fail every picture after it and leave no retry for their own edits.
+    # what it got wrong would fail every picture after it and leave no amendment for their own edits.
     base = 0
-
-    def made(source: int, edit: str, chosen: EditSettings) -> tuple[Frame, torch.Tensor | None]:
+    shown = _Shown()
+    shown(photo, "the photo")
+    while len(images) <= len(edits):
+        step = len(images)
+        ui.note(f"chain · edit {step} of {len(edits)}: {edits[step - 1]}")
         if size is None:
-            return edit_image.edit(images[source], edit, chosen), None
-        return edit_image.edit_carried(images[source], latents[source], edit, chosen, size)
-
-    while True:
-        while len(images) <= len(edits):
-            step = len(images)
-            ui.note(f"chain · edit {step} of {len(edits)}: {edits[step - 1]}")
-            image, latent = made(step - 1, edits[step - 1], settings)
-            images.append(image)
-            latents.append(latent)
-        held, issues = _held(images, edits, base, body)
-        if held == len(edits):
-            break
-        # A picture that held stays held: the judge is greedy and kept by its question, so `held` only grows.
-        tries = [(issues, images[held + 1], edits[held], latents[held + 1])]
+            image, latent = edit_image.edit(images[-1], edits[step - 1], settings), None
+        else:
+            image, latent = edit_image.edit_carried(images[-1], latents[-1], edits[step - 1], settings, size)
+        shown(image, f"edit {step} of {len(edits)} · {edits[step - 1]}")
+        judged = edits[base:step]
+        tries = [(faults(images[base], image, judged, body), image, latent)]
         for attempt in range(1, retries + 1):
-            edit = revise(images[held], tries[-1][1], tries[-1][2], tries[-1][0], settings.engine)
-            image, latent = made(held, edit, settings.with_(seed=settings.seed + attempt))
-            tries.append((faults(images[base], image, [*edits[base:held], edit], body), image, edit, latent))
-            if not tries[-1][0]:
+            found, best, _ = max(tries, key=lambda t: _holds(t[0]))
+            if not _failing(found):
                 break
-        # By count alone a tie kept the first take: on the beach test (2026-10-14) a noisy sky without footprints
-        # over a retry that drew them and moved the palm.
-        left, image, edit, latent = min(
-            tries, key=lambda t: (sum(not i.startswith(UNASKED_PREFIX) for i in t[0]), len(t[0]))
-        )
-        if left:
-            flagged.append(held)
-            base = held + 1
-            ui.note(f"chain · edit {held + 1} still fails after {retries} retries; carrying on with it flagged")
-        edits[held], images[held + 1 :], latents[held + 1 :] = edit, [image], [latent]
-        edits[held + 1 :] = plan(photo, image, idea, edits[: held + 1], settings.engine)
-    return Chained(edits, images, flagged, faults(photo, images[-1], edits, body))
+            fix = amend(best, images[base], edits[step - 1], _failing(found), settings.engine)
+            image = edit_image.edit(
+                best, fix, settings.with_(seed=settings.seed + attempt), size=size, donors=[images[base]]
+            )
+            shown(image, f"edit {step} of {len(edits)} · amendment {attempt} · {fix}")
+            tries.append((faults(images[base], image, judged, body), image, None))
+        found, image, latent = max(tries, key=lambda t: _holds(t[0]))
+        images.append(image)
+        latents.append(latent)
+        if _failing(found):
+            flagged.append(step - 1)
+            base = step
+            ui.note(f"chain · edit {step} still fails after {retries} amendments; carrying on with it flagged")
+            # Never longer than what was left: a re-plan that grew the chain on every flag could run without end.
+            left = len(edits) - step
+            edits[step:] = plan(photo, image, idea, edits[:step], settings.engine)[:left]
+    return Chained(edits, images, flagged, [str(f) for f in _failing(faults(photo, images[-1], edits, body))])
 
 
 def plan(original: Frame, current: Frame, idea: str, done: list[str], engine: str) -> list[str]:
@@ -124,17 +133,18 @@ def plan(original: Frame, current: Frame, idea: str, done: list[str], engine: st
     return edits
 
 
-def revise(before: Frame, after: Frame, edit: str, issues: list[str], engine: str) -> str:
-    question = prompts.CHAIN_REVISE_USER.format(edit=edit, issues="\n".join(f"- {issue}" for issue in issues))
+def amend(made: Frame, reference: Frame, edit: str, found: list[Fault], engine: str) -> str:
+    """The instruction that corrects `made`, the editor's take on `edit`, with `reference` as its Picture 2."""
+    question = prompts.CHAIN_AMEND_USER.format(edit=edit, issues="\n".join(f"- {f.issue}" for f in found))
     data = direct.ask_json(
-        _system(engine), question, [_view(before), _view(after)], lambda _: [], "chain · revise",
+        _system(engine), question, [_view(made), _view(reference)], lambda _: [], "chain · amend",
         h3.DIRECTOR_WRITE_TOKENS, schema=EDIT,
     )  # fmt: skip
     return str(data["edit"]).strip()
 
 
-def faults(original: Frame, image: Frame, edits: list[str], body: bool = True) -> list[str]:
-    """What is wrong with `image` as `original` after `edits`; empty when it holds them all.
+def faults(original: Frame, image: Frame, edits: list[str], body: bool = True) -> list[Fault]:
+    """Every check of `image` as `original` after `edits`, each with the chance that it fails.
     One question per edit: in the screenplay's rulings (2026-10-03) a joint question let one item's verdict
     flip with a change to another."""
     if not edits:
@@ -143,21 +153,23 @@ def faults(original: Frame, image: Frame, edits: list[str], body: bool = True) -
     for number in range(1, len(edits) + 1):
         data = direct.ask_json(
             prompts.CHAIN_JUDGE_SYSTEM, prompts.CHAIN_DONE_USER.format(edits=listed, number=number), seen,
-            lambda _: [], f"chain · judge edit {number}", h3.RULING_TOKENS, schema=DONE,
+            lambda _: [], f"chain · judge edit {number}", h3.RULING_TOKENS, schema=DONE, odds=True,
         )  # fmt: skip
-        if not data["done"]:
-            fix = str(data["fix"]).strip()
-            out.append(f"instruction {number} is not carried out: {data['seen']}" + (f"; {fix}" if fix else ""))
+        fix = str(data["fix"]).strip()
+        out.append(Fault(f"instruction {number} is not carried out: {data['seen']}" + (f"; {fix}" if fix else ""),
+                         1 - float(data["done"])))  # fmt: skip
     data = direct.ask_json(
         prompts.CHAIN_JUDGE_SYSTEM, prompts.CHAIN_UNASKED_USER.format(edits=listed), seen, lambda _: [],
-        "chain · judge the rest", h3.RULING_TOKENS, schema=UNASKED,
+        "chain · judge the rest", h3.RULING_TOKENS, schema=UNASKED, odds=True,
     )  # fmt: skip
-    out += [f"{UNASKED_PREFIX}{change}" for change in map(str, data["changes"]) if change.strip()]
-    out += [f"{BODY_PREFIX}{change}" for change in changed(original, image, edits, body)]
+    told = "; ".join(change.strip() for change in map(str, data["changes"]) if change.strip())
+    out.append(Fault(f"{UNASKED_PREFIX}{told or 'something'}", float(data["changed"])))
+    out += changed(original, image, edits, body)
+    likely = _failing(out)
     ui.panel(
         f"chain · after edit {len(edits)}",
-        {str(n): issue for n, issue in enumerate(out, 1)} or {"holds": "every edit, nothing else changed"},
-        color="yellow" if out else "green",
+        {str(n): str(f) for n, f in enumerate(likely, 1)} or {"holds": f"{_holds(out):.0%} that every check holds"},
+        color="yellow" if likely else "green",
     )
     return out
 
@@ -171,7 +183,7 @@ def traits(original: Frame) -> list[str]:
     return list(dict.fromkeys(trait.strip() for trait in map(str, data["traits"]) if trait.strip()))
 
 
-def changed(original: Frame, image: Frame, edits: list[str], body: bool) -> list[str]:
+def changed(original: Frame, image: Frame, edits: list[str], body: bool) -> list[Fault]:
     """The traits of `original`'s people that `image` lost, leaving out those `edits` set out to change. All in one
     question: on 26 planted and clean pictures (2026-10-15) it caught what one question per trait caught, 13 of 20
     with no false alarm, at 9 s a picture against 37. Neither caught a body stretched or widened by a fifth."""
@@ -191,22 +203,37 @@ def changed(original: Frame, image: Frame, edits: list[str], body: bool) -> list
         prompts.CHAIN_JUDGE_SYSTEM, prompts.CHAIN_TRAIT_LIST_USER.format(traits=_listed(kept)),
         [_view(original), _view(image)], lambda _: [], "chain · judge the person", h3.RULING_TOKENS * 2,
         schema=_shape(traits={"type": "array", "items": HOLDS, "minItems": len(kept), "maxItems": len(kept)}),
+        odds=True,
     )  # fmt: skip
     return [
-        f"{trait}, but {verdict['seen']}" for trait, verdict in zip(kept, data["traits"], strict=True)
-        if not verdict["holds"]
-    ]  # fmt: skip
+        Fault(f"{BODY_PREFIX}{trait}; it now shows {verdict['seen']}", 1 - float(verdict["holds"]))
+        for trait, verdict in zip(kept, data["traits"], strict=True)
+    ]
 
 
-def _held(images: list[Frame], edits: list[str], base: int, body: bool) -> tuple[int, list[str]]:
-    """The most edits a picture holds, walking back from the last to `base`, and what is wrong with the one after it."""
-    after: list[str] = []
-    for count in range(len(edits), base, -1):
-        found = faults(images[base], images[count], edits[base:count], body)
-        if not found:
-            return count, after
-        after = found
-    return base, after
+class _Shown:
+    """Each picture on the job's page as it is made, before the judge has seen it."""
+
+    def __init__(self) -> None:
+        self.count = 0
+
+    def __call__(self, image: Frame, label: str) -> None:
+        run = events.active()
+        if run is None:
+            return
+        self.count += 1
+        path = run.path(f"chain/{self.count:03d}.jpg")
+        image.pil().convert("RGB").save(path, quality=90)
+        run.emit(protocol.Picture(label=label, image=run.rel(path)))
+
+
+def _failing(found: list[Fault]) -> list[Fault]:
+    return [f for f in found if f.chance >= config.CHAIN_FAULT_ODDS]
+
+
+def _holds(found: list[Fault]) -> float:
+    """The chance that every check holds, as if they were independent."""
+    return math.prod(1 - f.chance for f in found)
 
 
 def _system(engine: str) -> str:

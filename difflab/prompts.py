@@ -93,14 +93,14 @@ Idea: {idea}
 
 Write the edits still needed to carry out the idea on Picture 2, none of them repeating one that is done. Answer {{"edits": ["the next instruction", ...]}}, or {{"edits": []}} when the idea is already carried out."""
 
-CHAIN_REVISE_USER = """\
-Picture 1 is the photo the editor was given. It was told:
+CHAIN_AMEND_USER = """\
+Picture 1 is what the editor made when it was told:
 {edit}
 
-Picture 2 is what it made. Compared with the original photo, a reviewer found:
+Picture 2 is the original photo. Comparing Picture 1 with it, a reviewer found:
 {issues}
 
-Write a new instruction for Picture 1 that makes this one change and avoids what the reviewer found, keeping every earlier edit already in Picture 1. Answer {{"edit": "the instruction"}}."""
+The editor will be given Picture 1 to change and Picture 2 to look at. Write one instruction that corrects Picture 1 where the reviewer found something wrong and changes nothing else in it: what Picture 1 should have kept, restore by naming where it is in Picture 2; what the instruction asked for and Picture 1 lacks, finish. Answer {{"edit": "the instruction"}}."""
 
 CHAIN_JUDGE_SYSTEM = """\
 You review an image editor's work. Picture 1 is the original photo, Picture 2 the edited one. Judge only what you can see in the pictures. Answer only JSON, in the shape the request shows."""
@@ -115,7 +115,7 @@ CHAIN_UNASKED_USER = """\
 The editor was given these instructions, in order:
 {edits}
 
-List every clear change from Picture 1 to Picture 2 that none of them asks for or implies: a different face or person, a changed body, pose or garment, a main object added, lost or changed, the composition rearranged, or a visible loss of quality such as heavy noise or a smeared or painterly texture. Ignore small or distant background details, a slight reframing or crop, and slight differences in sharpness and colour. Answer {{"changes": ["one change", ...]}}, or {{"changes": []}} when there is none."""
+Is there a clear change from Picture 1 to Picture 2 that none of them asks for or implies: a different face or person, a changed body, pose or garment, a main object added, lost or changed, the composition rearranged, or a visible loss of quality such as heavy noise or a smeared or painterly texture? Ignore small or distant background details, a slight reframing or crop, and slight differences in sharpness and colour. Answer {{"changed": true or false, "changes": ["one such change", ...]}}, the list empty when there is none."""
 
 CHAIN_TRAITS_SYSTEM = """\
 You describe the people in a photo precisely, for a reviewer who will check an edited copy of it against your list. Judge only what you can see. Answer only JSON, in the shape the request shows."""
