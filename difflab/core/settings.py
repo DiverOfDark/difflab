@@ -153,9 +153,10 @@ def _coerce(value: Any, kind: str) -> Any:
     return str(value)
 
 
-# The one language model, which sees and writes: Qwen3.8-27B, vision tower and MTP head kept,
-# as turboderp's 4.0 bpw EXL3 (16.9 GB).
-VLM = "turboderp/Qwen3.8-27B-exl3@113cf7ab958054860e43fb7f3063b1af19171095"
+# The one language model, which sees and writes: Qwen3.8-27B abliterated, so smoke, a hookah or a kiss
+# is described as asked rather than quietly softened; vision tower and MTP head kept, as turboderp's
+# 4.0 bpw EXL3 (16.5 GB).
+VLM = "turboderp/Huihui-Qwen3.8-27B-abliterated-exl3@718be252b757f8b7bda082d3cca746b8de314fd3"
 
 
 @dataclass(frozen=True)

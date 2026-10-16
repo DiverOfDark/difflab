@@ -1,4 +1,4 @@
-"""Qwen3.8-27B as turboderp's EXL3 on ExLlamaV3, its MTP head (kept at `mtp_bits: 4`) drafting."""
+"""Qwen3.8-27B abliterated as turboderp's EXL3 on ExLlamaV3, its MTP head (kept at `mtp_bits: 4`) drafting."""
 
 import gc
 import hashlib

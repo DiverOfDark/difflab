@@ -117,7 +117,7 @@ deletes its own pod according to `DIFFLAB_IDLE_MINUTES`, `DIFFLAB_STUCK_MINUTES`
 
 | Role | Model |
 |---|---|
-| Every word: plans, prompts, the judge | Qwen3.8-27B, 4-bit EXL3, on ExLlamaV3 with MTP drafting (70–100 tok/s on a 3090) |
+| Every word: plans, prompts, the judge | Qwen3.8-27B abliterated, 4-bit EXL3, on ExLlamaV3 with MTP drafting (70–100 tok/s on a 3090) |
 | Pictures: edits, keyframes, references | Qwen-Image-Edit 2511 (Phr00t's Rapid-AIO), or Qwen-Image 2.1 + LoRAs (experimental) |
 | Video with audio | MiniMax H3, int8, with a turbo LoRA |
 | Finish | SeedVR2 7B (restore), RealESRGAN x2 / 4xLSDIR (enlarge), RIFE 4.26 (frame rate) |
