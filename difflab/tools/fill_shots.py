@@ -32,6 +32,7 @@ class Given:
     balloons: tuple[read_page.Balloon, ...]  # every balloon, speakers as member ids
     lands: bool  # the clip ends on the next panel
     landed: bool  # the clip before ends on this one
+    chained: bool = False  # it opens on the clip before's last frame: its panel was lettering alone
 
     @property
     def spoken(self) -> tuple[read_page.Balloon, ...]:
@@ -68,7 +69,7 @@ def take_from(data: Any, base: compose.Take, given: list[Given]) -> compose.Take
             lines.append(compose.Line(balloon.speaker, float(entry["start"]), "English", balloon.text))
             if str(entry.get("voice") or "").strip():
                 voices.setdefault(balloon.speaker, " ".join(str(entry["voice"]).split()))
-        cut = "" if index == 0 or panel.landed else "new"
+        cut = "" if index == 0 or panel.landed or panel.chained else "new"
         chunks.append(
             compose.Chunk(
                 purpose=str(clip["purpose"]),
@@ -180,7 +181,7 @@ def _clip_problems(
         out.append(direct.problem(f'{name}: the camera "move" is one of {", ".join(words.CAMERA_MOVES)}'))
     if str(clip["camera"]["toward"]) not in allowed:
         out.append(direct.problem(f'{name}: the camera moves "toward" one of {", ".join(sorted(allowed))}'))
-    opens = number == 1 or not panel.landed
+    opens = number == 1 or not (panel.landed or panel.chained)
     if opens and not str(clip.get("scene") or "").strip():
         out.append(direct.problem(f'{name}: "scene" is empty, and the clip opens a scene: give its heading'))
     if opens and not str(clip.get("opening") or "").strip():

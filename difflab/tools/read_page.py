@@ -38,6 +38,7 @@ class Script:
     action: str
     into_next: str
     why: str
+    drawn: bool = True  # False: lettering on a blank ground, with no picture to draw from
 
     def data(self) -> dict[str, Any]:
         return {**asdict(self), "balloons": [asdict(b) for b in self.balloons], "sfx": list(self.sfx),
@@ -52,6 +53,7 @@ class Script:
             str(data.get("action", "")),
             str(data.get("into_next", "cut")),
             str(data.get("why", "")),
+            bool(data.get("drawn", True)),
         )
 
 
@@ -219,6 +221,7 @@ def read(
         " ".join(str(data["action"]).split()),
         str(data["into_next"]) if after is not None else "cut",
         " ".join(str(data.get("why") or "").split()),
+        data.get("drawn") is not False,
     )
 
 

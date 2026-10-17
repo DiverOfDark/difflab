@@ -37,7 +37,8 @@ def _manga() -> dict[str, Any]:
     }
 
 
-def _out(job: int, name: str) -> dict[str, Any]:
+def _out(job: int | None, name: str) -> dict[str, Any]:
+    assert job is not None
     return {"from_job": job, "output": name}
 
 
@@ -205,6 +206,11 @@ def _lay(
                               **({} if shot.plan.get("beats") else {"cast": cast})})  # fmt: skip
             if held.get("landed_by_reader") != given["landed_by_reader"] and position:
                 store.land_keyframe(connection, shot.id, given["landed_by_reader"])
+            source = store.keyframe_of(connection, shot.id).source
+            if position and not script_now.drawn and source == store.COMPOSED:
+                store.chain_keyframe(connection, shot.id)
+            elif script_now.drawn and source == store.CHAINED:
+                store.compose_keyframe(connection, shot.id)
             if not shot.plan.get("beats"):
                 store.update_shot(connection, shot.id, seconds=seconds, action=script_now.action)
         else:
@@ -216,7 +222,10 @@ def _lay(
                 action=script.action, dialogue=" / ".join(f"{b.speaker}: {b.text}" for b in script.balloons
                                                           if b.kind in read_page.SPOKEN),
             )  # fmt: skip
-            store.compose_keyframe(connection, shot.id)
+            if position and not script.drawn:
+                store.chain_keyframe(connection, shot.id)  # lettering alone: it goes on from the shot before
+            else:
+                store.compose_keyframe(connection, shot.id)
             store.land_keyframe(connection, shot.id, bool(position) and before == "land")
         out.append({"shot": shot.id, "chapter": chapter.id, "picture": panel["picture"], "script": script,
                     "box": panel["box"]})  # fmt: skip
@@ -244,14 +253,21 @@ def _queue_rest(
             ).id
 
         editor = settings.for_job("edit_image", production_id)
+        # A panel of lettering alone is never cleaned: asked to fill a balloon on black, the editor drew a cast
+        # of its own (four faces of another manga's hero, One-Punch Man p6).
         cleaned = [
             add("clean_panel", {"shot": p["shot"], "picture": p["picture"]}, f"clean panel {n + 1}", editor)
+            if p["script"].drawn
+            else None
             for n, p in enumerate(laid)
         ]
         for n, (p, job) in enumerate(zip(laid, cleaned, strict=True)):
-            add("judge_clean", {"shot": p["shot"], "picture": p["picture"], "clean": _out(job, "frame")},
-                f"check panel {n + 1}")  # fmt: skip
-        chosen, labels = _survey_panels(laid, characters)
+            if job is not None:
+                add("judge_clean", {"shot": p["shot"], "picture": p["picture"], "clean": _out(job, "frame")},
+                    f"check panel {n + 1}")  # fmt: skip
+        chosen, labels = _survey_panels([p for p in laid if p["script"].drawn], characters)
+        drawn = [i for i, p in enumerate(laid) if p["script"].drawn]
+        chosen = [drawn[i] for i in chosen]
         photos = add("manga_photos", {"photos": [_out(cleaned[i], "frame") for i in chosen], "labels": labels},
                      "the cleaned panels the bible reads")  # fmt: skip
         surveyed = add(
@@ -434,11 +450,13 @@ def run_fill_shots(inputs: dict[str, Any], settings_: dict[str, Any]) -> dict[st
     given = []
     for index, shot in enumerate(shots):
         script = read_page.Script.of(shot.plan.get("panel", {}).get("script", {}))
-        lands = index + 1 < len(shots) and keyframes[index + 1].landed
+        drawn = (store.COMPOSED, store.PROVIDED)
+        lands = index + 1 < len(shots) and keyframes[index + 1].landed and keyframes[index + 1].source in drawn
         given.append(fill_shots.Given(
             shot.seconds, tuple(m for m in script.who if m in cards and cards[m].kind in compiler.LIVING),
             script.action, tuple(b for b in script.balloons if not b.speaker or b.speaker in cards), lands,
-            bool(index) and keyframes[index].landed,
+            bool(index) and keyframes[index].landed and keyframes[index].source in drawn,
+            bool(index) and keyframes[index].source == store.CHAINED,
         ))  # fmt: skip
     video, _ = settings.effective("render_chunk", production_id)
     assert isinstance(video, VideoSettings)

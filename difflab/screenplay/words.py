@@ -854,12 +854,13 @@ RULES
 - "speaker": who says or thinks the balloon, by name; "" for narration. A NAME is the character's own name when the comic gives it (in a balloon, a caption, or the KNOWN NAMES below), else two to four plain lowercase words for what they are ("bald man", "crying girl", "horned monster"). Use the same name for the same character every time{known_rule}.
 - "sfx": every sound effect lettered in the art, as written (translated notes in the gutter count); [] when there is none.
 - "who": the NAME of every character drawn in Picture 1, plus every speaker of a speech, thought or shout balloon even when only their voice is in it.
+- "drawn": false when Picture 1 holds only lettering on a plain white or black ground, with nothing drawn; true otherwise. "who" is then the speakers alone.
 - "action": one sentence of at most 30 words: what visibly happens in Picture 1, naming the characters by NAME.
 - "into_next": {into_next_rule}
 - "why": one short phrase for "into_next".
 
 Answer only JSON, in this shape:
-{{"balloons":[{{"kind":"speech","speaker":"bald man","text":"..."}}],"sfx":["..."],"who":["bald man"],"action":"...","into_next":"cut","why":"..."}}"""
+{{"balloons":[{{"kind":"speech","speaker":"bald man","text":"..."}}],"sfx":["..."],"who":["bald man"],"drawn":true,"action":"...","into_next":"cut","why":"..."}}"""
 MANGA_READ_CONTEXT_PAGE = "Picture 2 is the whole page it is on, for context only. "
 MANGA_READ_CONTEXT_NEXT = "Picture {picture} is the panel read after it. "
 MANGA_READ_LAND = '"land" when the panel after it (Picture {picture}) continues the same action in roughly the same framing, so one movement can carry Picture 1 into it; "cut" when it is a new angle, a reaction close-up, another place or a jump in time.'
@@ -905,11 +906,13 @@ Redraw this {noun} as a full-colour anime character design sheet: one front view
 COMPOSE_MANGA_SHEET_COLOURS = " Colours: {colours}."
 COMPOSE_MANGA_SHEET_KEEP = " Keep every colour exactly as this picture shows it."
 # The panel redrawn as the shot's first frame, each character from its approved sheet.
+# Measured 2026-10-17 on One-Punch Man pp. 3-6: told to keep the composition and draw each character "exactly as
+# in" its sheet, the editor pasted the sheet's whole figure over a close-up of an arm and over antenna tips, five
+# panels in a row coming out as one portrait, and drew a cast into a panel holding only a balloon.
 COMPOSE_MANGA_ANIME = """\
-Redraw this comic panel as one frame of a full-colour anime: clean anime line art with flat cel shading and painted backgrounds. Keep its composition, the camera angle, every pose and the line work of the panel exactly; continue the scene out over any blurred or blank band at the edges. {cast}{style}"""
-COMPOSE_MANGA_CAST = "{who} looks exactly as in {pictures}, in the same colours."
+Colour this comic panel as one frame of a full-colour anime, in clean anime line art with flat cel shading and painted backgrounds. Picture 1 is the frame: keep its composition, camera angle and framing, and every figure, pose and object exactly where it is and exactly as large, a figure the frame cuts off staying cut off and a close-up staying a close-up; continue the scene out over any blurred band at the edges. Add no person, face or figure. {cast}{style}"""
+COMPOSE_MANGA_CAST = "Where Picture 1 shows the {who}, take only the colours of its hair, skin, eyes and clothes from {pictures}, never its pose, size or framing."
 COMPOSE_MANGA_STYLE = " Picture {picture} is only a reference for the look: match its colour palette, line weight and shading, and take nothing else from it."
-COMPOSE_MANGA_COLOUR = " {words}"
 
 MANGA_STYLE = (
     "The target video is a full-colour 2D anime in clean line art with flat cel shading and painted backgrounds, "

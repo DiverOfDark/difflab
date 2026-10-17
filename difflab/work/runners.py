@@ -561,7 +561,7 @@ def _anime_keyframe(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
     pictures = {str(slug): _frame(path) for slug, path in (inputs.get("pictures") or {}).items()}
     style = _frame(inputs["style"]) if inputs.get("style") else None
     cast = " ".join(
-        words.COMPOSE_MANGA_CAST.format(who=f"The {nouns.get(slug, slug.replace('_', ' '))}", pictures=f"Picture {n}")
+        words.COMPOSE_MANGA_CAST.format(who=nouns.get(slug, slug.replace("_", " ")), pictures=f"Picture {n}")
         for n, slug in enumerate(pictures, 2)
     )
     said = words.COMPOSE_MANGA_ANIME.format(
