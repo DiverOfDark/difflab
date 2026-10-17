@@ -35,7 +35,7 @@ const steps = computed(() =>
 )
 const current = computed(() => steps.value.find((s) => s.id === now.value?.current) ?? null)
 const index = computed(() => Math.max(0, steps.value.findIndex((s) => s.id === now.value?.current)))
-const WHAT: Record<string, string> = { split: 'splitting', describe: 'describing references', read: 'reading chapters', reconcile: 'reconciling', plan: 'writing the bible' }
+const WHAT: Record<string, string> = { split: 'splitting', pages: 'reading pages', describe: 'describing references', read: 'reading chapters', reconcile: 'reconciling', plan: 'writing the bible' }
 const line = computed(() => (now.value ? `step ${Math.min(index.value + 1, 4)} of 4 · ${WHAT[now.value.current] ?? now.value.current}` : 'starting…'))
 const clock = (t: number) => new Date(t * 1000).toTimeString().slice(0, 8)
 const TAG: Record<string, string> = { DESCRIBE: 'var(--status-building)', READ: 'var(--status-building)', RECONCILE: 'var(--status-degraded)', PLAN: 'var(--accent)' }
@@ -89,6 +89,7 @@ const cancel = () => {
           <span class="desc">{{
             {
               split: 'Chapters on headings, or every ~600 words.',
+              pages: 'Panels found in each page, each read for its balloons, cast and join; then cleaned of lettering.',
               describe: 'Qwen-VL writes what each upload shows; duplicates merge by face and hash.',
               read: 'Characters, locations, props extracted chapter by chapter.',
               reconcile: 'References override the story; conflicting prose found; voices assigned.',

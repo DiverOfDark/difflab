@@ -1,8 +1,25 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue'
 import { RouterLink } from 'vue-router'
-import { attachUnmatched, describeMember, drawReference, drawReferences, outputUrl, type MemberInfo, type Production, type ShotInfo } from '../../api'
-import { KIND_LABEL, TABS, appearance, changesIn, drawnRef, meta, pictures, shotLabel, shotsOf, shownAs, source, states } from '../../bible'
+import { approveMade, attachUnmatched, describeMember, drawReference, drawReferences, outputUrl, type MemberInfo, type Production, type ShotInfo } from '../../api'
+import {
+  KIND_LABEL,
+  SHEET,
+  TABS,
+  appearance,
+  approvable,
+  changesIn,
+  drawnRef,
+  meta,
+  pictures,
+  sheetOf,
+  sheetWaits,
+  shotLabel,
+  shotsOf,
+  shownAs,
+  source,
+  states,
+} from '../../bible'
 import { drawingRun, type StageId } from '../../production'
 import { state } from '../../store'
 import BibleEditor from './BibleEditor.vue'
@@ -46,6 +63,11 @@ const run = (m: MemberInfo) =>
     ? props.act(`describe ${m.id}`, () => describeMember(m.id))
     : props.act(`draw ${m.id}`, () => drawReference(m.id))
 const drawMissing = () => props.act('draw references', () => drawReferences(props.production.id))
+
+// --- colour sheets ----------------------------------------------------------------------------------
+const unsheeted = computed(() => props.production.members.filter((m) => sheetWaits(sheetOf(m))).map((m) => m.slug))
+const approveSheet = (m: MemberInfo) => props.act(`sheet ${m.id}`, () => approveMade('reference', sheetOf(m)!.id))
+const tagOf = (role: string) => (role === SHEET ? 'SHEET' : role === 'generated' ? 'GEN' : 'PHOTO')
 
 // --- unmatched photographs --------------------------------------------------------------------------
 const picks = reactive<Record<string, string>>({})
@@ -103,6 +125,9 @@ const ready = (u: Production['unmatched'][number]) => !!pickOf(u) && (!pickOf(u)
       <span>Drawing references · {{ drawingNow ? `${drawingNow.jobs_done} / ${drawingNow.jobs_total} jobs · ${drawingNow.status}` : drawing.state }}</span>
       <RouterLink :to="`/runs/${drawing.id}`">watch run →</RouterLink>
     </p>
+    <p v-if="unsheeted.length" class="band hint">
+      Keyframes wait until each character's colour sheet is approved · {{ unsheeted.length }} to approve: {{ unsheeted.join(', ') }}
+    </p>
     <p v-if="!production.members.length" class="band hint">No cast yet. Plan the chapter: the survey names who the story needs from the photographs.</p>
 
     <div class="cards">
@@ -115,7 +140,7 @@ const ready = (u: Production['unmatched'][number]) => !!pickOf(u) && (!pickOf(u)
           <div class="pics">
             <span v-if="pictures(m)[0]" class="leadpic">
               <img class="frame lead" :src="outputUrl(shownAs(m, pictures(m)[0]))" :alt="pictures(m)[0].role" />
-              <span class="tag mono" :class="{ gen: pictures(m)[0].role === 'generated' }">{{ pictures(m)[0].role === 'generated' ? 'GEN' : 'PHOTO' }}</span>
+              <span class="tag mono" :class="{ gen: pictures(m)[0].role === 'generated' }">{{ tagOf(pictures(m)[0].role) }}</span>
             </span>
             <div v-else class="frame lead empty mono">{{ inDrawing(m) ? 'drawing…' : 'no reference' }}</div>
             <div class="thumbs">
@@ -134,6 +159,13 @@ const ready = (u: Production['unmatched'][number]) => !!pickOf(u) && (!pickOf(u)
             <div v-for="c in disagree(m)" :key="c.id" class="conflict">
               <span class="eyebrow small warn">THE PHOTOGRAPHS DISAGREE</span>
               <span>{{ c.says }}</span>
+            </div>
+            <div v-if="sheetOf(m)" class="conflict">
+              <span class="eyebrow small" :class="{ warn: sheetWaits(sheetOf(m)) }">COLOUR SHEET · {{ sheetOf(m)!.state.replace('_', ' ').toUpperCase() }}</span>
+              <span v-if="sheetWaits(sheetOf(m))">
+                Drawn from the comic; its keyframes wait for it.
+                <button v-if="approvable(sheetOf(m)!)" class="link" :disabled="!!busy" @click="approveSheet(m)">approve the colour sheet</button>
+              </span>
             </div>
             <div v-for="g in m.gaps ?? []" :key="g.role" class="conflict">
               <span class="eyebrow small warn">NO {{ g.role.toUpperCase() }} PICTURE</span>

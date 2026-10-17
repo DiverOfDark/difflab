@@ -30,6 +30,8 @@ _GIVEN = (
     "SELECT provided FROM refs",
     "SELECT manifest FROM productions",
     "SELECT reference_audio FROM members",
+    # A comic panel's crops and cleaned picture: a reused page reading hands back these same paths.
+    "SELECT plan FROM shots",
     "SELECT j.inputs || j.outputs FROM jobs j JOIN runs r ON r.id = j.run_id WHERE r.state NOT IN (?, ?, ?, ?)",
 )
 

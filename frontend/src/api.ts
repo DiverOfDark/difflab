@@ -718,6 +718,61 @@ export const drawProductionLooks = (id: number, chapter: number | null) =>
 /** Per chapter position, what would stop it rendering; nothing is queued. */
 export const preflight = (id: number) => json<{ problems: Record<string, string[]> }>(`/api/productions/${id}/preflight`)
 
+// --- manga ---------------------------------------------------------------------------------------
+/** `strip` is a webtoon: one vertical strip, read top to bottom. */
+export type Reading = 'rtl' | 'ltr' | 'strip'
+export interface IngestManga {
+  title: string
+  /** Uploaded pictures in page order, or one .cbz or .zip. */
+  pages: string[]
+  reading: Reading
+  style?: string
+  /** Pages each chapter takes, in order; absent is one chapter. */
+  chapter_pages?: number[]
+  /** Absent is 16:9, or 9:16 for a strip. */
+  aspect?: number
+  plan: boolean
+}
+export type BalloonKind = 'speech' | 'thought' | 'shout' | 'narration'
+/** `speaker` is a member slug, '' for narration. */
+export interface Balloon {
+  kind: BalloonKind
+  speaker: string
+  text: string
+}
+export interface PanelScript {
+  balloons: Balloon[]
+  sfx: string[]
+  who: string[]
+  action: string
+  /** The reader's call on whether the next panel carries this one's action on. */
+  into_next: 'land' | 'cut'
+  why: string
+}
+/** A shot's comic panel; every picture is under output/. */
+export interface Panel {
+  page: string
+  page_index: number
+  box: number[]
+  read_box: number[]
+  picture: string
+  /** The crop with its lettering. */
+  read: string
+  clean?: string
+  /** Non-empty when the checker found lettering left or the figures changed. */
+  clean_review?: string
+  script: PanelScript
+  edited?: boolean
+  /** Its dialogue cannot fit the longest shot. */
+  too_long?: boolean
+  landed_by_reader: boolean
+}
+export const panelOf = (shot: ShotInfo) => (shot.plan.panel as Panel | undefined) ?? null
+export const ingestManga = (form: IngestManga) => json<Production & { runs: string[] }>('/api/ingest/manga', post(form))
+export const patchPanel = (shotId: number, body: { balloons?: Balloon[]; who?: string[]; action?: string }) =>
+  json<Production>(`/api/shots/${shotId}/panel`, send('PATCH', body))
+export const setMotionComic = (shotId: number, on: boolean) => json<Production>(`/api/shots/${shotId}/motion_comic`, post({ on }))
+
 export type QueueState = 'done' | 'review' | 'running' | 'paused' | 'queued' | 'blocked' | 'failed' | 'stale'
 export interface QueueRow {
   id: number

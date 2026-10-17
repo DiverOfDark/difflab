@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import random
@@ -133,6 +134,9 @@ def update_shot(shot_id: int, **changes: Any) -> store.Shot:
             joined = True
         if "seconds" in changes:
             low, high = knobs.SHOT_SECONDS
+            owner = store.production(connection, chapter.production_id)
+            if owner is not None and owner.story_kind == "manga":
+                low = knobs.MANGA_SHOT_MIN
             seconds = min(max(float(changes.pop("seconds")), low), high)
             if seconds != shot.seconds:
                 store.update_shot(connection, shot_id, seconds=seconds)
@@ -353,6 +357,93 @@ def redo_keyframe(shot_id: int, note: str = "") -> int:
         store.compose_keyframe(connection, shot_id, seed=random.randrange(2**32), note=" ".join(note.split()))
         _stale(connection, [shot])
         return shot.chapter_id
+
+
+def edit_panel(shot_id: int, balloons: list[dict[str, Any]] | None = None, who: list[str] | None = None,
+               action: str | None = None) -> dict[str, int]:  # fmt: skip
+    """A comic panel's script corrected by hand: its balloons in order, who is drawn in it, what happens. It is
+    kept through re-plans, and the shot's prompt and clip go stale; its picture does not."""
+    from difflab.screenplay import manga
+    from difflab.tools import read_page
+
+    with store.connect() as connection, store.transaction(connection):
+        shot = store.shot(connection, shot_id)
+        if shot is None:
+            raise LookupError(f"no shot {shot_id}")
+        panel = dict(shot.plan.get("panel") or {})
+        if not panel:
+            raise ValueError("this shot is not a comic panel")
+        chapter = store.chapter(connection, shot.chapter_id)
+        assert chapter is not None
+        living = {m.slug for m in store.members_of(connection, chapter.production_id) if m.kind in compiler.LIVING}
+        script = read_page.Script.of(panel.get("script", {}))
+        if who is not None:
+            unknown = sorted(set(map(str, who)) - living)
+            if unknown:
+                raise ValueError(f"no character called {', '.join(unknown)}")
+            script = dataclasses.replace(script, who=tuple(dict.fromkeys(map(str, who))))
+        if balloons is not None:
+            given = []
+            for number, entry in enumerate(balloons, 1):
+                kind, speaker = str(entry.get("kind") or "speech"), str(entry.get("speaker") or "")
+                text = " ".join(str(entry.get("text") or "").split())
+                if kind not in read_page.KINDS:
+                    raise ValueError(f"balloon {number}: a kind is one of {', '.join(read_page.KINDS)}")
+                if not text:
+                    continue
+                if kind == "narration":
+                    speaker = ""
+                elif speaker not in living:
+                    raise ValueError(f"balloon {number}: {speaker or 'its speaker'} is not a character of the bible")
+                given.append(read_page.Balloon(kind, speaker, text))
+            script = dataclasses.replace(script, balloons=tuple(given))
+            script = dataclasses.replace(
+                script, who=tuple(dict.fromkeys([*script.who, *(b.speaker for b in given if b.speaker)]))
+            )
+        if action is not None:
+            script = dataclasses.replace(script, action=" ".join(str(action).split()))
+        production = store.production(connection, chapter.production_id)
+        video, _ = settings.effective("render_chunk", chapter.production_id)
+        assert isinstance(video, VideoSettings) and production is not None
+        seconds, fits = manga.seconds_for(script, video.duration)
+        panel = {**panel, "script": script.data(), "edited": True}
+        panel.pop("too_long", None)
+        panel |= {} if fits else {"too_long": True}
+        dialogue = " / ".join(f"{b.speaker}: {b.text}" for b in script.balloons if b.kind in read_page.SPOKEN)
+        store.update_shot(connection, shot_id, plan={**shot.plan, "panel": panel}, dialogue=dialogue,
+                          seconds=max(seconds, shot.seconds))  # fmt: skip
+        moved = {"prompts": 0, "keyframes": 0, "clips": 0}
+        prompt, clip = store.prompt_of(connection, shot_id), store.clip_of(connection, shot_id)
+        if prompt.text and not prompt.pinned and prompt.state != store.STALE:
+            store.set_made(connection, "prompt", prompt.id, store.STALE)
+            moved["prompts"] += 1
+        if clip.artifact and clip.state != store.STALE:
+            store.set_made(connection, "clip", clip.id, store.STALE)
+            moved["clips"] += 1
+        store.touch_production(connection, chapter.production_id)
+        return moved
+
+
+def motion_comic(shot_id: int, on: bool) -> dict[str, int]:
+    """The shot made as its keyframe under a slow camera move instead of by H3, keeping the sound of the clip it
+    has, or rendered by H3 again."""
+    with store.connect() as connection, store.transaction(connection):
+        shot = store.shot(connection, shot_id)
+        if shot is None:
+            raise LookupError(f"no shot {shot_id}")
+        clip = store.clip_of(connection, shot_id)
+        plan = {k: v for k, v in shot.plan.items() if k != "motion_comic"}
+        if on:
+            held = shot.plan.get("motion_comic")
+            heard = held.get("audio_from") if isinstance(held, dict) else None
+            heard = heard or (clip.artifact if clip.artifact and clip.artifact.endswith(".mp4") else None)
+            plan["motion_comic"] = {"audio_from": heard}
+        store.update_shot(connection, shot_id, plan=plan)
+        moved = {"prompts": 0, "keyframes": 0, "clips": 0}
+        if clip.artifact and clip.state != store.STALE:
+            store.set_made(connection, "clip", clip.id, store.STALE)
+            moved["clips"] += 1
+        return moved
 
 
 def stale_casting(connection: Any, member_id: int) -> dict[str, int]:

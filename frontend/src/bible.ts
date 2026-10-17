@@ -31,6 +31,11 @@ export const photographs = (m: MemberInfo) => m.references.filter((r) => r.role 
 /** The file the member is handed over as: its plate, while it plates and one is drawn. */
 export const shownAs = (m: MemberInfo, r: Ref) => (m.plate && r.plate ? r.plate : r.artifact!)
 export const drawnRef = (m: MemberInfo) => m.references.find((r) => r.role === GENERATED)
+/** A comic character's colour sheet: its manga keyframes are not drawn until it is approved. */
+export const SHEET = 'sheet'
+export const sheetOf = (m: MemberInfo) => m.references.find((r) => r.role === SHEET)
+export const sheetWaits = (r: Ref | undefined) => !!r && r.state !== 'approved'
+export const approvable = (r: Ref) => !!r.artifact && r.present && ['made', 'needs_review'].includes(r.state)
 
 /** "2 photos · 1 generated", "drawn from words", "no reference". */
 export function source(m: MemberInfo): { label: string; provided: boolean } {
@@ -41,9 +46,9 @@ export function source(m: MemberInfo): { label: string; provided: boolean } {
   return { label: parts.join(' · '), provided: true }
 }
 
-/** The picture a card leads with: a whole view before a drawing before a face. */
+/** The picture a card leads with: a colour sheet before a whole view before a drawing before a face. */
 export function pictures(m: MemberInfo): Ref[] {
-  const rank = (r: Ref) => (r.role === 'face' ? 2 : r.role === GENERATED ? 1 : 0)
+  const rank = (r: Ref) => (r.role === SHEET ? -1 : r.role === 'face' ? 2 : r.role === GENERATED ? 1 : 0)
   return m.references.filter(shown).sort((a, b) => rank(a) - rank(b))
 }
 

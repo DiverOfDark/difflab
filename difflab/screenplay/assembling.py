@@ -49,13 +49,13 @@ def lines(shot: store.Shot | None) -> list[list[Any]]:
     if shot is None:
         return []
     out = []
-    for said in shot.plan.get("dialogue", []):
+    for said in [*shot.plan.get("dialogue", []), *shot.plan.get("captions", [])]:
         text, start = str(said.get("line", "")).strip(), float(said.get("start") or 0.0)
         if not text or start >= shot.seconds:
             continue
         spoken = len(text.split()) / knobs.DIRECTOR_WORDS_PER_SECOND + CUE_HOLD
         out.append([start, round(min(start + max(spoken, CUE_SHORTEST), shot.seconds), 3), text])
-    return out
+    return sorted(out)
 
 
 def marker(chapter: store.Chapter) -> str:

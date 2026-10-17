@@ -345,6 +345,23 @@ async def patch_shot(shot_id: int, request: Request) -> dict[str, Any]:
     return _staling(_shot_owner(shot_id), lambda: production.update_shot(shot_id, **dict(body)))
 
 
+@app.patch("/api/shots/{shot_id}/panel")
+async def patch_panel(shot_id: int, request: Request) -> dict[str, Any]:
+    """A comic panel's script by hand: `balloons` ({kind, speaker, text} in order), `who`, `action`."""
+    body = dict(await request.json())
+    return _staling(
+        _shot_owner(shot_id),
+        lambda: production.edit_panel(shot_id, body.get("balloons"), body.get("who"), body.get("action")),
+    )
+
+
+@app.post("/api/shots/{shot_id}/motion_comic")
+async def set_motion_comic(shot_id: int, request: Request) -> dict[str, Any]:
+    """`on`: the shot made as a motion-comic shot, its keyframe under a slow camera move, instead of by H3."""
+    body = await request.json()
+    return _staling(_shot_owner(shot_id), lambda: production.motion_comic(shot_id, bool(body.get("on", True))))
+
+
 @app.delete("/api/shots/{shot_id}")
 def delete_shot(shot_id: int) -> dict[str, Any]:
     owner = production.production_of_shot(shot_id)
@@ -599,6 +616,35 @@ async def ingest_video(request: Request) -> dict[str, Any]:
     except (TypeError, ValueError) as problem:
         raise HTTPException(400, str(problem)) from problem
     return _production(made.id)
+
+
+@app.post("/api/ingest/manga")
+async def ingest_manga(request: Request) -> dict[str, Any]:
+    """A production from comic pages: `pages` (pictures, folders or .cbz under output/), `title`, `reading`
+    (rtl, ltr, or strip for a webtoon), an optional `style` picture, `chapter_pages` (pages per chapter),
+    `aspect`, and partial `video` and `continuity`. The pages are read at once; `plan` fills the shots too."""
+    body = await request.json()
+    try:
+        video = VideoSettings(**body["video"]) if body.get("video") else None
+        continuity = Continuity(**body["continuity"]) if body.get("continuity") else None
+        title = " ".join(str(body.get("title", "")).split())
+        if not title:
+            raise ValueError("a title, in words")
+        made = ingest.from_manga(
+            str(body.get("slug") or "").strip() or ingest.slug_for(title),
+            [str(p) for p in body.get("pages") or []],
+            title=title,
+            reading=str(body.get("reading") or "rtl"),
+            style=str(body["style"]) if body.get("style") else None,
+            chapter_pages=[int(c) for c in body["chapter_pages"]] if body.get("chapter_pages") else None,
+            aspect=None if body.get("aspect") in (None, "") else float(body["aspect"]),
+            video=video,
+            continuity=continuity,
+        )
+    except (TypeError, ValueError, OSError) as problem:
+        raise HTTPException(400, str(problem)) from problem
+    planned = _runs(lambda: planner.plan_production(made.id, shots=bool(body.get("plan"))))
+    return {**_production(made.id), "runs": planned["runs"]}
 
 
 @app.post("/api/productions/{production_id}/plan")

@@ -17,6 +17,7 @@ from difflab.store.models import (
     PINNED,
     PROVIDED,
     REFS,
+    SHEET,
     STALE,
     Casting,
     Chapter,
@@ -577,11 +578,11 @@ def delete_ref(connection: sqlite3.Connection, ref_id: int) -> None:
 
 
 def clear_refs(connection: sqlite3.Connection, production_id: int) -> None:
-    """Every cut reference of the production; the given and the drawn ones stay."""
+    """Every cut reference of the production; the given and the drawn ones stay, colour sheets included."""
     connection.execute(
-        "DELETE FROM refs WHERE provided IS NULL AND role != ? "
+        "DELETE FROM refs WHERE provided IS NULL AND role NOT IN (?, ?) "
         "AND member_id IN (SELECT id FROM members WHERE production_id = ?)",
-        (GENERATED, production_id),
+        (GENERATED, SHEET, production_id),
     )
 
 

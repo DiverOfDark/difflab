@@ -824,3 +824,132 @@ Revise YOUR PREVIOUS VERSION: change what the feedback asks, and whatever that c
 
 LENGTH: the video lasts at most {total:g} seconds, in shots of {shortest:g} to {longest:g} seconds each. "beats" has {least} to {most} entries, each at most {beat_words} words.
 PICTURES: {pictures}. Picture 1 is where the video opens: the planner takes the place from it unless the story names another."""
+
+# --- manga: pages read into panels, panels redrawn as anime keyframes, shots filled ---------------------
+# MANGA_, not DIRECTOR_: the manga stages key themselves by these words, and a change to them re-plans no
+# production made from a story.
+MANGA_CONFIRM_SYSTEM = """\
+You check where the panels of a comic page are. You see the page with numbered boxes drawn over it in the order a reader reads them. A panel is one drawn picture with its own frame or edge; lettering in the gutter between panels is not a panel. Say where every panel really is, as JSON.
+
+RULES
+- "panels": every panel of the page in reading order ({order}), each as "box": [left, top, right, bottom] on a 0-1000 scale of the page's width and height.
+- Keep a numbered box exactly as drawn when it holds exactly one panel. Split a box that holds two or more panels; join boxes that cut one panel apart; drop a box around lettering alone.
+- A picture that bleeds off the page edge reaches that edge. Panels may overlap only where the art itself overlaps.
+
+Answer only JSON, in this shape:
+{{"panels":[{{"box":[0,0,1000,480]}},{{"box":[0,500,1000,1000]}}]}}"""
+MANGA_CONFIRM_USER = "There are {count} numbered boxes. Where are the panels?"
+MANGA_BAND_SYSTEM = """\
+You see one band cut from a vertical comic strip. It may hold a drawn picture, lettering (speech balloons, captions, sound effects) or both. Say where the drawn picture is, without the blank background and the balloons around it, as JSON.
+
+Answer only JSON, in this shape:
+{"picture":true,"box":[0,120,1000,880]}  with "box" as [left, top, right, bottom] on a 0-1000 scale of the band, or {"picture":false,"box":[]} when the band holds lettering alone."""
+MANGA_BAND_USER = "Where is the drawn picture in this band?"
+
+MANGA_READ_SYSTEM = """\
+You read one panel of an English comic, word for word, for the people adapting it into an anime. Picture 1 is the panel. {context}You write down what is lettered in it and what happens in it, as JSON.
+
+RULES
+- "balloons": every speech balloon, thought bubble, shouted line and narration box of Picture 1, in the order they are read ({order}). "kind" is "speech", "thought", "shout" (a jagged or burst balloon) or "narration" (a caption box, no speaker). "text" is exactly what is lettered, every word in its order, nothing added, dropped or reworded; write ordinary sentence case even when the lettering is all capitals. A balloon that holds only dots or punctuation ("...", "!?") is still a balloon, written as lettered.
+- "speaker": who says or thinks the balloon, by name; "" for narration. A NAME is the character's own name when the comic gives it (in a balloon, a caption, or the KNOWN NAMES below), else two to four plain lowercase words for what they are ("bald man", "crying girl", "horned monster"). Use the same name for the same character every time{known_rule}.
+- "sfx": every sound effect lettered in the art, as written (translated notes in the gutter count); [] when there is none.
+- "who": the NAME of every character drawn in Picture 1, plus every speaker of a speech, thought or shout balloon even when only their voice is in it.
+- "action": one sentence of at most 30 words: what visibly happens in Picture 1, naming the characters by NAME.
+- "into_next": {into_next_rule}
+- "why": one short phrase for "into_next".
+
+Answer only JSON, in this shape:
+{{"balloons":[{{"kind":"speech","speaker":"bald man","text":"..."}}],"sfx":["..."],"who":["bald man"],"action":"...","into_next":"cut","why":"..."}}"""
+MANGA_READ_CONTEXT_PAGE = "Picture 2 is the whole page it is on, for context only. "
+MANGA_READ_CONTEXT_NEXT = "Picture {picture} is the panel read after it. "
+MANGA_READ_LAND = '"land" when the panel after it (Picture {picture}) continues the same action in roughly the same framing, so one movement can carry Picture 1 into it; "cut" when it is a new angle, a reaction close-up, another place or a jump in time.'
+MANGA_READ_LAST = '"cut": nothing is read after this panel.'
+MANGA_READ_KNOWN = ", and a name from KNOWN NAMES whenever it is that character"
+MANGA_READ_USER = """\
+{known}Read Picture 1."""
+MANGA_READ_NAMES = "KNOWN NAMES, from the panels read before this one: {names}.\n\n"
+
+MANGA_CAST_SYSTEM = """\
+You are the casting director of an anime adapted from a comic. A reader went through the comic panel by panel and named every character it saw, but it may have given one character several names (its own name in one panel, "bald man" in another). You decide who the characters are, as JSON.
+
+RULES
+- "characters": one entry per character. "id": one lowercase English word or two joined by "_", the character's own name when the comic gives one ("saitama", "vaccine_man"), else what it is ("crying_girl"). "kind": "person" or "animal". "names": every NAME of the list that means this character.
+- Every NAME of the list is in exactly one character's "names". Two NAMES are one character only when the panels make it clear: the same look, the same voice, or the comic naming them.
+
+Answer only JSON, in this shape:
+{"characters":[{"id":"saitama","kind":"person","names":["saitama","bald man"]}]}"""
+MANGA_CAST_USER = """\
+NAMES: {names}
+
+THE PANELS, in order (who is drawn | what happens | who speaks):
+{panels}"""
+
+# A panel cleaned of its lettering before anything is drawn from it. The editor runs at cfg 1, so what it is
+# told to keep is said positively.
+COMPOSE_MANGA_CLEAN = """\
+Remove every speech balloon, thought bubble, caption box and every piece of lettering and sound-effect text from this comic panel, and fill each place with what was behind it, continuing the drawing, its lines, tones and background. Keep every character, face, pose, line and the framing exactly as they are."""
+MANGA_CLEAN_SYSTEM = """\
+You check a comic panel that an editor cleaned of its lettering. Picture 1 is the panel as drawn; Picture 2 is the cleaned one. Answer as JSON.
+
+- "lettering": true when Picture 2 still shows any balloon, caption box, letters or sound-effect text.
+- "changed": true when a character in Picture 2 differs from Picture 1: a different face, pose, body or clothes, or a character added or gone.
+- "why": at most 15 words.
+
+Answer only JSON, in this shape:
+{"lettering":false,"changed":false,"why":"..."}"""
+MANGA_CLEAN_USER = "Is Picture 2 clean of lettering, with the characters unchanged?"
+
+# One colour sheet per character, drawn once over its best crop and approved before any keyframe takes it.
+COMPOSE_MANGA_SHEET = """\
+Redraw this {noun} as a full-colour anime character design sheet: one front view of the whole {noun}, standing, in the middle of the frame on a plain white background, in clean anime line art with flat cel shading. Keep the same face, hair style, build and clothes design: {traits}.{colours} Choose one clear colour for every part and give no text."""
+COMPOSE_MANGA_SHEET_COLOURS = " Colours: {colours}."
+COMPOSE_MANGA_SHEET_KEEP = " Keep every colour exactly as this picture shows it."
+# The panel redrawn as the shot's first frame, each character from its approved sheet.
+COMPOSE_MANGA_ANIME = """\
+Redraw this comic panel as one frame of a full-colour anime: clean anime line art with flat cel shading and painted backgrounds. Keep its composition, the camera angle, every pose and the line work of the panel exactly; continue the scene out over any blurred or blank band at the edges. {cast}{style}"""
+COMPOSE_MANGA_CAST = "{who} looks exactly as in {pictures}, in the same colours."
+COMPOSE_MANGA_STYLE = " Picture {picture} is only a reference for the look: match its colour palette, line weight and shading, and take nothing else from it."
+COMPOSE_MANGA_COLOUR = " {words}"
+
+MANGA_STYLE = (
+    "The target video is a full-colour 2D anime in clean line art with flat cel shading and painted backgrounds, "
+    "and colors keep the look of {room} throughout."
+)
+
+MANGA_FILL_SYSTEM = """\
+You direct an anime adapted panel by panel from a comic. Every panel is already one clip with its first frame drawn from the panel, its length and its cast fixed. MiniMax H3 animates each clip from its first frame. You plan what moves in every clip, as JSON. You do not add, drop, merge or reorder clips, and you do not write dialogue: the comic's words are given and the program puts them in.
+
+WHAT YOU RECEIVE
+- CAST: every member with an id, what it is and its visible traits.
+- PLACES: the places the comic happens in, as members of kind "environment".
+- CLIPS: per clip its length, the panel's action, who is drawn in it, its spoken balloons numbered from 1, and whether the clip ENDS ON THE NEXT PANEL ("lands") or the next clip cuts.
+
+RULES
+1. Each clip shows the panel's action coming to life: the motion the panel freezes, carried on for the clip's length. A clip that lands moves from its panel toward the next panel's picture, so its last frame is exactly the next panel; its "closing" describes that next panel's first frame, naming every character of it as {{id}}, where each is in the frame by its sides, the pose and which way each face points. A clip followed by a cut ends with its action complete and everyone still; its "closing" describes that last frame the same way.
+2. "beats": 1 to 4 beats covering the clip exactly: the first starts at 0, each next one starts where the one before ended, and the last ends at the clip's "seconds"; seconds with at most two decimals, each beat at least {beat_min:g} second unless the clip is shorter. "phase" is one of carry, build, primary, reaction, settle. "who" lists the ids that move in the beat, only from the clip's cast. "action" is one or two plain sentences, at most 30 words, of visible motion.
+3. "dialogue": one entry per spoken balloon of the clip, in the order given, each {{"balloon": its number, "start": seconds}}; a line lasts about {words_per_second:g} words a second and ends at least {dialogue_tail:g} seconds before the clip ends. Give "voice" (how that member sounds, the same words every time: "a flat, calm young male voice") on the first line a member speaks in the whole plan.
+4. "mouths": every way a mouth opens in the clip, as short plain phrases with possessives and no braces ("his flat reply", "the shout of the monster"); each spoken line's speaker is listed, and a beat's action has that member speak ("{{saitama}} answers flatly"). A mouth that only listens stays closed.
+5. "place": the id of the one place the clip happens in. "scene": in clip 1 and in every clip that follows a cut, the scene heading: INT or EXT, the place in two to four plain words, " · ", the time of day ("EXT ruined city · day"); "" in a clip that continues. "opening": in clip 1 and in every clip that follows a cut, one snapshot sentence of the clip's first frame, the panel, written like a closing; "" otherwise.
+6. "camera": {{"move": one of the CAMERA MOVES, "toward": a cast id}}: the panel's framing decides it ("hold" for a still panel, "push_in" toward a face in close-up).
+7. Write only what a camera can see: no feelings by name, no quality words, never mention panels, pages, clips or the comic in any text. Name members as {{id}} in "action", "closing" and "opening", never with a possessive after the braces.
+
+FIELDS per clip: "seconds" (as given), "purpose" (one sentence, at most 25 words), "place", "scene", "opening", "beats", "camera", "mouths", "closing" (at most {closing_words} words), "irreversible_change" (at most 20 words, or "none"), "ambience" (one noun phrase of the place's sound), "dialogue".
+
+Answer only JSON, in this shape (write every clip):
+{{"ambience":"...","clips":[{{"seconds":3.04,"purpose":"...","place":"city","scene":"EXT ruined city · day","opening":"...","beats":[{{"start":0,"end":3.04,"phase":"primary","who":["saitama"],"action":"..."}}],"camera":{{"move":"hold","toward":"saitama"}},"mouths":[],"closing":"...","irreversible_change":"none","ambience":"","dialogue":[]}}]}}"""
+MANGA_FILL_USER = """\
+CAST (id | kind | what it is | visible traits):
+{cast}
+
+PLACES: {places}
+
+CLIPS:
+{clips}
+
+CAMERA MOVES:
+{moves}"""
+MANGA_FILL_CLIP = """\
+Clip {number}: {seconds:g} seconds; {joins}
+  panel: {action}
+  cast: {cast}
+  spoken balloons: {balloons}"""

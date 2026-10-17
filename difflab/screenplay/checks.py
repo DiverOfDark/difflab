@@ -373,7 +373,11 @@ def cross_chunk_rules(take: compose.Take, prompts: list[str]) -> list[Problem]:
         room = cards[compose.place(take, chunk)]
         lit = f", lit by {compose.join(room.lights)}." if room.lights else "."
         heard = compose.ambience(take, index).strip().rstrip(".")[1:]
-        fixed = [words.STYLE.split("{room}")[0], f"with {room.short()}{lit}", heard]
+        fixed = [
+            (words.MANGA_STYLE if take.drawn else words.STYLE).split("{room}")[0],
+            f"with {room.short()}{lit}",
+            heard,
+        ]
         wanted = fixed + [
             f"the {cards[m].noun} with {cards[m].short()}" for m in chunk.cast if cards[m].kind in compose.LIVING
         ]

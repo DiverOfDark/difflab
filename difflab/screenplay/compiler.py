@@ -188,6 +188,7 @@ class Take:
     scene_rows: int = 0  # reference rows the opening still costs, at the canvas size
     voices: dict[str, str] = dataclasses.field(default_factory=dict)  # member -> how it sounds, from the bible
     look: str = ""  # the style members' words: the grade and lens every shot keeps
+    drawn: bool = False  # a comic made into anime: its style is the anime's, its references the colour sheets
 
 
 @dataclass(frozen=True)
@@ -728,7 +729,7 @@ def compile_chunk(take: Take, index: int) -> Compiled:
         for m in cast
         if m != env and subject[m] not in named
     ]
-    style = words.STYLE.format(room=subject[env])
+    style = (words.MANGA_STYLE if take.drawn else words.STYLE).format(room=subject[env])
     if take.look:
         style = f"{style} {words.STYLE_LOOK.format(look=take.look.rstrip('.'))}"
 
@@ -980,6 +981,14 @@ def take_of(connection: sqlite3.Connection, production: store.Production, chapte
     tails, landed = joins(keyframes, shots, tail)
     first = keyframes[0].provided if keyframes else None
     resolved = looks.resolve(connection, production)
+    drawn = production.story_kind == "manga"
+    if drawn:  # its crops are of the comic's own drawing, in black and white: only the colour sheets are handed over
+        references = [r for r in references if r.role == store.SHEET]
+    kinds = {member.id: member.kind for member in members}
+    sheet_refs = {
+        name: dataclasses.replace(ref, role=DRAWN_ROLE[kinds[r.member_id]], photo=-1)
+        for (name, ref), r in zip(refs_of(references, members, []).items(), pictured(references), strict=True)
+    }
     chunks = [
         dataclasses.replace(chunk_of(shot.plan), seconds=shot.seconds, states=states_of(resolved, shot.id))
         for shot in shots
@@ -992,9 +1001,15 @@ def take_of(connection: sqlite3.Connection, production: store.Production, chapte
     return Take(
         title=production.title,
         members=tuple(member.slug for member in members),
-        cards={member.slug: card_of(member) for member in members},
+        # A comic's member with no colour sheet is said from its words: its drawing is never handed over.
+        cards={
+            member.slug: dataclasses.replace(card_of(member), photographed=False)
+            if drawn and member.slug not in {ref.member for ref in sheet_refs.values()}
+            else card_of(member)
+            for member in members
+        },
         refs={
-            **refs_of(references, members, [str(p) for p in manifest.get("photos", [])]),
+            **(sheet_refs if drawn else refs_of(references, members, [str(p) for p in manifest.get("photos", [])])),
             **look_refs(resolved, members),
         },
         opening=str(manifest.get("opening_arrangement", "")),
@@ -1012,6 +1027,7 @@ def take_of(connection: sqlite3.Connection, production: store.Production, chapte
         scene_rows=(int(canvas.get("width", 0)) // 32) * (int(canvas.get("height", 0)) // 32),
         voices={member.slug: said for member in members if (said := voice_of(member))},
         look=look_of(connection, production.id),
+        drawn=drawn,
     )
 
 

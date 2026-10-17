@@ -18,7 +18,7 @@ from typing import Any
 from difflab import store
 from difflab.core.settings import Continuity, JudgeSettings
 from difflab.models.minimax_h3.settings import VideoSettings
-from difflab.screenplay import assembling, compiler, looks, settings, words
+from difflab.screenplay import assembling, compiler, looks, manga, settings, words
 from difflab.screenplay import config as knobs
 from difflab.screenplay import production as productions
 
@@ -66,6 +66,9 @@ def check(
         if keyframe.source == store.PROVIDED:
             if not keyframe.present:
                 problems.append(f"{name}'s keyframe is missing from disk: {keyframe.provided}")
+        elif keyframe.source == store.COMPOSED and manga.is_manga(production):
+            assert production is not None
+            problems += [f"{name}: {why}" for why in manga_unready(connection, production, shot)]
         elif keyframe.source == store.COMPOSED and production is not None:
             if base(connection, production, *_opening(connection, production, shots, shot.position)) is None:
                 problems.append(
@@ -223,11 +226,33 @@ def _queue_chapter(connection: Any, chapter_id: int, asked_by: str, keyframes_on
     for shot, keyframe in zip(shots, keyframes, strict=True):
         cast = [str(m) for m in shot.plan.get("cast", [])]
         judged = bool(cast or shot.action)
-        arrangement, where = _opening(connection, production, shots, shot.position)
+        made_from = ("", None) if manga.is_manga(production) else _opening(connection, production, shots, shot.position)
+        arrangement, where = made_from
         before, _ = _looks(resolved, shot)
         worn = _worn(resolved, shot, end=False)
         forms = _forms(resolved, shot, end=False)
-        if keyframe.source == store.COMPOSED and resolved.waiting(shot.id):
+        if keyframe.source == store.COMPOSED and manga.is_manga(production):
+            seed = keyframe.seed if keyframe.seed is not None else int(video["seed"]) + 1000 + shot.position
+            drawn = manga_keyframe(connection, production, shot)
+            if drawn is None:
+                openings.append(None)  # only a keyframes run gets here: `check` refuses a render
+                continue
+            composed = store.add_job(
+                connection, run_id, "compose_keyframe",
+                {**drawn, "production": production.id, "shot": shot.id, "note": keyframe.note,
+                 "size": _canvas(production), "seed": seed},
+                label=f"shot {shot.position + 1}: draw the panel as anime", settings=editor.data(),
+                for_kind="keyframe", for_id=keyframe.id,
+            )  # fmt: skip
+            store.set_made(connection, "keyframe", keyframe.id, store.QUEUED, current_job=composed.id, seed=seed)
+            framed.append((
+                {"production": production.id, "kind": "keyframe", "path": _output(composed.id, "frame"),
+                 "purpose": f"the comic panel redrawn as one frame of a colour anime ({shot.action})",
+                 "arrangement": str(drawn["action"]), "cast": cast, "pictures": drawn["pictures"]},
+                f"shot {shot.position + 1}: judge the keyframe", keyframe.id,
+            ))  # fmt: skip
+            openings.append(_output(composed.id, "frame"))
+        elif keyframe.source == store.COMPOSED and resolved.waiting(shot.id):
             openings.append(None)  # only a keyframes run gets here: `check` refuses a render
         elif keyframe.source == store.COMPOSED:
             seed = keyframe.seed if keyframe.seed is not None else int(video["seed"]) + 1000 + shot.position
@@ -299,6 +324,19 @@ def _queue_chapter(connection: Any, chapter_id: int, asked_by: str, keyframes_on
             opening = openings[shot.position]
         else:
             opening = _output(previous, "frame")
+        comic = shot.plan.get("motion_comic")
+        if comic and opening is not None:
+            job = store.add_job(
+                connection, run_id, "motion_comic",
+                {"opening": opening, "seconds": shot.seconds, "move": shot.plan.get("camera_move") or "push_in",
+                 "audio_from": comic.get("audio_from") if isinstance(comic, dict) else None,
+                 "position": shot.position},
+                label=f"shot {shot.position + 1}: a motion-comic shot", for_kind="clip", for_id=clip.id,
+            )  # fmt: skip
+            store.set_made(connection, "clip", clip.id, store.QUEUED, current_job=job.id)
+            previous = job.id
+            clip_jobs.append(job.id)
+            continue
         carry = _output(previous, "latents") if carried[shot.position] else None
         tail = _output(previous, "tail") if tails[shot.position] and carry is None else None
         inputs = {
@@ -427,6 +465,10 @@ def pictures(
     # A look's picture was drawn with the base face handed over, so it carries the face: one picture a member.
     members = {m.slug: m for m in store.members_of(connection, production.id)}
     out: dict[str, str] = {}
+    if manga.is_manga(production):
+        held = sheets(connection, production)
+        named = dict.fromkeys(re.findall(r"\{([a-z_]+)\}", arrangement))
+        return {slug: str(held[slug].artifact) for slug in named if slug in held and slug != keep}
     for slug in dict.fromkeys(re.findall(r"\{([a-z_]+)\}", arrangement)):
         member = members.get(slug)
         if member is None or member.kind not in ("person", "animal") or slug == keep or len(out) == PICTURES:
@@ -449,6 +491,53 @@ def styled(connection: Any, production: store.Production, handed: int) -> dict[s
     styles = [m for m in store.members_of(connection, production.id, style=True) if m.kind == "style"]
     found = next((r.artifact for m in styles for r in store.refs_of(connection, m.id) if r.artifact), None)
     return {**out, "style": found} if found and handed < PICTURES else out
+
+
+def sheets(connection: Any, production: store.Production) -> dict[str, store.Reference]:
+    """Each character's colour sheet, by slug."""
+    members = {m.id: m.slug for m in store.members_of(connection, production.id)}
+    return {
+        members[r.member_id]: r
+        for r in store.refs_of_production(connection, production.id)
+        if r.role == manga.SHEET and r.artifact and r.member_id in members
+    }
+
+
+def manga_cast(connection: Any, production: store.Production, shot: store.Shot) -> list[str]:
+    """The people and animals drawn in a panel, as the bible knows them."""
+    living = {m.slug for m in store.members_of(connection, production.id) if m.kind in compiler.LIVING}
+    drawn = shot.plan.get("panel", {}).get("script", {}).get("who", [])
+    return [m for m in dict.fromkeys(str(w) for w in drawn) if m in living]
+
+
+def manga_unready(connection: Any, production: store.Production, shot: store.Shot) -> list[str]:
+    """What stops a panel being drawn as anime: its cleaned panel, and an approved colour sheet per character."""
+    panel = shot.plan.get("panel") or {}
+    if not panel.get("clean"):
+        return ["its panel is not cleaned yet: plan the chapter"]
+    held = sheets(connection, production)
+    out = []
+    for slug in manga_cast(connection, production, shot):
+        sheet = held.get(slug)
+        if sheet is None:
+            out.append(f"{slug} has no colour sheet yet")
+        elif sheet.state != store.APPROVED:
+            out.append(f"{slug}'s colour sheet is not approved: approve it on the Bible stage")
+    return out
+
+
+def manga_keyframe(connection: Any, production: store.Production, shot: store.Shot) -> dict[str, Any] | None:
+    """A compose job's inputs for a panel redrawn as anime, or None while it cannot be."""
+    if manga_unready(connection, production, shot):
+        return None
+    panel = shot.plan["panel"]
+    held = sheets(connection, production)
+    cast = manga_cast(connection, production, shot)
+    pictures = {slug: held[slug].artifact for slug in cast[:PICTURES] if held[slug].artifact}
+    return {
+        "manga": True, "base": panel["clean"], "action": shot.action or panel.get("script", {}).get("action", ""),
+        "pictures": pictures, **styled(connection, production, len(pictures)),
+    }  # fmt: skip
 
 
 def _looks(resolved: looks.Resolved, shot: store.Shot) -> tuple[dict[str, str], dict[str, str]]:
@@ -527,6 +616,8 @@ def plan_production(
         production = store.production(connection, production_id)
         if production is None:
             raise LookupError(f"no production {production_id}")
+        if manga.is_manga(production):
+            return manga.plan_production(connection, production, chapter_position, asked_by, fresh, shots)
         chapters = store.chapters_of(connection, production_id)
         photos = [str(p) for p in production.manifest.get("photos", [])]
         video, _ = settings.effective("render_chunk", production_id)
@@ -554,6 +645,7 @@ def plan_production(
 
 # The tools of each step the ingesting page shows, in the order it shows them; the rest plan shots.
 STEPS = {
+    "pages": ("read_page", "cast_panels", "lay_panels", "clean_panel", "judge_clean", "manga_photos"),
     "describe": ("guess_reference", "same_person", "ground", "cut_crops", "cards"),
     "read": ("survey",),
     "reconcile": ("tidy",),

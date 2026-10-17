@@ -137,3 +137,11 @@ IDEA_PLACE_WORDS = (15, 140)  # accepted; the prompt asks 35 to 80
 # Renders of one clip, the first included, while the judge keeps it below the gate; each is ~436 s on the
 # 3090 (`timings.FALLBACK`), and the best take is kept when the last is spent.
 CLIP_TAKES = 3
+
+# Manga productions (`screenplay/manga.py`). MANGA_, not DIRECTOR_: the manga stages key by these themselves.
+# The shortest shot a silent panel gets. 73 frames on H3's grid: the PRD's 2-3 s estimate, until a spike
+# measures the shortest landed shot that still reads as motion rather than a morph.
+MANGA_SHOT_MIN = 3.04
+MANGA_READ_PIXELS = 1024 * 1024  # the panel being read: lettering needs the detail
+MANGA_TOKENS = {"read": 2048, "confirm": 1024, "cast": 2048, "fill": 12288}
+MANGA_SURVEY_PANELS = 12  # cleaned panels the survey sees at once: the first, then one per character
