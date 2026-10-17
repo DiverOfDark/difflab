@@ -385,6 +385,18 @@ def newest_events(connection: sqlite3.Connection, run_ids: list[str]) -> dict[st
     return {str(row[0]): float(row[1]) for row in rows if row[1] is not None}
 
 
+def newest_pictures(connection: sqlite3.Connection, run_ids: list[str]) -> dict[str, str]:
+    """Each run's newest picture artifact, relative to output/."""
+    if not run_ids:
+        return {}
+    rows = connection.execute(
+        "SELECT value, (SELECT path FROM artifacts WHERE run_id = value AND lower(path) GLOB '*.[pjw][npe][gpb]*' "
+        "ORDER BY created_at DESC, id DESC LIMIT 1) FROM json_each(?)",
+        (json.dumps(run_ids),),
+    ).fetchall()
+    return {str(row[0]): str(row[1]) for row in rows if row[1]}
+
+
 def named_events(connection: sqlite3.Connection, run_ids: list[str]) -> list[Event]:
     """The `plan` and `panel` events, which are the two kinds that carry a title."""
     if not run_ids:

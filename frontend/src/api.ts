@@ -76,6 +76,8 @@ export interface RunSummary {
   last: number | null
   jobs_done: number
   jobs_total: number
+  /** Its newest picture, or the photo a run that made none was given; relative to output/ or absolute. */
+  preview: string | null
 }
 
 export interface RunTask {

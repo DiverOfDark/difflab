@@ -233,9 +233,10 @@ def delete_run(run_id: str) -> Deleted:
             connection.execute("DELETE FROM runs WHERE id = ?", (run_id,))
     for name in doomed:
         path = store.under_output(name)
-        if path.is_file():
-            deleted.files += 1
-            deleted.bytes += path.stat().st_size
-            path.unlink()
+        for file in (path, path.with_suffix(f".thumb{path.suffix}")):
+            if file.is_file():
+                deleted.files += 1
+                deleted.bytes += file.stat().st_size
+                file.unlink()
     shutil.rmtree(config.RUNS_DIR / run_id, ignore_errors=True)
     return deleted

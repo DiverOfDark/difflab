@@ -27,12 +27,22 @@ def runs() -> list[dict[str, Any]]:
         listed = store.runs(connection)
         ids = [record.id for record in listed]
         heard = store.newest_events(connection, ids)
+        pictured = store.newest_pictures(connection, ids)
         titled = _named(store.named_events(connection, ids))
         counts = store.job_counts(connection, ids)
     return [
-        _summary(record, heard.get(record.id), titled.get(record.id, ("", 0)), counts.get(record.id, (0, 0)))
+        {
+            **_summary(record, heard.get(record.id), titled.get(record.id, ("", 0)), counts.get(record.id, (0, 0))),
+            "preview": pictured.get(record.id) or _given(record),
+        }
         for record in listed
     ]
+
+
+def _given(record: store.Run) -> str | None:
+    """The photo a run that made no picture was handed, for the list to show what it was about."""
+    photos = (record.data() or {}).get("photos") or []
+    return str(photos[0]) if photos else None
 
 
 def one(run_id: str) -> dict[str, Any] | None:
