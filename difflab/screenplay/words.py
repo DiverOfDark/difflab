@@ -720,6 +720,9 @@ Keep this room exactly as it is: its walls, furniture, lighting and colour. Chan
 # (2026-10-04) came back in a bright costume-green robe with gold medallions over his dark embroidered one,
 # and a sect courtyard filled with monks no plan had asked for.
 COMPOSE_LIKENESS = "Everyone taken from a picture looks exactly as in that picture: the same face, hair and build, and the same clothes in every colour, pattern and fold, except what is said to be different now."
+# A full moon handed over under COMPOSE_LIKENESS alone came back as a woman in a fur suit, and a moon
+# over the sea with a woman in a floral dress before it (2026-10-17): the face and clothes asked for a person.
+COMPOSE_LIKENESS_THING = "Each thing taken from a picture looks exactly as in that picture: the same shape, colours and surface; it is no person and wears nothing."
 COMPOSE_ALONE = "Nobody else is in the frame: no other people and no other animals."
 COMPOSE_NOTE = "Also: {note}."
 COMPOSE_STYLE = "Picture {picture} is only a reference for the look: match its colour grade, light and lens, and take nothing else from it."

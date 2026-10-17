@@ -49,7 +49,13 @@ def instruction(
         out = words.COMPOSE_KEEP_INSTRUCTION.format(noun=cards[keep].noun, scene=scene)
     else:
         out = words.COMPOSE_INSTRUCTION.format(scene=scene)
-    parts = [out, *([words.COMPOSE_LIKENESS] if pictured else []), words.COMPOSE_ALONE]
+    kinds = {cards[slug].kind for slug in pictured if slug in cards}
+    parts = [
+        out,
+        *([words.COMPOSE_LIKENESS] if kinds & {"person", "animal"} else []),
+        *([words.COMPOSE_LIKENESS_THING] if kinds - {"person", "animal"} else []),
+        words.COMPOSE_ALONE,
+    ]
     if styled:
         parts.append(words.COMPOSE_STYLE.format(picture=len(pictured) + 2))
     if look.strip():
