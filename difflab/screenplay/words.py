@@ -538,7 +538,8 @@ WHO IS IN IT
 
 Answer JSON: {{"score": 0.0-1.0, "cast": [{{"id": "<id>", "present": true|false, "likeness": 0.0-1.0, "outfit": true|false}}, ...], "strangers": ["a few words for each person or animal not listed"], "issues": ["..."], "fixes": ["..."], "notes": "one sentence"}}. One "cast" entry per listed member; "outfit" is false only when a garment is a different garment or a different colour from the one in their photo (a bright robe with gold medallions for a dark embroidered one) and WHO IS IN IT does not say it has changed; a missing accessory, a detail of embroidery or the way the hair is worn is an issue, not a changed outfit. {fixes}"""
 JUDGE_FORM = (
-    "; it is the {was} of its reference photo turned into this, so only what these words name comes from that photo"
+    "; it is the {was} of its reference photo turned into this, so only what these words name comes from that photo,"
+    " and no {was} is left anywhere: a {was} still shown beside, behind or under it fails the picture"
 )
 JUDGE_FIXES_SCENE = '"fixes" are the issues a painter is told, about who is there, where each stands, what each holds and does; never about clothes, hair or a face, which the painter copies from the photos.'
 # A look or a drawn reference is redrawn alone from its own words, so there the clothes, hair and face are
@@ -733,8 +734,10 @@ COMPOSE_LOOK_KEEP = {
     "object": "the same size, colours and material, and its shape wherever the change does not reach",
     "environment": "the same walls, ground, furniture, colours and light",
 }
+# Measured 2026-10-17 on a cat that becomes the moon: "turn the cat into the moon, keeping the framing and
+# backdrop" left the cat whole on its windowsill with a moon laid over it, and the judge passed it at 0.9.
 COMPOSE_FORM = """\
-Turn the {was} in this picture into the {form}, with {look}, keeping the framing, backdrop and light. An unretouched real photograph, not a render or an illustration."""
+Replace the {was} in this picture with the {form}, with {look}. No {was} is left anywhere in the picture: the {form} is all that remains of it, whole and centred, alone against a plain backdrop. An unretouched real photograph, not a render or an illustration."""
 COMPOSE_LOOK_FACE = "The face is exactly the face in Picture 2: the same features, skin and hair."
 COMPOSE_FIXES = "Also fix this: {fixes}."
 COMPOSE_LOOK_GARMENT = (
