@@ -181,6 +181,13 @@ class VlmSettings(Settings):
 
 
 @dataclass(frozen=True)
+class ChatSettings(VlmSettings):
+    """The VLM in the chat: a reply runs longer than a written prompt."""
+
+    max_new_tokens: int = setting(8192, "max new tokens", "a cap, not a target", low=1, advanced=True)
+
+
+@dataclass(frozen=True)
 class DirectorSettings(Settings):
     """The VLM the director asks with. Its sampling stays the code's, tuned with its prompts (`tools/direct`)."""
 

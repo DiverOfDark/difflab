@@ -8,6 +8,7 @@ const route = useRoute()
 const SCREENS = [
   { to: '/quick', label: 'Take', here: (p: string) => p.startsWith('/quick') },
   { to: '/productions', label: 'Production', here: (p: string) => p.startsWith('/productions') },
+  { to: '/chat', label: 'Chat', here: (p: string) => p.startsWith('/chat') },
   { to: '/runs', label: 'Runs', here: (p: string) => p.startsWith('/runs') },
   { to: '/settings', label: 'Settings', here: (p: string) => p.startsWith('/settings') },
 ]

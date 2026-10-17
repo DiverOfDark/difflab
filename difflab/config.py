@@ -53,6 +53,13 @@ VLM_EMBEDDING_CACHE_BYTES = 512 * 1024**2
 VLM_DISK_CACHE_DIR = OUTPUT_DIR / "kvcache"
 VLM_DISK_CACHE_BYTES = 40 * 1024**3
 
+# What a chat hands the VLM of its attachments. A photo at 1 MP is ~1k vision tokens; a video is a frame
+# every CHAT_VIDEO_EVERY seconds, at most CHAT_VIDEO_FRAMES of them at ~400 tokens each.
+CHAT_PHOTO_PIXELS = 1024 * 1024
+CHAT_FRAME_PIXELS = 400_000
+CHAT_VIDEO_EVERY = 1.0
+CHAT_VIDEO_FRAMES = 24
+
 # ComfyUI Image Saver Simple.
 OUT_DIR = OUTPUT_DIR / "images"
 VIDEO_DIR = OUTPUT_DIR / "videos"

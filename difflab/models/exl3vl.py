@@ -5,7 +5,7 @@ import hashlib
 from collections import OrderedDict
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import torch
 from exllamav3 import Cache, Config, Generator, Job, LLGuidanceFilter, Model, Tokenizer
@@ -33,6 +33,13 @@ ANY_JSON = {"type": ["object", "array"], "x-guidance": {"whitespace_pattern": " 
 # Hashes of every full page any prompt has had since the server started, reloads included: how much the
 # disk cache could restore at most, against what it did.
 _PAGES_SEEN: set[bytes] = set()
+
+
+class Turn(NamedTuple):
+    role: str  # "user" or "assistant"
+    said: Sequence[str | Image.Image]
+    # An answer's own thinking, given back as it was written so the prompt still matches the cached pages.
+    thought: str = ""
 
 
 class Exl3VL:
@@ -112,21 +119,62 @@ class Exl3VL:
         """Several images are announced as "Picture 1: ", "Picture 2: " in order; temperature=0 is greedy.
         `schema` narrows `as_json` from any JSON to that shape. The first `steady` images open other prompts
         too, and are kept on disk with the system prompt before them."""
-        parts = self.load()
         shown = [images] if isinstance(images, Image.Image) else list(images or ())
+        return self.chat(
+            [Turn("user", [*shown, question])],
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
+            seed=seed,
+            system=system,
+            title=title,
+            echo=echo,
+            as_json=as_json,
+            schema=schema,
+            steady=steady,
+        )
+
+    def chat(
+        self,
+        turns: Sequence[Turn],
+        *,
+        max_new_tokens: int,
+        temperature: float,
+        top_p: float,
+        top_k: int,
+        seed: int,
+        system: str | None = None,
+        title: str = "Qwen3.8",
+        echo: bool = True,
+        as_json: bool = False,
+        schema: dict[str, Any] | None = None,
+        steady: int = 0,
+        heard: Callable[[str, str], None] | None = None,
+        numbered: bool | None = None,
+    ) -> str:
+        """`ask` over a whole conversation; `heard` is handed the thought and the answer so far as they arrive.
+        `numbered` announces pictures even when there is one, so a conversation's prompt does not change under
+        the cache once a second arrives; unset, only several are."""
+        parts = self.load()
+        shown = [part for turn in turns for part in turn.said if isinstance(part, Image.Image)]
         tokenizer = parts["tokenizer"]
         seen = [hashlib.sha256(image.tobytes()).hexdigest() + f"{image.mode}{image.size}" for image in shown]
         embeddings = [self._embedding(parts, image, name) for image, name in zip(shown, seen, strict=True)]
         messages: list[dict[str, Any]] = [{"role": "system", "content": system}] if system else []
-        content = [*({"type": "image"} for _ in shown), {"type": "text", "text": question}]
-        messages.append({"role": "user", "content": content})
+        for turn in turns:
+            content = [
+                {"type": "image"} if isinstance(part, Image.Image) else {"type": "text", "text": part}
+                for part in turn.said
+            ]
+            messages.append({"role": turn.role, "content": content, "reasoning_content": turn.thought})
         prompt = parts["template"].apply_chat_template(
             messages,
             tokenize=False,
             add_generation_prompt=True,
             enable_thinking=True,
             reasoning_effort=config.VLM_REASONING_EFFORT,
-            add_vision_id=len(shown) > 1,
+            add_vision_id=len(shown) > 1 if numbered is None else numbered,
         )
         for embedding in embeddings:
             prompt = prompt.replace(IMAGE_SLOT, embedding.text_alias, 1)
@@ -196,6 +244,8 @@ class Exl3VL:
                 parts["disk"].keep(chain)
 
         ids, ends = tokenizer.encode(prompt, encode_special_tokens=True, embeddings=embeddings), []
+        if ids.shape[-1] >= config.VLM_CONTEXT_TOKENS:
+            raise ValueError(f"the prompt is {ids.shape[-1]:,} tokens and the VLM holds {config.VLM_CONTEXT_TOKENS:,}")
         if system:
             ends.append(
                 tokenizer.encode(prompt[: prompt.index("<|im_start|>user")], encode_special_tokens=True).shape[-1]
@@ -205,11 +255,22 @@ class Exl3VL:
 
         with ui.live_answer(title, echo) as show:
             keep(ids, ends)
-            thought = run(prompt, config.VLM_THINK_TOKENS, [*parts["stops"], parts["thought"]], None, show)
+
+            def thinking(said: str) -> None:
+                show(said)
+                if heard:
+                    heard(said, "")
+
+            def answering(said: str) -> None:
+                show(f"{thought}\n\n{said}")
+                if heard:
+                    heard(thought, said)
+
+            thought = run(prompt, config.VLM_THINK_TOKENS, [*parts["stops"], parts["thought"]], None, thinking)
             # Closed here whether the model closed it or the budget ran out, so the answer always has its own cap.
             prompt += f"{thought.strip()}\n</think>\n\n"
             shape = [LLGuidanceFilter(tokenizer, eos_after_completed=True, json_schema=masked)] if as_json else None
-            answer = run(prompt, max_new_tokens, parts["stops"], shape, lambda said: show(f"{thought}\n\n{said}"))
+            answer = run(prompt, max_new_tokens, parts["stops"], shape, answering)
             show(answer.strip(), **{name: round(value, 2) for name, value in numbers.items()})
         return answer.strip()
 

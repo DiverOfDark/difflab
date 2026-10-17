@@ -5,7 +5,8 @@ import { thumbUrl } from '../api'
 import DeleteButton from '../components/DeleteButton.vue'
 import { refresh, state } from '../store'
 
-const rows = computed(() => state.runs)
+// A chat's replies are runs too, one a message: the chat links each, and here they would bury the renders.
+const rows = computed(() => state.runs.filter((one) => one.scope !== 'chat'))
 const when = (t: number | null) => (t ? new Date(t * 1000).toLocaleString() : '—')
 const owner = (id: number | null) => state.productions.find((one) => one.id === id)
 const working = (status: string) => ['live', 'queued', 'paused'].includes(status)

@@ -1,4 +1,5 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
+import Chat from './screens/Chat.vue'
 import Production from './screens/Production.vue'
 import Quick from './screens/Quick.vue'
 import RunView from './screens/RunView.vue'
@@ -14,6 +15,8 @@ export const router = createRouter({
     { path: '/productions', component: Production },
     { path: '/productions/:id', component: Production, props: (route) => ({ id: Number(route.params.id) }) },
     { path: '/quick', component: Quick },
+    { path: '/chat', component: Chat },
+    { path: '/chat/:id', component: Chat, props: (route) => ({ id: Number(route.params.id) }) },
     { path: '/runs', component: Runs },
     { path: '/runs/:id', component: RunView, props: true },
     { path: '/settings', component: Settings },
@@ -25,10 +28,11 @@ const TITLES: Record<string, string> = {
   '/productions': 'Productions',
   '/quick': 'Quick',
   '/runs': 'Runs',
+  '/chat': 'Chat',
   '/settings': 'Settings',
 }
 
 router.afterEach((to) => {
-  const name = TITLES[to.path] ?? (to.path.startsWith('/runs/') ? String(to.params.id) : 'Production')
+  const name = TITLES[to.path] ?? (to.path.startsWith('/runs/') ? String(to.params.id) : to.path.startsWith('/chat') ? 'Chat' : 'Production')
   document.title = `${name} — DiffLab`
 })

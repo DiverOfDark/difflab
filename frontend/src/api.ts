@@ -417,7 +417,7 @@ export interface ProductionSummary {
 
 /** The card: what the job in flight is doing as a word, and the VRAM in GB, whoever holds it. */
 export interface Gpu {
-  state: 'idle' | 'planning' | 'drawing' | 'judging' | 'rendering' | 'assembling'
+  state: 'idle' | 'planning' | 'drawing' | 'judging' | 'rendering' | 'assembling' | 'answering'
   tool: string
   run: string | null
   production: number | null
@@ -835,3 +835,43 @@ export const listAccounts = () => json<Record<string, Account>>('/api/accounts')
 export const saveAccount = (service: string, token: string) =>
   json<Record<string, Account>>(`/api/accounts/${service}`, send('PUT', { token }))
 export const outputUrl = (path: string) => `/output/${path}`
+
+// --- chats ---------------------------------------------------------------------------------------
+export interface ChatSummary {
+  id: number
+  title: string
+  created: number
+  updated: number
+}
+
+/** An answer goes `queued` -> `writing` -> `done`, `stopped` or `failed`; `text` and `thinking` grow while it writes. */
+export interface ChatMessage {
+  id: number
+  role: 'user' | 'assistant'
+  text: string
+  thinking: string
+  /** Uploaded paths: pictures, videos (the VLM sees a frame a second), sounds (it cannot hear them). */
+  media: string[]
+  state: 'queued' | 'writing' | 'done' | 'stopped' | 'failed'
+  error: string
+  run: string | null
+  created: number
+}
+
+export interface Chat extends ChatSummary {
+  /** '' is `default_system`. */
+  system: string
+  default_system: string
+  messages: ChatMessage[]
+}
+
+const chatUrl = (id: number, rest = '') => `/api/chats/${id}${rest}`
+export const listChats = () => json<ChatSummary[]>('/api/chats')
+export const startChat = () => json<Chat>('/api/chats', { method: 'POST' })
+export const readChat = (id: number) => json<Chat>(chatUrl(id))
+export const patchChat = (id: number, body: { title?: string; system?: string }) => json<Chat>(chatUrl(id), send('PATCH', body))
+export const deleteChat = (id: number) => json<unknown>(chatUrl(id), { method: 'DELETE' })
+export const sayInChat = (id: number, text: string, media: string[]) => json<Chat>(chatUrl(id, '/messages'), post({ text, media }))
+export const chatAgain = (id: number) => json<Chat>(chatUrl(id, '/again'), { method: 'POST' })
+export const chatRewind = (id: number, message: number) => json<Chat>(chatUrl(id, `/rewind/${message}`), { method: 'POST' })
+export const chatStop = (id: number) => json<Chat>(chatUrl(id, '/stop'), { method: 'POST' })

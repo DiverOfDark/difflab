@@ -24,6 +24,7 @@ from difflab.core.imaging import megapixel_size, video_length
 from difflab.core.keys import Key, key
 from difflab.core.settings import (
     AssembleSettings,
+    ChatSettings,
     Continuity,
     EditSettings,
     EnlargePixelsSettings,
@@ -42,6 +43,7 @@ from difflab.screenplay import production as production_module
 from difflab.screenplay.looks import Form
 from difflab.tools import (
     assemble,
+    chat,
     compose_keyframe,
     cut_crops,
     direct,
@@ -102,6 +104,10 @@ def run_write_instruction(inputs: dict[str, Any], settings: dict[str, Any]) -> d
 def run_write_image_prompt(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
     text, aspect = write_prompt.write_image_prompt(str(inputs["idea"]), VlmSettings(**settings), _references(inputs))
     return {"text": text, "aspect": aspect}
+
+
+def run_chat(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
+    return chat.reply(int(inputs["message"]), ChatSettings(**settings))
 
 
 def run_create_image(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
@@ -746,6 +752,7 @@ RUNNERS: dict[str, Runner] = {
     "write_video_prompt": run_write_video_prompt,
     "write_image_prompt": run_write_image_prompt,
     "create_image": run_create_image,
+    "chat": run_chat,
     "edit_image": run_edit_image,
     "render_clip": run_render_clip,
     "enlarge_pixels": run_enlarge_pixels,

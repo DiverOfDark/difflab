@@ -23,7 +23,7 @@ from fastapi.responses import FileResponse, RedirectResponse, Response, Streamin
 from fastapi.staticfiles import StaticFiles
 
 from difflab import config
-from difflab.api import assets, runs
+from difflab.api import assets, chats, runs
 from difflab.core import hub, profiling
 from difflab.core.settings import Continuity, IngestSettings
 from difflab.models.minimax_h3.settings import VideoSettings
@@ -767,6 +767,71 @@ async def settings_impact(request: Request) -> dict[str, Any]:
             str(body.get("scope_kind", "")), str(body.get("scope_id", "")), str(body.get("tool", "")),
             dict(body.get("overrides") or {}),
         )  # fmt: skip
+    except ValueError as problem:
+        raise HTTPException(400, str(problem)) from problem
+
+
+# --- chats -------------------------------------------------------------------------------------
+@app.get("/api/chats")
+def list_chats() -> list[dict[str, Any]]:
+    return chats.listing()
+
+
+@app.post("/api/chats")
+def start_chat() -> dict[str, Any]:
+    return chats.start()
+
+
+@app.get("/api/chats/{chat_id}")
+def read_chat(chat_id: int) -> dict[str, Any]:
+    found = chats.one(chat_id)
+    if found is None:
+        raise HTTPException(404, "no such chat")
+    return found
+
+
+@app.patch("/api/chats/{chat_id}")
+async def patch_chat(chat_id: int, request: Request) -> dict[str, Any]:
+    """`title`, `system` ('' is the default prompt)."""
+    body = dict(await request.json())
+    return _chatting(lambda: chats.update(chat_id, body))
+
+
+@app.delete("/api/chats/{chat_id}")
+def delete_chat(chat_id: int) -> dict[str, Any]:
+    chats.delete(chat_id)
+    return {"deleted": chat_id}
+
+
+@app.post("/api/chats/{chat_id}/messages")
+async def say_in_chat(chat_id: int, request: Request) -> dict[str, Any]:
+    """`text` and `media` (uploaded paths); the reply is queued, and written into the chat as it arrives."""
+    body = await request.json()
+    return _chatting(lambda: chats.say(chat_id, str(body.get("text", "")), [str(m) for m in body.get("media") or []]))
+
+
+@app.post("/api/chats/{chat_id}/again")
+def chat_again(chat_id: int) -> dict[str, Any]:
+    return _chatting(lambda: chats.again(chat_id))
+
+
+@app.post("/api/chats/{chat_id}/rewind/{message_id}")
+def chat_rewind(chat_id: int, message_id: int) -> dict[str, Any]:
+    """The chat as it was before that message."""
+    return _chatting(lambda: chats.rewind(chat_id, message_id))
+
+
+@app.post("/api/chats/{chat_id}/stop")
+def chat_stop(chat_id: int) -> dict[str, Any]:
+    chats.stop(chat_id)
+    return _chatting(lambda: chats.one(chat_id) or {})
+
+
+def _chatting(act: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+    try:
+        return act()
+    except LookupError as problem:
+        raise HTTPException(404, str(problem)) from problem
     except ValueError as problem:
         raise HTTPException(400, str(problem)) from problem
 

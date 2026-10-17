@@ -114,6 +114,7 @@ DOING = {
     "create_image": "drawing", "plate_ref": "drawing", "cut_crops": "drawing", "extend_opening": "drawing",
     "extend_photo": "drawing",
     "judge": "judging",
+    "chat": "answering",
     "assemble": "assembling", "film": "assembling", "master": "assembling",
 }  # fmt: skip
 PLANNING = "planning"  # every other job runs the VLM: survey, cards, plan_shots, write_shot, ...

@@ -5,6 +5,7 @@ No model is imported here, so the server can enqueue without torch.
 
 from __future__ import annotations
 
+import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -181,3 +182,12 @@ def _bound(value: Any, ids: list[int]) -> Any:
     if isinstance(value, dict) and "from_position" in value:
         return {"from_job": ids[int(value["from_position"])], "output": value["output"]}
     return value
+
+
+def enqueue_chat(connection: sqlite3.Connection, message_id: int, title: str) -> str:
+    """One run for one reply, so it waits its turn on the card like everything else. Inside the caller's
+    transaction: a reply seen without its run is one whose run is gone."""
+    run_id = store.next_run_id(connection, datetime.now().strftime("%Y-%m-%d-%H%M%S"))
+    store.add_run(connection, run_id, title=f"chat · {title}", scope="chat")
+    store.add_job(connection, run_id, "chat", {"message": message_id}, label="reply", settings=settings.for_job("chat"))
+    return run_id

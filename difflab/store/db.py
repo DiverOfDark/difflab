@@ -511,6 +511,34 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         "ALTER TABLE castings ADD COLUMN form TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE castings ADD COLUMN form_kind TEXT NOT NULL DEFAULT ''",
     ),
+    # A chat with the VLM. `system` '' is `prompts.CHAT_SYSTEM_PROMPT`; a message's `media` is a JSON list of
+    # paths, and an answer's `run_id` the run that writes it, `state` queued -> writing -> done, stopped or failed.
+    (
+        """
+        CREATE TABLE chats (
+            id         INTEGER PRIMARY KEY,
+            title      TEXT    NOT NULL DEFAULT '',
+            system     TEXT    NOT NULL DEFAULT '',
+            created_at REAL    NOT NULL,
+            updated_at REAL    NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE chat_messages (
+            id         INTEGER PRIMARY KEY,
+            chat_id    INTEGER NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+            role       TEXT    NOT NULL,
+            text       TEXT    NOT NULL DEFAULT '',
+            thinking   TEXT    NOT NULL DEFAULT '',
+            media      TEXT    NOT NULL DEFAULT '[]',
+            state      TEXT    NOT NULL DEFAULT 'done',
+            error      TEXT    NOT NULL DEFAULT '',
+            run_id     TEXT,
+            created_at REAL    NOT NULL
+        )
+        """,
+        "CREATE INDEX chat_messages_by_chat ON chat_messages(chat_id, id)",
+    ),
 )
 
 SCHEMA_VERSION = len(MIGRATIONS)
