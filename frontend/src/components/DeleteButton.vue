@@ -50,17 +50,30 @@ onBeforeUnmount(() => clearTimeout(timer))
     @mouseleave="disarm"
     @blur="disarm"
   >
-    {{ deleting ? 'deleting…' : armed ? 'confirm deletion' : failed ? 'not deleted' : 'delete' }}
+    <span class="sizer" aria-hidden="true">confirm deletion</span>
+    <span>{{ deleting ? 'deleting…' : armed ? 'confirm deletion' : failed ? 'not deleted' : 'delete' }}</span>
   </button>
 </template>
 
 <style scoped>
+/* Arming must not widen the button: the table reflowed, the button slid from under the cursor, mouseleave
+   disarmed it, and the confirming click armed it again. */
 .delete {
+  display: inline-grid;
+  justify-items: center;
   font-size: var(--text-xs);
   padding: 2px 8px;
   border-color: var(--line);
   color: var(--muted);
   white-space: nowrap;
+}
+
+.delete > span {
+  grid-area: 1 / 1;
+}
+
+.delete .sizer {
+  visibility: hidden;
 }
 
 .delete:not(:disabled):hover,
