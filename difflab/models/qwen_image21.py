@@ -12,6 +12,7 @@ bf16 halves (cosine 0.99997 each way). Its rows carry their own scales, so split
 import gc
 import math
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any, cast
 
 import torch
@@ -24,6 +25,7 @@ from diffusers import (
 )
 from PIL import Image
 from safetensors import safe_open
+from safetensors.torch import load_file
 from torch import nn
 from transformers import Qwen2Tokenizer, Qwen3VLConfig, Qwen3VLForConditionalGeneration
 from transformers.models.qwen2_vl.image_processing_pil_qwen2_vl import Qwen2VLImageProcessorPil
@@ -157,6 +159,19 @@ def load_text_encoder(path: str) -> Qwen3VLForConditionalGeneration:
     return frozen
 
 
+def load_vae(folder: Path, path: str) -> AutoencoderKLQwenImage21:
+    """Qwen's own VAE config, with the weights from `path`."""
+    vae = AutoencoderKLQwenImage21.from_config(AutoencoderKLQwenImage21.load_config(folder))
+    found = load_file(path)
+    if set(found) != set(vae.state_dict()):
+        raise ValueError(
+            f"{Path(path).name} is not a Qwen-Image 2.1 VAE in diffusers' layout ({len(found)} tensors, "
+            f"{len(set(found) - set(vae.state_dict()))} of them unknown): ComfyUI's repack is laid out otherwise"
+        )
+    vae.load_state_dict(found)
+    return cast(AutoencoderKLQwenImage21, vae.to(torch.bfloat16).eval())
+
+
 def load_processor() -> ImageOnlyQwen3VLProcessor:
     """The official processor's settings on the PIL image processor: its own is the torchvision one."""
     folder = OFFICIAL.path / "processor"
@@ -198,11 +213,13 @@ class Editor21:
         self,
         weights: ModelFile,
         text_encoder: ModelFile,
+        vae: ModelFile,
         loras: Sequence[tuple[ModelFile, float]] = (),
         device: str = config.DEVICE,
     ) -> None:
         self.weights = weights
         self.text_encoder = text_encoder
+        self.vae = vae
         self.loras = loras
         self.device = device
         self._pipe: QwenImage21Pipeline | None = None
@@ -274,7 +291,7 @@ class Editor21:
             if name != "layers":
                 child.to(device)
         cast(nn.Module, inner.visual).to(device)
-        vae = AutoencoderKLQwenImage21.from_pretrained(official / "vae", torch_dtype=torch.bfloat16).to(device)
+        vae = load_vae(official / "vae", str(self.vae.fetch())).to(device)
 
         pipe = QwenImage21Pipeline(
             scheduler=FlowMatchEulerDiscreteScheduler.from_pretrained(official / "scheduler"),

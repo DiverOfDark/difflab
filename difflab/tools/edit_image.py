@@ -43,13 +43,17 @@ def named(instruction: str, settings: EditSettings, pictures: int) -> str:
 def spec(settings: EditSettings) -> models.ModelSpec:
     """One registry entry per model file and LoRA stack, so two never share a slot."""
     if settings.engine == "qwen-image-2.1":
-        weights, text_encoder = parse_file(settings.model_21), parse_file(settings.text_encoder_21)
+        weights, text_encoder, vae = (
+            parse_file(settings.model_21),
+            parse_file(settings.text_encoder_21),
+            parse_file(settings.vae_21),
+        )
         loras = [(parse_file(ref), strength) for ref, strength in settings.loras_21()]
         stack = ",".join(f"{lora.filename}*{strength:g}" for lora, strength in loras)
         return models.ModelSpec(
-            name=f"qwen_image21:{weights.filename}:{text_encoder.filename}:{stack}",
-            build=lambda: Editor21(weights, text_encoder, loras),
-            checkpoints=(weights.path, text_encoder.path),
+            name=f"qwen_image21:{weights.filename}:{text_encoder.filename}:{vae}:{stack}",
+            build=lambda: Editor21(weights, text_encoder, vae, loras),
+            checkpoints=(weights.path, text_encoder.path, vae.path),
             unload=lambda editor: editor.unload(),
         )
     aio = HubFile.parse(settings.checkpoint)

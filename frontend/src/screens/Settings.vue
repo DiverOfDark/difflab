@@ -28,6 +28,7 @@ const ROLES: Record<string, string> = {
   'editor-21': 'Qwen-Image 2.1',
   'editor-21-loras': 'Qwen-Image 2.1 LoRAs',
   'editor-21-text-encoder': 'Qwen-Image 2.1 text encoder',
+  'editor-21-vae': 'Qwen-Image 2.1 VAE',
   'video-model': 'Video model',
   'video-loras': 'LoRAs',
   'video-text-encoder': 'Video text encoder',
@@ -45,6 +46,7 @@ const ROLE_NOTES: Record<string, string> = {
   'editor-21': 'the experimental engine: draws in its place when the engine is set to qwen-image-2.1',
   'editor-21-loras': 'stacked on Qwen-Image 2.1 in order; strength 0 turns one off without removing it',
   'editor-21-text-encoder': 'reads the instruction and the photos for Qwen-Image 2.1',
+  'editor-21-vae': "takes photos into and out of Qwen-Image 2.1; diffusers' layout, as Qwen ships it",
   'video-model': 'samples every clip',
   'video-loras': 'stacked on the video model in order; a video model without a turbo fused in needs a turbo LoRA first; strength 0 turns one off without removing it',
   'video-text-encoder': 'reads the caption for the video model',
@@ -167,14 +169,14 @@ async function save() {
   }
 }
 
-// --- models: one row per role, set on every tool that loads it --------------------------------
+// --- models: one row per role, set on every tool that loads it. Every one is listed: a model hidden behind
+// Advanced, and left out of its count, read as one that could not be changed.
 const roles = computed(() => {
   const found = new Map<string, { tool: ToolInfo; field: SettingField }[]>()
   for (const tool of tools.value)
     for (const field of tool.settings) if (field.role) found.set(field.role, [...(found.get(field.role) ?? []), { tool, field }])
   return [...found.entries()]
-    .map(([role, uses]) => ({ role, uses, advanced: uses.every((u) => u.field.advanced) }))
-    .filter((r) => advanced.value || !r.advanced)
+    .map(([role, uses]) => ({ role, uses }))
     .sort((a, b) => Object.keys(ROLES).indexOf(a.role) - Object.keys(ROLES).indexOf(b.role))
 })
 

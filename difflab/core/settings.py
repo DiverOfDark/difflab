@@ -217,6 +217,9 @@ class JudgeSettings(Settings):
     )
 
 
+VAE_21 = "Qwen/Qwen-Image-2.1@d26bb61231c349cf6b7896fa83353113880e1ba3:vae/diffusion_pytorch_model.safetensors"
+
+
 @dataclass(frozen=True)
 class EditSettings(Settings):
     """Qwen-Image-Edit, as ComfyUI's ClownsharKSampler ran it: 8 steps, cfg 1, denoise 1, euler.
@@ -258,6 +261,14 @@ class EditSettings(Settings):
         advanced=True,
         role="editor-21-text-encoder",
     )
+    vae_21: str = setting(
+        VAE_21,
+        "VAE",
+        "Qwen-Image 2.1's VAE in diffusers' layout, as Qwen ships it (ComfyUI's repack is laid out otherwise): "
+        "repo@commit:path",
+        advanced=True,
+        role="editor-21-vae",
+    )
     loras: str = setting(
         "",
         "LoRAs",
@@ -298,13 +309,15 @@ class EditSettings(Settings):
     def key_part(self) -> dict[str, Any]:
         # The AIO engine keys as it did before the 2.1 fields existed, so nothing it drew is drawn again.
         part = super().key_part()
-        mine = ("engine", "model_21", "text_encoder_21", "loras", "turbo", "steps_21", "cfg_21")
+        mine = ("engine", "model_21", "text_encoder_21", "vae_21", "loras", "turbo", "steps_21", "cfg_21")
         if self.engine == "qwen-image-edit":
             return {name: value for name, value in part.items() if name not in mine}
         part.pop("checkpoint")
         part["loras"] = self.loras_21()
         # Under the AIO's names, as 2.1 was keyed when it shared them: what it drew then is found again.
         part["steps"], part["cfg"] = part.pop("steps_21"), part.pop("cfg_21")
+        if part["vae_21"] == VAE_21:
+            part.pop("vae_21")
         if self.turbo:
             part.pop("steps")
         return part
