@@ -20,7 +20,6 @@ async function blank(): Promise<{ made: Job; models: (job: Job) => Job }> {
     finish_megapixels: null,
     grade_strength: null,
     retime_fps: null,
-    chain: false,
     video: effective('render_chunk') as Job['video'],
     edit: effective('edit_image') as Job['edit'],
     vlm: effective('write_instruction') as Job['vlm'],

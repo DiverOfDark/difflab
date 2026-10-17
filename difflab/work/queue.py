@@ -31,9 +31,6 @@ def plan(job: Job) -> list[JobSpec]:
     """Which tool jobs a quick job is."""
     jobs: list[JobSpec] = []
     photo = str(job.photos[0]) if job.photos else None
-    if job.mode == "edit" and job.chain:
-        inputs = {"photo": photo, "idea": job.idea, "edit": job.edit.data(), "vlm": job.vlm.data()}
-        return [JobSpec("chain_edit", inputs, "edit in steps", settings.for_job("chain_edit"))]
     if job.mode == "edit":
         if job.idea:
             jobs.append(

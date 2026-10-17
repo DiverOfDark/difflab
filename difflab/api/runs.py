@@ -101,7 +101,6 @@ DOING = {
     "render_shot": "rendering", "render_clip": "rendering", "enlarge_shot": "rendering", "finish": "rendering",
     "enlarge_pixels": "rendering",
     "draw_reference": "drawing", "draw_look": "drawing", "compose_keyframe": "drawing", "edit_image": "drawing",
-    "chain_edit": "drawing",
     "plate_ref": "drawing", "cut_crops": "drawing", "extend_opening": "drawing",
     "judge": "judging",
     "assemble": "assembling", "film": "assembling", "master": "assembling",

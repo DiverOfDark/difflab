@@ -2,7 +2,6 @@
 
 import gc
 import hashlib
-import re
 from collections import OrderedDict
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -30,8 +29,6 @@ IMAGE_SLOT = "<|vision_start|><|image_pad|><|vision_end|>"
 # prefix `"members":[` being one it never writes unthinking; forced `": "`, a model that had thought "let
 # me format the JSON on one line" wrote `{"traits [{": ...`, its `":[{"` masked out (2026-10-11).
 ANY_JSON = {"type": ["object", "array"], "x-guidance": {"whitespace_pattern": " ?"}}
-
-_VERDICT = re.compile(r":\s?(true|false)\b")
 
 # Hashes of every full page any prompt has had since the server started, reloads included: how much the
 # disk cache could restore at most, against what it did.
@@ -111,12 +108,10 @@ class Exl3VL:
         as_json: bool = False,
         schema: dict[str, Any] | None = None,
         steady: int = 0,
-        odds: bool = False,
     ) -> str:
         """Several images are announced as "Picture 1: ", "Picture 2: " in order; temperature=0 is greedy.
         `schema` narrows `as_json` from any JSON to that shape. The first `steady` images open other prompts
-        too, and are kept on disk with the system prompt before them. `odds` writes each true/false the answer
-        gives as the model's probability of true where it wrote it."""
+        too, and are kept on disk with the system prompt before them."""
         parts = self.load()
         shown = [images] if isinstance(images, Image.Image) else list(images or ())
         tokenizer = parts["tokenizer"]
@@ -211,34 +206,7 @@ class Exl3VL:
             shape = [LLGuidanceFilter(tokenizer, eos_after_completed=True, json_schema=masked)] if as_json else None
             answer = run(prompt, max_new_tokens, parts["stops"], shape, lambda said: show(f"{thought}\n\n{said}"))
             show(answer.strip(), **{name: round(value, 2) for name, value in numbers.items()})
-        return self._odds(parts, prompt, answer.strip(), embeddings) if odds else answer.strip()
-
-    def _odds(self, parts: dict[str, Any], prompt: str, answer: str, embeddings: list[Any]) -> str:
-        tokenizer, generator = parts["tokenizer"], parts["generator"]
-        pieces = tokenizer.get_id_to_piece_list()
-        out, last = [], 0
-        for found in _VERDICT.finditer(answer):
-            ids = tokenizer.encode(prompt + answer[: found.start(1)], encode_special_tokens=True, embeddings=embeddings)
-            generator.enqueue(
-                Job(input_ids=ids, max_new_tokens=1, sampler=ArgmaxSampler(), embeddings=embeddings,
-                    return_top_tokens=config.VLM_ODDS_TOKENS)
-            )  # fmt: skip
-            top: tuple[torch.Tensor, torch.Tensor] | None = None
-            while generator.num_remaining_jobs():
-                for result in generator.iterate():
-                    if "top_k_tokens" in result:
-                        top = result["top_k_tokens"].flatten(), result["top_k_probs"].flatten()
-            said = {"true": 0.0, "false": 0.0}
-            for token, chance in zip(*(top or ([], [])), strict=True):
-                piece = pieces[int(token)].strip()
-                for word in said:
-                    if piece and word.startswith(piece):
-                        said[word] += float(chance)
-            total = said["true"] + said["false"]
-            chance = said["true"] / total if total else float(found[1] == "true")
-            out += [answer[last : found.start(1)], f"{chance:.3f}"]
-            last = found.end(1)
-        return "".join([*out, answer[last:]])
+        return answer.strip()
 
     def _embedding(self, parts: dict[str, Any], image: Image.Image, seen: str) -> Any:
         if (embedding := self._embedded.get(seen)) is not None:

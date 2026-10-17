@@ -142,16 +142,6 @@ const groups = computed(() => {
       meta: `${j.edit.engine === 'qwen-image-2.1' && j.edit.turbo ? 8 : j.edit.steps} steps · seed ${j.edit.seed}`,
       rows: [
         {
-          key: 'chain',
-          hint: 'The VLM splits the idea into one edit per change; each is judged against the photo and redone until it holds.',
-          get: () => String(j.chain ?? false),
-          set: (v) => (j.chain = v === 'true'),
-          options: [
-            ['false', 'off · one edit'],
-            ['true', 'on · edit in steps'],
-          ],
-        },
-        {
           key: 'engine',
           hint: 'Qwen-Image 2.1 draws with its own model and the LoRAs set on the Settings page.',
           get: () => j.edit.engine ?? 'qwen-image-edit',

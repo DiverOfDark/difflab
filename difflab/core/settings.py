@@ -292,37 +292,6 @@ class EditSettings(Settings):
 
 
 @dataclass(frozen=True)
-class ChainSettings(Settings):
-    """A quick edit made one logical change at a time, each judged against the original photo."""
-
-    retries: int = setting(
-        2,
-        "retries",
-        "redos of an edit the judge fails, each told what it found, before the chain carries on with it flagged",
-        low=0,
-        high=5,
-        keyed=False,
-    )
-    # Beach test, 4 edits on Qwen-Image 2.1 (2026-10-15): from decoded pictures the sky turned to painterly noise by
-    # the third edit and two edits stayed flagged; carried, every edit passed and the sky stayed clean, in the same
-    # 660 s.
-    carry: bool = setting(
-        True,
-        "carry latents",
-        "Qwen-Image 2.1: each edit is conditioned on the last one's latent, never on its decoded and re-encoded "
-        "picture; the size snaps to /32. The AIO always edits from pictures",
-        advanced=True,
-    )
-    body: bool = setting(
-        True,
-        "body check",
-        "the people's traits read from the photo (face, eyes, hair, build, bust, waist, hips, marks) and checked on "
-        "every picture; a fifth longer or wider body still passes",
-        advanced=True,
-    )
-
-
-@dataclass(frozen=True)
 class IngestSettings(Settings):
     """How a story becomes chapters, and a reference video becomes pictures."""
 

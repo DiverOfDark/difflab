@@ -12,7 +12,6 @@ from typing import Any
 
 from difflab.core.settings import (
     AssembleSettings,
-    ChainSettings,
     Continuity,
     DirectorSettings,
     EditSettings,
@@ -47,7 +46,6 @@ class Tool:
 
 TOOLS: tuple[Tool, ...] = (
     Tool("edit_image", 1, ("load editor", "encode", "denoise", "decode", "save"), EditSettings, "Qwen-Image-Edit"),
-    Tool("chain_edit", 1, ("split", "edit", "judge"), ChainSettings, "an idea edited one logical change at a time"),
     Tool("ask_vlm", 1, ("load VLM", "answer"), VlmSettings, "one question about a picture"),
     Tool("write_instruction", 1, ("load VLM", "write"), VlmSettings, "an idea into an edit instruction"),
     Tool("write_video_prompt", 1, ("load VLM", "write"), VideoPromptSettings, "an idea into an H3 caption"),

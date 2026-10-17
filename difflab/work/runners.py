@@ -24,7 +24,6 @@ from difflab.core.imaging import megapixel_size, video_length
 from difflab.core.keys import Key, key
 from difflab.core.settings import (
     AssembleSettings,
-    ChainSettings,
     Continuity,
     EditSettings,
     EnlargePixelsSettings,
@@ -41,7 +40,6 @@ from difflab.screenplay import compiler, drawn, made, words
 from difflab.screenplay import production as production_module
 from difflab.tools import (
     assemble,
-    chain_edit,
     compose_keyframe,
     direct,
     draw_reference,
@@ -95,28 +93,6 @@ def run_edit_image(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str
     made = edit_image.edit(_frame(inputs["photo"]), str(inputs["instruction"]), chosen)
     png = media.save(made, chosen.model_stem, chosen.seed, announce=False)
     return {"image": store.relative(png)}
-
-
-def run_chain_edit(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
-    chosen = EditSettings(**inputs["edit"])
-    with direct.using(VlmSettings(**inputs["vlm"]).checkpoint):
-        chain = ChainSettings(**settings)
-        chained = chain_edit.chain(
-            _frame(inputs["photo"]), str(inputs["idea"]), chosen, chain.retries, chain.carry, chain.body
-        )
-    png = media.save(chained.images[-1], chosen.model_stem, chosen.seed, announce=False)
-    steps = []
-    for edit, image in zip(chained.edits, chained.images[1:], strict=True):
-        kept = cache.path(key("chain_edit", 1, frame=image.pixels), ".png")
-        if not kept.is_file():
-            image.pil().save(kept)
-        steps.append({"edit": edit, "image": store.relative(kept)})
-    return {
-        "image": store.relative(png),
-        "flagged": [f"edit {n + 1} never passed the judge: {chained.edits[n]}" for n in chained.flagged],
-        "issues": chained.issues,
-        "steps": steps,
-    }
 
 
 def run_render_clip(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
@@ -696,7 +672,6 @@ RUNNERS: dict[str, Runner] = {
     "write_instruction": run_write_instruction,
     "write_video_prompt": run_write_video_prompt,
     "edit_image": run_edit_image,
-    "chain_edit": run_chain_edit,
     "render_clip": run_render_clip,
     "enlarge_pixels": run_enlarge_pixels,
     "grade": run_grade,

@@ -54,21 +54,6 @@ function pick(index: number) {
 /** The newest thing a run wrote, for a run that has no chunks to show: an edit, a contact sheet. */
 const artifact = computed(() => props.run.artifacts.at(-1) ?? null)
 
-/** -1 follows the newest; the delivered artifact, once there is one, wins over every step before it. */
-const pictured = ref(-1)
-const short = (label: string) =>
-  label
-    .split(' · ')
-    .filter((part) => /^(edit \d+ of \d+|amendment \d+|the photo)$/.test(part))
-    .map((part) => part.replace(/ of /, '/').replace('amendment', 'fix'))
-    .join(' · ')
-
-const picture = computed(() => {
-  const all = props.run.pictures
-  if (pictured.value >= 0) return all[pictured.value] ?? null
-  return artifact.value ? null : (all.at(-1) ?? null)
-})
-
 const delivered = computed(() =>
   props.run.finalVideo
     ? `/output/${props.run.finalVideo}`
@@ -90,7 +75,6 @@ const movie = computed(() => {
 const still = computed(() => {
   const it = item.value
   if (movie.value) return ''
-  if (!it && picture.value) return runFile(props.run.id, picture.value.image)
   if (!it) return artifact.value?.media === 'image' ? `/output/${artifact.value.path}` : ''
   const relative = it.poster || it.opening
   return relative ? runFile(props.run.id, relative) : ''
@@ -98,7 +82,6 @@ const still = computed(() => {
 
 const caption = computed(() => {
   // An unplanned run's one item is a peg for previews, so naming it "chunk 1" would be a fiction.
-  if (!props.run.planned && picture.value) return picture.value.label
   if (!props.run.planned) return props.run.finalVideo || artifact.value?.path || ''
   const it = item.value
   if (!it) return ''
@@ -241,25 +224,6 @@ watch(
       <img v-else :src="still" alt="" />
       <p class="mono caption">{{ caption }}</p>
       <button v-if="!following" class="quiet" @click="following = true">follow the chunk being rendered</button>
-      <button v-if="pictured >= 0" class="quiet" @click="pictured = -1">follow the newest picture</button>
-    </section>
-
-    <section v-if="run.pictures.length" class="pictures">
-      <button
-        v-for="(p, i) in run.pictures"
-        :key="p.image"
-        class="picture"
-        :class="{ on: picture === p }"
-        :title="p.label"
-        @click="pictured = i"
-      >
-        <img :src="runFile(run.id, p.image)" alt="" loading="lazy" />
-        <span>{{ short(p.label) }}</span>
-      </button>
-      <button v-if="artifact?.media === 'image'" class="picture" :class="{ on: !picture }" @click="pictured = -1">
-        <img :src="`/output/${artifact.path}`" alt="" loading="lazy" />
-        <span>delivered</span>
-      </button>
     </section>
 
     <!-- A single clip's one item is a preview peg, not a chunk: drawn, it reads `chunk 1 · PENDING`
@@ -406,42 +370,6 @@ watch(
   margin: 0;
   text-align: center;
   overflow-wrap: anywhere;
-}
-
-.pictures {
-  display: flex;
-  gap: var(--space-1);
-  overflow-x: auto;
-  padding-bottom: 4px;
-}
-
-.picture {
-  flex: 0 0 auto;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 2px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-input);
-  background: var(--video);
-  cursor: pointer;
-}
-
-.picture.on {
-  border-color: var(--accent);
-}
-
-.picture img {
-  height: 112px;
-  width: auto;
-  border-radius: var(--radius-input);
-}
-
-.picture span {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--muted);
-  white-space: nowrap;
 }
 
 .chunks {
