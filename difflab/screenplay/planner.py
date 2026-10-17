@@ -9,6 +9,7 @@ shots chained after it and nothing else.
 
 from __future__ import annotations
 
+import dataclasses
 import re
 import time
 from datetime import datetime
@@ -225,6 +226,7 @@ def _queue_chapter(connection: Any, chapter_id: int, asked_by: str, keyframes_on
         arrangement, where = _opening(connection, production, shots, shot.position)
         before, _ = _looks(resolved, shot)
         worn = _worn(resolved, shot, end=False)
+        forms = _forms(resolved, shot, end=False)
         if keyframe.source == store.COMPOSED and resolved.waiting(shot.id):
             openings.append(None)  # only a keyframes run gets here: `check` refuses a render
         elif keyframe.source == store.COMPOSED:
@@ -235,11 +237,13 @@ def _queue_chapter(connection: Any, chapter_id: int, asked_by: str, keyframes_on
                     "production": production.id,
                     "shot": shot.id,
                     "arrangement": arrangement,
-                    **(under := base(connection, production, arrangement, where) or {}),
-                    "pictures": (handed := pictures(connection, production, arrangement, under.get("keep"), worn)),
+                    **(under := base(connection, production, arrangement, where, set(forms)) or {}),
+                    "pictures": (handed := pictures(connection, production, arrangement, under.get("keep"), worn,
+                                                    set(forms))),
                     **styled(connection, production, len(handed)),
                     "note": keyframe.note,
                     "looks": before,
+                    **({"forms": forms} if forms else {}),
                     "size": _canvas(production),
                     "seed": seed,
                     # The editor draws in its own palette; a chain that lands on it would take that cast on.
@@ -256,8 +260,8 @@ def _queue_chapter(connection: Any, chapter_id: int, asked_by: str, keyframes_on
                      "purpose": f"the shot's first frame, as the arrangement says, before its action starts "
                                 f"({shot.action})",
                      "arrangement": arrangement, "cast": cast,
-                     "pictures": pictures(connection, production, arrangement, worn=worn),
-                     "looks": before},
+                     "pictures": pictures(connection, production, arrangement, worn=worn, formed=set(forms)),
+                     "looks": before, **({"forms": forms} if forms else {})},
                     f"shot {shot.position + 1}: judge the keyframe", keyframe.id,
                 ))  # fmt: skip
             openings.append(_output(composed.id, "frame"))
@@ -340,8 +344,10 @@ def _queue_chapter(connection: Any, chapter_id: int, asked_by: str, keyframes_on
                  "prompt": _output(job.id, "prompt"),
                  "purpose": shot.action, "arrangement": str(shot.plan.get("closing", "")), "cast": cast,
                  "pictures": pictures(connection, production, " ".join(f"{{{m}}}" for m in cast),
-                                      worn=_worn(resolved, shot, end=True)),
-                 "looks": (changed := _looks(resolved, shot))[0], "becomes": changed[1]},
+                                      worn=_worn(resolved, shot, end=True),
+                                      formed=set(ended := _forms(resolved, shot, end=True))),
+                 "looks": (changed := _looks(resolved, shot))[0], "becomes": changed[1],
+                 **({"forms": ended} if ended else {})},
                 label=f"shot {shot.position + 1}: judge the clip", settings=verdicts.data(),
                 for_kind="clip", for_id=clip.id,
             )  # fmt: skip
@@ -364,13 +370,18 @@ def _queue_chapter(connection: Any, chapter_id: int, asked_by: str, keyframes_on
 
 
 def base(
-    connection: Any, production: store.Production, arrangement: str, where: str | None = None
+    connection: Any,
+    production: store.Production,
+    arrangement: str,
+    where: str | None = None,
+    formed: set[str] | None = None,
 ) -> dict[str, Any] | None:
     """What a composed keyframe is made over. The place's reference - cut from a photo, or drawn from
     its words - or the chapter's opening frame, kept as a room the arrangement's members are put into;
     with neither, the photo of the first person or animal the arrangement names, kept as that member
     and everything around it replaced. `box` is where it is in that photo. `where` is the place the
-    shot happens in: a place no photo shows is never drawn over the opening room."""
+    shot happens in: a place no photo shows is never drawn over the opening room. A member `formed` into
+    something else is never kept: its photo shows what it was."""
     members = store.members_of(connection, production.id)
     slugs = {m.id: m.slug for m in members}
     places = {m.id for m in members if m.kind == "environment" and where in (None, m.slug)}
@@ -388,7 +399,7 @@ def base(
     if not unseen and first is not None and first.source == store.PROVIDED and first.provided:
         return {"base": first.provided, "box": None, "keep": None}
     photos = [str(p) for p in production.manifest.get("photos", [])]
-    living = {m.slug for m in members if m.kind in ("person", "animal")}
+    living = {m.slug for m in members if m.kind in ("person", "animal")} - (formed or set())
     for slug in dict.fromkeys(re.findall(r"\{([a-z_]+)\}", arrangement)):
         own = [r for r in references if slugs[r.member_id] == slug and slug in living and r.photo]
         # The first photo before the others, since the survey found it the one the chapter opens on; a
@@ -409,8 +420,10 @@ def pictures(
     arrangement: str,
     keep: str | None = None,
     worn: dict[str, str] | None = None,
+    formed: set[str] | None = None,
 ) -> dict[str, str]:
-    """Each person and animal the arrangement names, by id, as the picture the editor and the judge get."""
+    """Each person and animal the arrangement names, by id, as the picture the editor and the judge get; one
+    `formed` into something else only by its look's picture, since its own photos show what it was."""
     # A look's picture was drawn with the base face handed over, so it carries the face: one picture a member.
     members = {m.slug: m for m in store.members_of(connection, production.id)}
     out: dict[str, str] = {}
@@ -420,6 +433,8 @@ def pictures(
             continue
         if worn and slug in worn:
             out[slug] = worn[slug]
+            continue
+        if formed and slug in formed:
             continue
         own = [r for r in store.refs_of(connection, member.id) if r.artifact]
         own.sort(key=lambda r: (r.role not in ("body", "view"), r.generated, r.role == "face", -r.quality))
@@ -445,8 +460,18 @@ def _looks(resolved: looks.Resolved, shot: store.Shot) -> tuple[dict[str, str], 
         if start.text:
             before[member] = start.text
         if end.id != start.id:
-            becomes[member] = end.text
+            becomes[member] = end.said if end.form != start.form else end.text
     return before, becomes
+
+
+def _forms(resolved: looks.Resolved, shot: store.Shot, end: bool) -> dict[str, dict[str, str]]:
+    """What each member of the shot has turned into as it starts, or as it ends, as a job's `forms`."""
+    out: dict[str, dict[str, str]] = {}
+    for member, placed in resolved.placed.get(shot.id, {}).items():
+        form = resolved.look(member, placed.look if end else placed.source).form
+        if form is not None:
+            out[member] = dataclasses.asdict(form)
+    return out
 
 
 def _worn(resolved: looks.Resolved, shot: store.Shot, end: bool) -> dict[str, str]:

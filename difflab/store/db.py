@@ -505,6 +505,12 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         "CREATE INDEX events_by_time ON events(run_id, t)",
         "CREATE INDEX events_named ON events(run_id, id) WHERE kind IN ('plan', 'panel')",
     ),
+    # A look that turns its member into something else: `form` the noun it is from then on, `form_kind` its
+    # kind ('' the member's own), and `amend` its whole look in place of the card's traits.
+    (
+        "ALTER TABLE castings ADD COLUMN form TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE castings ADD COLUMN form_kind TEXT NOT NULL DEFAULT ''",
+    ),
 )
 
 SCHEMA_VERSION = len(MIGRATIONS)

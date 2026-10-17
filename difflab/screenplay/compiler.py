@@ -136,6 +136,8 @@ class Now:
     start: str = ""  # the ref key of `before`'s own picture, when it was picked beside `after`'s
     held: tuple[str, ...] = ()  # the look pictures handed over: `picture` alone unless picked by hand
     bible: bool = True  # whether the bible's pictures, which show none of its looks, are handed over
+    was: looks.Form | None = None  # what the member has turned into as the chunk starts
+    becomes: looks.Form | None = None  # and by its end
 
 
 @dataclass(frozen=True)
@@ -158,6 +160,8 @@ class Chunk:
     looks: dict[str, str] = dataclasses.field(default_factory=dict)  # the planner's: member -> its look from here on
     look_names: dict[str, str] = dataclasses.field(default_factory=dict)  # the planner's: member -> that look's name
     look_from: dict[str, str] = dataclasses.field(default_factory=dict)  # member -> the version it starts from
+    # the planner's: member -> (what its new look turns it into, that thing's kind)
+    look_forms: dict[str, tuple[str, str]] = dataclasses.field(default_factory=dict)
     ambience: str = ""  # the sound of a place other than the take's first; "" is `Take.ambience`
     scene: str = ""  # the slug line the chunk plays under, "INT lantern room · dusk"
     states: dict[str, Now] = dataclasses.field(default_factory=dict)  # the castings' looks; never stored in a plan
@@ -278,7 +282,9 @@ def scened(take: Take, index: int) -> bool:
         return False
     chunk, first = take.chunks[index], take.chunks[0]
     shown = {m for m in PLACEHOLDER.findall(take.opening) if m in take.cards and take.cards[m].kind in LIVING}
-    changed = any(state.before or state.after for m, state in chunk.states.items() if m in shown)
+    changed = any(
+        state.before or state.after or state.was or state.becomes for m, state in chunk.states.items() if m in shown
+    )
     return place(take, chunk) == place(take, first) and shown <= set(chunk.cast) and not changed
 
 
@@ -476,10 +482,12 @@ def _upper(text: str) -> str:
     return text[:1].upper() + text[1:]
 
 
-def definition(take: Take, member: str, subject: str, shown: Presentation) -> str:
-    """One `<Subject N>` line: the member, the pictures it comes from and what each gives, its traits."""
+def definition(take: Take, member: str, subject: str, shown: Presentation, keys: list[str] | None = None) -> str:
+    """One `<Subject N>` line: the member, the pictures it comes from and what each gives, its traits. `keys`
+    narrows the pictures to those of the look it starts the chunk in."""
     card = take.cards[member]
     held = [key for key in shown.pictures if key not in KEYFRAMES and member in take.refs[key].shows]
+    held = held if keys is None else [key for key in held if key in keys]
 
     def cite(keys: list[str]) -> str:
         return join([shown.picture(key) for key in keys])
@@ -525,6 +533,8 @@ def definition(take: Take, member: str, subject: str, shown: Presentation) -> st
 
 def compile_chunk(take: Take, index: int) -> Compiled:
     say = words.SENTENCES
+    bible = take.cards
+    take = dataclasses.replace(take, cards=cards_at(take, index))
     chunk = take.chunks[index]
     refs = references(take, index)
     pinned = latent(take, index)
@@ -542,14 +552,29 @@ def compile_chunk(take: Take, index: int) -> Compiled:
     labels_only = Expander(take, subject, speakers)
     states = {m: chunk.states[m] for m in cast if m in chunk.states}
     now = {m: state.before for m, state in states.items() if state.before}
-    changes = {m: state for m, state in states.items() if state.after != state.before}
+    changes = {m: state for m, state in states.items() if state.after != state.before or state.becomes != state.was}
+    turning = {m for m, state in changes.items() if state.becomes != state.was}
 
     def cited(state: Now, key: str | None = None) -> str:
         key = state.picture if key is None else key
         return shown.picture(key) if key and key in shown.pictures else ""
 
+    def bible_keys(member: str) -> list[str]:
+        return [
+            k for k in shown.pictures if k not in KEYFRAMES and member in take.refs[k].shows and not take.refs[k].look
+        ]
+
+    def ends(member: str, state: Now) -> list[str]:
+        """The pictures of the look a turning member ends the chunk in."""
+        if state.picture and state.picture in shown.pictures:
+            return [state.picture]
+        return bible_keys(member) if state.becomes is None and not state.after else []
+
+    def starts(member: str, state: Now) -> list[str]:
+        return [state.start] if state.start and state.start in shown.pictures else bible_keys(member)
+
     # subject_definitions: identity-only pictures are cited inside the <Subject N> lines (ref-en 2.2)
-    definitions = [definition(take, member, subject[member], shown) for member in cast]
+    definitions = [definition(take, m, subject[m], shown, starts(m, states[m]) if m in turning else None) for m in cast]
     for m in cast:
         if m in now and m not in changes and cited(states[m]):
             definitions.append(say["look_pictured"].format(subject=subject[m], look=now[m], pictures=cited(states[m])))
@@ -562,7 +587,13 @@ def compile_chunk(take: Take, index: int) -> Compiled:
         elif m in now:
             definitions.append(say["look"].format(subject=subject[m], look=now[m]))
     for m, state in changes.items():
-        if cited(state):
+        if m in turning:
+            end = formed(bible[m], state.becomes)
+            look = ", ".join(part for part in (end.full(), state.after) if part)
+            pictures = join([shown.picture(key) for key in ends(m, state)])
+            sentence = "form_change_pictured" if pictures else "form_change"
+            definitions.append(say[sentence].format(subject=subject[m], noun=end.noun, look=look, pictures=pictures))
+        elif cited(state):
             definitions.append(
                 say["look_change_pictured"].format(subject=subject[m], look=state.after, pictures=cited(state))
             )
@@ -596,7 +627,11 @@ def compile_chunk(take: Take, index: int) -> Compiled:
 
     # retention_analysis
     retention = [
-        say["retain_look" if m in now else "retain"].format(
+        say["retain_form"].format(
+            subject=subject[m], traits=take.cards[m].retain(), noun=formed(bible[m], states[m].becomes).noun
+        )
+        if m in turning
+        else say["retain_look" if m in now else "retain"].format(
             subject=subject[m], traits=take.cards[m].retain(), look=now.get(m, "")
         )
         for m in cast
@@ -758,6 +793,20 @@ def card_of(member: store.Member) -> Card:
     )
 
 
+def formed(card: Card, form: looks.Form | None) -> Card:
+    """The card of what a member has turned into: the form's words stand in for its traits, as `card_of`'s do."""
+    if form is None:
+        return card
+    return Card(card.id, form.kind, form.noun, card.possessive, (Trait("appearance", form.look, form.look, form.noun),),
+                photographed=False)  # fmt: skip
+
+
+def cards_at(take: Take, index: int) -> dict[str, Card]:
+    """Every card as chunk `index` starts: a member turned into something else by then is that thing."""
+    states = take.chunks[index].states
+    return {m: formed(card, states[m].was) if m in states else card for m, card in take.cards.items()}
+
+
 def chunk_of(plan: dict[str, Any]) -> Chunk:
     return Chunk(
         purpose=str(plan.get("purpose", "")),
@@ -792,7 +841,7 @@ def chunk_of(plan: dict[str, Any]) -> Chunk:
     )
 
 
-_PLANNER_ONLY = ("looks", "look_names", "look_from", "states")
+_PLANNER_ONLY = ("looks", "look_names", "look_from", "look_forms", "states")
 
 
 def plan_of(chunk: Chunk) -> dict[str, Any]:
@@ -847,7 +896,8 @@ def look_refs(resolved: looks.Resolved, members: list[store.Member]) -> dict[str
             width, height = look.casting.size
             name = look_key(look)
             # Larger than any crop, so it is the member's best picture of its role wherever it is held.
-            out[name] = Ref(name, look.member, DRAWN_ROLE[kinds[look.member]], (look.member,),
+            kind = look.form.kind if look.form is not None else kinds[look.member]
+            out[name] = Ref(name, look.member, DRAWN_ROLE[kind], (look.member,),
                             (width // 32) * (height // 32), float(width * height) * 1e6, -1, look=True)  # fmt: skip
     return out
 
@@ -865,13 +915,31 @@ def states_of(resolved: looks.Resolved, shot_id: int) -> dict[str, Now]:
             continue
         before, after = resolved.look(member, placed.source), resolved.look(member, placed.look)
         picture = key(after)
+        was, becomes = before.form, after.form
+        if picked is None and was != becomes:
+            # Turning, it is shown as it starts and as it ends: two different things, neither the other's picture.
+            start = key(before)
+            held = tuple(k for k in (start, picture) if k)
+            out[member] = Now(
+                before.text, after.text, picture, start, held, None in (before.id, after.id), was=was, becomes=becomes
+            )
+            continue
         if picked is None:
-            out[member] = Now(before.text, after.text, picture, held=(picture,) if picture else (), bible=not picture)
+            held = (picture,) if picture else ()
+            out[member] = Now(
+                before.text,
+                after.text,
+                picture,
+                held=held,
+                bible=not picture and becomes is None,
+                was=was,
+                becomes=becomes,
+            )
             continue
         chosen = [look for look in (before, after) if look.id is not None and str(look.id) in picked]
         held = tuple(dict.fromkeys(k for look in chosen if (k := key(look))))
         start = key(before) if before.id != after.id and key(before) in held else ""
-        out[member] = Now(before.text, after.text, picture, start, held, store.BASE in picked)
+        out[member] = Now(before.text, after.text, picture, start, held, store.BASE in picked, was=was, becomes=becomes)
     return out
 
 

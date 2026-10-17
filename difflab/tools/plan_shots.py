@@ -69,6 +69,7 @@ def _take_from_plan(data: Any, base: compose.Take) -> compose.Take:
                 voices.setdefault(str(d["who"]), " ".join(str(d["voice"]).split()))
         changes = {str(m): _look(v) for m, v in (clip.get("looks") or {}).items()}
         made = {m: change for m, change in changes.items() if change[0]}
+        forms = {str(m): _form(v) for m, v in (clip.get("looks") or {}).items() if str(m) in made}
         chunks.append(
             compose.Chunk(
                 purpose=str(clip["purpose"]),
@@ -85,6 +86,7 @@ def _take_from_plan(data: Any, base: compose.Take) -> compose.Take:
                 opening=str(clip.get("opening") or "").strip(),
                 keyframe=bool(chunks) and not cut and clip.get("keyframe") is True,
                 looks={m: look for m, (look, _, _) in made.items()},
+                look_forms={m: form for m, form in forms.items() if form[0]},
                 look_names={m: name for m, (_, name, _) in made.items()},
                 look_from={m: start for m, (_, _, start) in changes.items() if start},
                 ambience=str(clip.get("ambience") or "").strip(),
@@ -105,6 +107,13 @@ def _look(given: Any) -> tuple[str, str, str]:
     if said("use"):
         return "", "", said("use")
     return said("look"), said("name"), said("from")
+
+
+def _form(given: Any) -> tuple[str, str]:
+    """What a version turns its member into, as (its noun, its kind); ("", "") for a version that only adds."""
+    if not isinstance(given, dict):
+        return "", ""
+    return " ".join(str(given.get("becomes") or "").split()), str(given.get("kind") or "").strip()
 
 
 def _versions(take: compose.Take, known: dict[str, list[Version]]) -> list[caption.Problem]:
@@ -193,6 +202,7 @@ def plan(
         question += "\n\n" + words.PLAN_VERSIONS.format(versions=listed)
     system = words.PLAN_SYSTEM.format(
         longest=longest, look_words=h3.DIRECTOR_LOOK_WORDS, name_words=h3.DIRECTOR_LOOK_NAME_WORDS,
+        form_words=h3.DIRECTOR_FORM_WORDS, form_noun_words=h3.DIRECTOR_FORM_NOUN_WORDS,
         airlock=h3.DIRECTOR_AIRLOCK[0], airlock_min=h3.DIRECTOR_AIRLOCK[1], settle=h3.DIRECTOR_SETTLE[0],
         settle_min=h3.DIRECTOR_SETTLE[1], quiet_max=h3.DIRECTOR_QUIET_MAX, early=window[0] * 100, late=window[1] * 100,
         handoff_min=h3.DIRECTOR_HANDOFF_MIN, max_living=h3.DIRECTOR_MAX_LIVING,

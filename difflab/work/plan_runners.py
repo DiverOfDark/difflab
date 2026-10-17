@@ -600,7 +600,7 @@ def _castings(inputs: dict[str, Any], outputs: dict[str, Any]) -> None:
         assert production is not None
         before = looks.resolve(connection, production)
         shots = store.shots_of(connection, chapter_id)
-        said: dict[str, str] = {}
+        said: dict[str, tuple[str, str, str]] = {}
         made: dict[tuple[str, str], int] = {}  # (member, a look's name) -> its casting, for a later clip to start from
         for shot, plan, changed in zip(shots, outputs["chunks"], outputs["looks"], strict=False):
             if shot.pinned:
@@ -610,14 +610,17 @@ def _castings(inputs: dict[str, Any], outputs: dict[str, Any]) -> None:
             for position, slug in enumerate(cast):
                 amend = " ".join(str((changed.get(slug) or {}).get("amend") or "").split())
                 label = " ".join(str((changed.get(slug) or {}).get("label") or "").split())
+                form = " ".join(str((changed.get(slug) or {}).get("form") or "").split())
+                form_kind = str((changed.get(slug) or {}).get("form_kind") or "").strip() if form else ""
                 start = str((changed.get(slug) or {}).get("parent") or "")
                 if start.startswith("@"):
                     parent = str(made[slug, start[1:]]) if (slug, start[1:]) in made else None
                 else:
                     parent = start or None
                 # Said again word for word in a later clip, a change is that clip carrying it, not a new look.
-                amend = "" if amend and amend == said.get(slug) else amend
-                said[slug] = amend or said.get(slug, "")
+                if amend and (amend, form, form_kind) == said.get(slug):
+                    amend, form, form_kind = "", "", ""
+                said[slug] = (amend, form, form_kind) if amend else said.get(slug, ("", "", ""))
                 where = _paragraph(str(inputs["idea"]), story, shot.position + 1)
                 origin = f"from text · ch {chapter.position + 1}" + (f" ¶{where}" if where else "") if amend else ""
                 found = existing.pop(members[slug], None)
@@ -625,9 +628,12 @@ def _castings(inputs: dict[str, Any], outputs: dict[str, Any]) -> None:
                     found = store.add_casting(
                         connection, shot.id, members[slug], parent=parent, amend=amend, origin=origin
                     )
-                elif found.amend != amend or found.parent != parent:
+                    store.update_casting(connection, found.id, form=form, form_kind=form_kind)
+                elif (found.amend, found.parent, found.form, found.form_kind) != (amend, parent, form, form_kind):
                     store.set_made(connection, "casting", found.id, store.STALE if found.artifact else store.MISSING)
-                    store.update_casting(connection, found.id, parent=parent, amend=amend)
+                    store.update_casting(
+                        connection, found.id, parent=parent, amend=amend, form=form, form_kind=form_kind
+                    )
                 store.update_casting(
                     connection, found.id, position=position, origin=origin, label=label if amend else ""
                 )
@@ -752,7 +758,9 @@ def _plan_shots(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, A
 
     changed = [
         {m: {"amend": chunk.looks.get(m, ""), "label": chunk.look_names.get(m, ""),
-             "parent": parent(m, chunk.look_from.get(m, ""))} for m in {**chunk.looks, **chunk.look_from}}
+             "parent": parent(m, chunk.look_from.get(m, "")),
+             **({"form": form[0], "form_kind": form[1]} if (form := chunk.look_forms.get(m)) else {})}
+         for m in {**chunk.looks, **chunk.look_from}}
         for chunk in planned.chunks
     ]  # fmt: skip
     with store.connect() as connection, store.transaction(connection):
@@ -848,7 +856,7 @@ def _versions_before(
         while name in taken:
             name, count = f"{look.label} {count}", count + 1
         picture = look.casting.artifact if look.approved else None
-        catalogue[look.member].append({"name": name, "words": look.text, "picture": picture, "id": look.id})
+        catalogue[look.member].append({"name": name, "words": look.said, "picture": picture, "id": look.id})
     last: dict[str, int | None] = {}
     for shot_id in resolved.order:
         if shot_id in earlier:
