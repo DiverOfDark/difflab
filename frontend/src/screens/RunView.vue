@@ -5,7 +5,8 @@
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { deleteRun, type Job } from '../api'
+import type { Job } from '../api'
+import DeleteButton from '../components/DeleteButton.vue'
 import DeliverScreen from '../components/DeliverScreen.vue'
 import RenderScreen from '../components/RenderScreen.vue'
 import { madeNoFiles } from '../run'
@@ -41,21 +42,11 @@ onMounted(() => {
 })
 
 const working = computed(() => !run.value || ['live', 'queued', 'paused'].includes(run.value.status))
-const deleting = ref(false)
 
-async function remove() {
-  if (!confirm(`Delete run ${props.id}, its log and every file it made that nothing else uses?`)) return
-  deleting.value = true
-  try {
-    await deleteRun(props.id)
-    unwatch()
-    await refresh()
-    router.push('/runs')
-  } catch (problem) {
-    alert(problem instanceof Error ? problem.message : String(problem))
-  } finally {
-    deleting.value = false
-  }
+async function deleted() {
+  unwatch()
+  await refresh()
+  router.push('/runs')
 }
 
 /** From the run's own record, so the button means what it says: the job on screen, not the form. */
@@ -72,14 +63,7 @@ function again(spec: Job) {
       {{ finished }}
     </button>
     <span class="mono muted">{{ id }}</span>
-    <button
-      class="delete"
-      :disabled="working || deleting"
-      :title="working ? 'cancel the run first' : 'delete the run and the files it made'"
-      @click="remove"
-    >
-      {{ deleting ? 'deleting…' : 'delete' }}
-    </button>
+    <DeleteButton :id="id" class="end" :disabled="working" @deleted="deleted" />
   </div>
   <RenderScreen v-if="screen === 'render' && run" :run="run" />
   <DeliverScreen v-else-if="screen === 'deliver' && run" :run="run" :record="record" @again="again" />
@@ -103,13 +87,8 @@ function again(spec: Job) {
   color: var(--muted);
 }
 
-.switch .delete {
+.switch .end {
   margin-left: auto;
-}
-
-.switch .delete:not(:disabled):hover {
-  color: var(--status-error);
-  border-color: var(--status-error);
 }
 
 .switch button.on {

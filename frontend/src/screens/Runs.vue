@@ -1,27 +1,14 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
-import { deleteRun, thumbUrl } from '../api'
+import { thumbUrl } from '../api'
+import DeleteButton from '../components/DeleteButton.vue'
 import { refresh, state } from '../store'
 
 const rows = computed(() => state.runs)
 const when = (t: number | null) => (t ? new Date(t * 1000).toLocaleString() : '—')
 const owner = (id: number | null) => state.productions.find((one) => one.id === id)
 const working = (status: string) => ['live', 'queued', 'paused'].includes(status)
-const deleting = ref('')
-
-async function remove(id: string) {
-  if (!confirm(`Delete run ${id}, its log and every file it made that nothing else uses?`)) return
-  deleting.value = id
-  try {
-    await deleteRun(id)
-    await refresh()
-  } catch (problem) {
-    alert(problem instanceof Error ? problem.message : String(problem))
-  } finally {
-    deleting.value = ''
-  }
-}
 </script>
 
 <template>
@@ -65,14 +52,7 @@ async function remove(id: string) {
             </td>
             <td class="mono muted">{{ when(one.started) }}</td>
             <td>
-              <button
-                class="delete"
-                :disabled="working(one.status) || deleting === one.id"
-                :title="working(one.status) ? 'cancel the run first' : 'delete the run and the files it made'"
-                @click="remove(one.id)"
-              >
-                {{ deleting === one.id ? 'deleting…' : 'delete' }}
-              </button>
+              <DeleteButton :id="one.id" :disabled="working(one.status)" @deleted="refresh" />
             </td>
           </tr>
           <tr v-if="!rows.length">
@@ -120,18 +100,6 @@ async function remove(id: string) {
   object-fit: cover;
   border-radius: var(--radius-input);
   background: var(--video);
-}
-
-.delete {
-  font-size: var(--text-xs);
-  padding: 2px 8px;
-  border-color: var(--line);
-  color: var(--muted);
-}
-
-.delete:not(:disabled):hover {
-  color: var(--status-error);
-  border-color: var(--status-error);
 }
 
 .pill {
