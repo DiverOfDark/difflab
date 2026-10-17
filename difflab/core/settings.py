@@ -281,6 +281,10 @@ class EditSettings(Settings):
     turbo: bool = setting(
         True, "turbo", "Qwen-Image 2.1 on the Turbo's own 8 sigmas, and steps is unused; off for the base model"
     )
+    # Measured 2026-10-17: the machine's 15 s at 0.9 MP took 721 s for one edit.
+    seconds_h3: float = setting(
+        3.0, "H3 seconds", "minimax-h3: the clip the edit plays out in; its last frame is the picture", unit="s", low=1
+    )
 
     steps_21: int = setting(
         40, "2.1 steps", "Qwen-Image 2.1's base model, with turbo off; Qwen's own pipeline takes 40", low=1, high=100
@@ -310,10 +314,11 @@ class EditSettings(Settings):
     def key_part(self) -> dict[str, Any]:
         # The AIO engine keys as it did before the 2.1 fields existed, so nothing it drew is drawn again.
         part = super().key_part()
-        mine = ("engine", "model_21", "text_encoder_21", "vae_21", "loras", "turbo", "steps_21", "cfg_21")
+        mine = ("engine", "model_21", "text_encoder_21", "vae_21", "loras", "turbo", "steps_21", "cfg_21", "seconds_h3")
         if self.engine == "qwen-image-edit":
             return {name: value for name, value in part.items() if name not in mine}
         part.pop("checkpoint")
+        part.pop("seconds_h3")
         part["loras"] = self.loras_21()
         # Under the AIO's names, as 2.1 was keyed when it shared them: what it drew then is found again.
         part["steps"], part["cfg"] = part.pop("steps_21"), part.pop("cfg_21")

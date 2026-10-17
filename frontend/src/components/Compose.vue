@@ -137,15 +137,19 @@ const groups = computed(() => {
       title: 'Video',
       meta: `${j.video.steps} steps · seed ${j.video.seed}`,
       rows: [
-        ...reshape(j),
-        {
-          key: 'duration',
-          hint: 'Seconds of clip. The frame count rounds up to the grid the VAE encodes, so 2 renders as 2.33.',
-          ...num(
-            () => j.video.duration,
-            (n) => (j.video.duration = n),
-          ),
-        },
+        ...(h3Edit.value
+          ? []
+          : [
+              ...reshape(j),
+              {
+                key: 'duration',
+                hint: 'Seconds of clip. The frame count rounds up to the grid the VAE encodes, so 2 renders as 2.33.',
+                ...num(
+                  () => j.video.duration,
+                  (n) => (j.video.duration = n),
+                ),
+              },
+            ]),
         {
           key: 'megapixels',
           hint: 'The canvas. 0.4 is the fast one, 0.98 is what the workflow was benchmarked at.',
@@ -209,7 +213,18 @@ const groups = computed(() => {
       out.push({
         title: 'MiniMax H3 · experimental',
         meta: 'the Video card sets the clip; photos after the first are references',
-        rows: [engine, ...reshape(j)],
+        rows: [
+          engine,
+          ...reshape(j),
+          {
+            key: 'seconds_h3',
+            hint: 'The clip the edit plays out in. Longer gives a slow change room; the cost grows with it.',
+            ...num(
+              () => j.edit.seconds_h3 ?? 3,
+              (n) => (j.edit.seconds_h3 = n),
+            ),
+          },
+        ],
       })
     else
       out.push({
@@ -390,7 +405,8 @@ const toggle = (title: string) => (open.value[title] = !open.value[title])
 const estimate = computed(() => {
   const j = job.value
   const rows: [string, string][] = []
-  if (shows('video')) rows.push(['LENGTH', `${j.video.duration.toFixed(1)}s`], ['CANVAS', `${j.video.megapixels} MP`])
+  const seconds = h3Edit.value ? (j.edit.seconds_h3 ?? 3) : j.video.duration
+  if (shows('video')) rows.push(['LENGTH', `${seconds.toFixed(1)}s`], ['CANVAS', `${j.video.megapixels} MP`])
   if (shows('edit') && !h3Edit.value) rows.push(['SIZE', `${j.edit.megapixels} MP`], ['STEPS', String(editSteps(j))])
   if (shows('finish')) rows.push(['DELIVER', j.finish_megapixels ? `${j.finish_megapixels} MP` : '—'])
   return rows

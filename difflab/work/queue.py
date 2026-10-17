@@ -69,7 +69,7 @@ def plan(job: Job) -> list[JobSpec]:
                 "render_clip",
                 {"photo": photo, "prompt": prompt_, "references": references, "still": True, **cut},
                 "render the edit",
-                job.video.data(),
+                job.video.with_(duration=job.edit.seconds_h3).data(),
             )
         )
         return jobs
