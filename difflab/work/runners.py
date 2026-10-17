@@ -35,6 +35,7 @@ from difflab.core.settings import (
 from difflab.core.types import Clip, Frame
 from difflab.models.minimax_h3 import config as h3_config
 from difflab.models.minimax_h3 import pipeline, vae
+from difflab.models.minimax_h3 import prompts as video_prompts
 from difflab.models.minimax_h3.settings import VideoPromptSettings, VideoSettings
 from difflab.screenplay import compiler, drawn, made, words
 from difflab.screenplay import production as production_module
@@ -105,7 +106,10 @@ def run_create_image(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[s
 
 
 def run_write_video_prompt(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
-    text = write_prompt.write_video_prompt(_opening(inputs), str(inputs["idea"]), VideoPromptSettings(**settings))
+    system = video_prompts.VLM_SYSTEM_PROMPT_EDIT if inputs.get("still") else video_prompts.VLM_SYSTEM_PROMPT
+    text = write_prompt.write_video_prompt(
+        _opening(inputs), str(inputs["idea"]), VideoPromptSettings(**settings), system
+    )
     return {"text": text}
 
 
@@ -120,8 +124,12 @@ def run_render_clip(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
     chosen = VideoSettings(**settings)
     references = [_frame(p) for p in inputs.get("references", [])]
     clip = render_chunk.render(_opening(inputs), str(inputs["prompt"]), chosen, references=references)
-    path = media.save(clip, HubFile.parse(chosen.checkpoint).path.stem, chosen.seed, announce=False)
-    return {"video": store.relative(path)}
+    stem = HubFile.parse(chosen.checkpoint).path.stem
+    path = media.save(clip, stem, chosen.seed, announce=False)
+    if not inputs.get("still"):
+        return {"video": store.relative(path)}
+    png = media.save(clip.last_frame(), stem, chosen.seed, announce=False)
+    return {"image": store.relative(png), "video": store.relative(path)}
 
 
 def run_enlarge_pixels(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:

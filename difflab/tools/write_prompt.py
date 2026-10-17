@@ -25,13 +25,15 @@ DESCRIBED = {
 }
 
 
-def write_video_prompt(frame: Frame, idea: str, settings: VlmSettings | None = None) -> str:
+def write_video_prompt(
+    frame: Frame, idea: str, settings: VlmSettings | None = None, system: str = video_prompts.VLM_SYSTEM_PROMPT
+) -> str:
     """A rough idea plus the frame -> one finished MiniMax H3 prompt."""
     settings = settings or VIDEO_VLM
     written = _vlm(settings).ask(
         frame.pil(),
         idea,
-        system=video_prompts.VLM_SYSTEM_PROMPT,
+        system=system,
         title="H3 prompt",
         **settings.generation(),
     )

@@ -29,7 +29,9 @@ const USES: Record<string, string[]> = {
   edit: ['words', 'photos', 'edit', 'vlm'],
   upscale: ['clip', 'finish', 'delivery'],
 }
-const uses = computed(() => USES[job.value.mode] ?? [])
+/** An H3 edit is sampled on the video knobs; the edit card keeps only the engine. */
+const h3Edit = computed(() => job.value.mode === 'edit' && job.value.edit.engine === 'minimax-h3')
+const uses = computed(() => [...(USES[job.value.mode] ?? []), ...(h3Edit.value ? ['video'] : [])])
 const shows = (part: string) => uses.value.includes(part)
 
 // Its own state, not read off which box has text: an empty prompt has to be choosable, and the job may
@@ -193,6 +195,7 @@ const groups = computed(() => {
       options: [
         ['qwen-image-edit', 'qwen-image-edit · the AIO'],
         ['qwen-image-2.1', 'qwen-image-2.1 · experimental'],
+        ['minimax-h3', 'minimax-h3 · a clip, its last frame kept'],
       ],
     }
     const aspect: Knob = {
@@ -202,82 +205,89 @@ const groups = computed(() => {
       set: (v) => (j.aspect = v),
       options: [['', 'auto'], ...SHAPES],
     }
-    out.push({
-      title: is21 ? 'Qwen-Image 2.1 · experimental' : 'Qwen Image Edit',
-      meta: `${editSteps(j)} steps · seed ${j.edit.seed}`,
-      rows: [
-        ...(creating ? [aspect] : [engine, ...reshape(j)]),
-        ...(is21
-          ? [
-              {
-                key: 'turbo',
-                hint: "Qwen-Image 2.1 on the Turbo's own 8 steps; off for the base model, which takes the steps below.",
-                get: () => String(j.edit.turbo ?? true),
-                set: (v: string) => (j.edit.turbo = v === 'true'),
-                options: [
-                  ['true', 'on · 8 steps'],
-                  ['false', 'off · base model'],
-                ] as [string, string][],
-              },
-            ]
-          : []),
-        ...(turbo
-          ? []
-          : is21
+    if (h3Edit.value)
+      out.push({
+        title: 'MiniMax H3 · experimental',
+        meta: 'the Video card sets the clip; photos after the first are references',
+        rows: [engine, ...reshape(j)],
+      })
+    else
+      out.push({
+        title: is21 ? 'Qwen-Image 2.1 · experimental' : 'Qwen Image Edit',
+        meta: `${editSteps(j)} steps · seed ${j.edit.seed}`,
+        rows: [
+          ...(creating ? [aspect] : [engine, ...reshape(j)]),
+          ...(is21
             ? [
                 {
-                  key: 'steps',
-                  hint: "The base model's steps. Qwen's own pipeline takes 40.",
-                  ...num(
-                    () => j.edit.steps_21 ?? 40,
-                    (n) => (j.edit.steps_21 = n),
-                  ),
-                },
-                {
-                  key: 'cfg',
-                  hint: 'Qwen-Image 2.1 is sampled without guidance: 1. Above it the negative prompt costs a second pass.',
-                  ...num(
-                    () => j.edit.cfg_21 ?? 1,
-                    (n) => (j.edit.cfg_21 = n),
-                  ),
+                  key: 'turbo',
+                  hint: "Qwen-Image 2.1 on the Turbo's own 8 steps; off for the base model, which takes the steps below.",
+                  get: () => String(j.edit.turbo ?? true),
+                  set: (v: string) => (j.edit.turbo = v === 'true'),
+                  options: [
+                    ['true', 'on · 8 steps'],
+                    ['false', 'off · base model'],
+                  ] as [string, string][],
                 },
               ]
-            : [
-                {
-                  key: 'steps',
-                  hint: 'The all-in-one is distilled; eight is the whole of it.',
-                  ...num(
-                    () => j.edit.steps,
-                    (n) => (j.edit.steps = n),
-                  ),
-                },
-                {
-                  key: 'cfg',
-                  hint: 'Stays at 1. Above it the negative prompt starts costing a second pass.',
-                  ...num(
-                    () => j.edit.cfg,
-                    (n) => (j.edit.cfg = n),
-                  ),
-                },
-              ]),
-        {
-          key: 'megapixels',
-          hint: creating ? 'The size it is drawn at.' : 'The delivered size. The input is resized to it before the model sees it.',
-          ...num(
-            () => j.edit.megapixels,
-            (n) => (j.edit.megapixels = n),
-          ),
-        },
-        {
-          key: 'seed',
-          hint: 'The only thing that changes between two runs of the same instruction.',
-          ...num(
-            () => j.edit.seed,
-            (n) => (j.edit.seed = n),
-          ),
-        },
-      ],
-    })
+            : []),
+          ...(turbo
+            ? []
+            : is21
+              ? [
+                  {
+                    key: 'steps',
+                    hint: "The base model's steps. Qwen's own pipeline takes 40.",
+                    ...num(
+                      () => j.edit.steps_21 ?? 40,
+                      (n) => (j.edit.steps_21 = n),
+                    ),
+                  },
+                  {
+                    key: 'cfg',
+                    hint: 'Qwen-Image 2.1 is sampled without guidance: 1. Above it the negative prompt costs a second pass.',
+                    ...num(
+                      () => j.edit.cfg_21 ?? 1,
+                      (n) => (j.edit.cfg_21 = n),
+                    ),
+                  },
+                ]
+              : [
+                  {
+                    key: 'steps',
+                    hint: 'The all-in-one is distilled; eight is the whole of it.',
+                    ...num(
+                      () => j.edit.steps,
+                      (n) => (j.edit.steps = n),
+                    ),
+                  },
+                  {
+                    key: 'cfg',
+                    hint: 'Stays at 1. Above it the negative prompt starts costing a second pass.',
+                    ...num(
+                      () => j.edit.cfg,
+                      (n) => (j.edit.cfg = n),
+                    ),
+                  },
+                ]),
+          {
+            key: 'megapixels',
+            hint: creating ? 'The size it is drawn at.' : 'The delivered size. The input is resized to it before the model sees it.',
+            ...num(
+              () => j.edit.megapixels,
+              (n) => (j.edit.megapixels = n),
+            ),
+          },
+          {
+            key: 'seed',
+            hint: 'The only thing that changes between two runs of the same instruction.',
+            ...num(
+              () => j.edit.seed,
+              (n) => (j.edit.seed = n),
+            ),
+          },
+        ],
+      })
   }
   if (shows('delivery'))
     out.push({
@@ -381,7 +391,7 @@ const estimate = computed(() => {
   const j = job.value
   const rows: [string, string][] = []
   if (shows('video')) rows.push(['LENGTH', `${j.video.duration.toFixed(1)}s`], ['CANVAS', `${j.video.megapixels} MP`])
-  if (shows('edit')) rows.push(['SIZE', `${j.edit.megapixels} MP`], ['STEPS', String(editSteps(j))])
+  if (shows('edit') && !h3Edit.value) rows.push(['SIZE', `${j.edit.megapixels} MP`], ['STEPS', String(editSteps(j))])
   if (shows('finish')) rows.push(['DELIVER', j.finish_megapixels ? `${j.finish_megapixels} MP` : '—'])
   return rows
 })

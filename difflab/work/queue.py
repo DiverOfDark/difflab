@@ -48,8 +48,29 @@ def plan(job: Job) -> list[JobSpec]:
             aspect: Any = job.aspect or output_of(0, "aspect")
         else:
             prompt_, aspect = job.prompt, job.aspect or "1:1"
+        jobs.append(JobSpec("create_image", {"prompt": prompt_, "aspect": aspect}, "draw the picture", job.edit.data()))
+        return jobs
+    if job.mode == "edit" and job.edit.engine == "minimax-h3":
+        if job.idea:
+            jobs.append(
+                JobSpec(
+                    "write_video_prompt",
+                    {"photo": photo, "idea": job.idea, "still": True, **cut},
+                    "write the prompt",
+                    job.vlm.data(),
+                )
+            )
+            prompt_ = output_of(len(jobs) - 1, "text")
+        else:
+            prompt_ = job.prompt
+        references = [str(p) for p in job.photos[1:]]
         jobs.append(
-            JobSpec("create_image", {"prompt": prompt_, "aspect": aspect}, "draw the picture", job.edit.data())
+            JobSpec(
+                "render_clip",
+                {"photo": photo, "prompt": prompt_, "references": references, "still": True, **cut},
+                "render the edit",
+                job.video.data(),
+            )
         )
         return jobs
     if job.mode == "edit":

@@ -239,10 +239,11 @@ class EditSettings(Settings):
     megapixels: float = setting(
         2.0, "size", "the picture is resized to this many pixels before editing", unit="MP", low=0.25, high=4
     )
-    engine: Literal["qwen-image-edit", "qwen-image-2.1"] = setting(
+    engine: Literal["qwen-image-edit", "qwen-image-2.1", "minimax-h3"] = setting(
         "qwen-image-edit",
         "engine",
-        "qwen-image-2.1 is experimental: its own model, text encoder and LoRAs below; the AIO model is unused",
+        "qwen-image-2.1 is experimental: its own model, text encoder and LoRAs below; the AIO model is unused. "
+        "minimax-h3 renders the edit as a clip on the video settings and keeps its last frame",
     )
     # Qwen's 8-step Turbo as Comfy-Org repacked it. The base model is
     # "diffusion_models/qwen_image_2.1_int8_convrot.safetensors" in the same repo, with `turbo` off.
