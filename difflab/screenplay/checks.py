@@ -46,6 +46,7 @@ SIDE = re.compile(
 )
 PHASES = ("airlock", "carry", "build", "primary", "handoff", "reaction", "settle")
 QUIET = ("airlock", "settle")  # beats in which nothing new happens
+FORM_KINDS = ("person", "animal", "object")  # what a member can turn into: a place is never one
 
 
 def chunk_rules(text: str, labels: list[str], directive: str) -> list[Problem]:
@@ -223,11 +224,20 @@ def plan_rules(take: compose.Take) -> list[Problem]:
         elif chunk.cut == "new" and not compose.PLACEHOLDER.search(chunk.opening):
             fail("cut", f"{clip}: a \"new\" cut writes its 'opening', the first frame, naming every member in it")
         for member, change in chunk.looks.items():
+            becomes, kind = chunk.look_forms.get(member, ("", ""))
+            most = config.DIRECTOR_FORM_WORDS if becomes else config.DIRECTOR_LOOK_WORDS
             if member not in chunk.cast:
                 fail("looks", f"{clip}: 'looks' changes {{{member}}}, who is not in its cast")
-            elif len(change.split()) > config.DIRECTOR_LOOK_WORDS:
-                fail("looks", f"{clip}: the look of {{{member}}} is {len(change.split())} words; at most "
-                     f"{config.DIRECTOR_LOOK_WORDS}")  # fmt: skip
+            elif len(change.split()) > most:
+                fail("looks", f"{clip}: the look of {{{member}}} is {len(change.split())} words; at most {most}")
+            if becomes:
+                least, longest = config.DIRECTOR_FORM_NOUN_WORDS
+                if not least <= len(becomes.split()) <= longest:
+                    fail("looks", f'{clip}: what {{{member}}} "becomes" is {least} to {longest} words, not '
+                         f'"{becomes}": "stone statue", "full moon"')  # fmt: skip
+                if kind not in FORM_KINDS:
+                    fail("looks", f'{clip}: the "kind" {{{member}}} becomes is one of {", ".join(FORM_KINDS)}, '
+                         f'not "{kind}"')  # fmt: skip
             fewest, most = config.DIRECTOR_LOOK_NAME_WORDS
             called = len(chunk.look_names.get(member, "").split())
             if member in chunk.cast and not fewest <= called <= most:
@@ -359,14 +369,13 @@ def cross_chunk_rules(take: compose.Take, prompts: list[str]) -> list[Problem]:
     """What must not drift between chunks: the style, the room and its light, the room sound, the cast."""
     out: list[Problem] = []
     for index, (chunk, prompt) in enumerate(zip(take.chunks, prompts, strict=True)):
-        room = take.cards[compose.place(take, chunk)]
+        cards = compose.cards_at(take, index)
+        room = cards[compose.place(take, chunk)]
         lit = f", lit by {compose.join(room.lights)}." if room.lights else "."
         heard = compose.ambience(take, index).strip().rstrip(".")[1:]
         fixed = [words.STYLE.split("{room}")[0], f"with {room.short()}{lit}", heard]
         wanted = fixed + [
-            f"the {take.cards[m].noun} with {take.cards[m].short()}"
-            for m in chunk.cast
-            if take.cards[m].kind in compose.LIVING
+            f"the {cards[m].noun} with {cards[m].short()}" for m in chunk.cast if cards[m].kind in compose.LIVING
         ]
         out += [Problem("error", "drift", f"clip {index + 1} lost '{x[:48]}'") for x in wanted if x not in prompt]
     return out

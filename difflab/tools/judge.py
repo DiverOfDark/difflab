@@ -51,11 +51,13 @@ def judge(
     becomes: dict[str, str] | None = None,
     allowed: dict[str, str] | None = None,
     appearance: dict[str, str] | None = None,
+    turned: dict[str, str] | None = None,
 ) -> Verdict:
     """`kind` is keyframe or clip; `arrangement` is what should be seen, members as {id}; `pictures` are
     members' own reference photos by id, shown before the frames so clothes are judged against them;
     `looks` is what earlier shots changed about a member for good, and `becomes` what this one changes.
-    `allowed` is what the bible lets differ from the photo, `appearance` a member's look as a person wrote it."""
+    `allowed` is what the bible lets differ from the photo, `appearance` a member's look as a person wrote it.
+    `turned` is what a member that has turned into something else was in its reference photo."""
     given = {slug: frame for slug, frame in (pictures or {}).items() if slug in {card.id for card in cast}}
     numbered = {slug: n for n, slug in enumerate(given, 1)}
     expected = {card.id for card in cast}
@@ -63,7 +65,11 @@ def judge(
     def parse(data: Any) -> Verdict:
         likeness = {str(m["id"]): float(m["likeness"]) for m in data.get("cast", [])}
         strangers = [f"not in the shot: {s}" for s in map(str, data.get("strangers", [])) if s.strip()]
-        restyle = [str(m["id"]) for m in data.get("cast", []) if m.get("outfit") is False and str(m["id"]) in given]
+        restyle = [
+            str(m["id"])
+            for m in data.get("cast", [])
+            if m.get("outfit") is False and str(m["id"]) in given and str(m["id"]) not in (turned or {})
+        ]
         changed = [f"{member}: clothes differ from their photo" for member in restyle]
         score = float(data["score"])
         # Held in code as well as asked: the model rounds its own rule. Not on a clip, whose every retake
@@ -100,6 +106,7 @@ def judge(
             + (f"; changed since its photo: {looks[c.id]}" if looks and looks.get(c.id) else "")
             + (f"; may differ from its photo in: {allowed[c.id]}" if allowed and allowed.get(c.id) else "")
             + (f"; during this shot it changes to: {becomes[c.id]}" if becomes and becomes.get(c.id) else "")
+            + (words.JUDGE_FORM.format(was=turned[c.id]) if turned and c.id in turned and c.id in numbered else "")
             + (f" (reference photo: Picture {numbered[c.id]})" if c.id in numbered else "")
             for c in cast
         )

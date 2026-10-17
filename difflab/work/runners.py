@@ -39,6 +39,7 @@ from difflab.models.minimax_h3 import prompts as video_prompts
 from difflab.models.minimax_h3.settings import VideoPromptSettings, VideoSettings
 from difflab.screenplay import compiler, drawn, made, words
 from difflab.screenplay import production as production_module
+from difflab.screenplay.looks import Form
 from difflab.tools import (
     assemble,
     compose_keyframe,
@@ -441,6 +442,7 @@ def run_compose_keyframe(inputs: dict[str, Any], settings: dict[str, Any]) -> di
     production_id = int(inputs["production"])
     with store.connect() as connection:
         cards = {m.slug: compiler.card_of(m) for m in store.members_of(connection, production_id)}
+    cards |= {slug: compiler.formed(cards[slug], form) for slug, form in _forms(inputs).items() if slug in cards}
     chosen = EditSettings(**settings).with_(seed=int(inputs["seed"]))
     size = (int(inputs["size"][0]), int(inputs["size"][1])) if inputs.get("size") else None
     keep = str(inputs["keep"]) if inputs.get("keep") else None
@@ -487,9 +489,12 @@ def run_draw_look(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str,
     face = _frame(inputs["face"]) if inputs.get("face") else None
     size = (int(inputs["size"][0]), int(inputs["size"][1]))
     kind, amend = str(inputs["kind"]), str(inputs["amend"])
-    said = words.COMPOSE_LOOK.format(
-        noun=inputs["noun"], kept=words.COMPOSE_LOOK_KEEP[kind], amendment=amend.rstrip(".")
-    )
+    if inputs.get("form"):
+        said = words.COMPOSE_FORM.format(was=inputs["was"], form=inputs["form"], look=amend.rstrip("."))
+    else:
+        said = words.COMPOSE_LOOK.format(
+            noun=inputs["noun"], kept=words.COMPOSE_LOOK_KEEP[kind], amendment=amend.rstrip(".")
+        )
     if str(inputs.get("allowed") or "").strip():
         said = f"{said} {words.COMPOSE_LOOK_ALLOWED.format(allowed=str(inputs['allowed']).strip().rstrip('.'))}"
     if face is not None:
@@ -638,6 +643,12 @@ def _place_from_story(member: store.Member, forced: bool = False) -> store.Membe
     return written
 
 
+def _forms(inputs: dict[str, Any]) -> dict[str, Form]:
+    """What a job's members have turned into, by slug."""
+    given = inputs.get("forms") or {}
+    return {str(slug): Form(str(f["noun"]), str(f["kind"]), str(f["look"])) for slug, f in given.items()}
+
+
 def run_judge(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
     chosen = JudgeSettings(**settings)
     production_id, kind = int(inputs["production"]), str(inputs["kind"])
@@ -651,9 +662,11 @@ def run_judge(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any
             m for m in store.members_of(connection, production_id)
             if m.slug in cast and not (framed and m.kind == "environment")
         ]  # fmt: skip
-    cards = [compiler.card_of(m) for m in rows]
-    allowed = {m.slug: m.allowed for m in rows if m.allowed.strip()}
-    appearance = {m.slug: m.appearance for m in rows if m.appearance.strip()}
+    forms = _forms(inputs)
+    cards = [compiler.formed(compiler.card_of(m), forms.get(m.slug)) for m in rows]
+    allowed = {m.slug: m.allowed for m in rows if m.allowed.strip() and m.slug not in forms}
+    appearance = {m.slug: m.appearance for m in rows if m.appearance.strip() and m.slug not in forms}
+    turned = {str(slug): str(form["was"]) for slug, form in (inputs.get("forms") or {}).items() if form.get("was")}
     if kind == "clip":
         frames = judge.sampled(media.clip_from_video(_path(inputs["path"]), with_audio=False))
     else:
@@ -664,7 +677,7 @@ def run_judge(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any
     try:
         verdict = judge.judge(
             frames, kind, str(inputs.get("purpose", "")), str(inputs.get("arrangement", "")), cards, chosen, pictures,
-            looks, becomes, allowed, appearance,
+            looks, becomes, allowed, appearance, turned,
         )  # fmt: skip
     except RuntimeError as problem:  # an unusable verdict is a thing to look at, never a reason to end a render
         ui.note(f"judge · {kind}: no usable verdict ({problem})")

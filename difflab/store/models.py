@@ -506,7 +506,8 @@ class Reference(Made):
 
 @dataclass(frozen=True, kw_only=True)
 class Casting(Made):
-    """A member in a shot; with `amend`, a look of its own whose picture the made columns are."""
+    """A member in a shot; with `amend`, a look of its own whose picture the made columns are; with `form` as
+    well, a look that turns it into that, `amend` then its whole look."""
 
     shot_id: int
     member_id: int
@@ -518,6 +519,8 @@ class Casting(Made):
     size: list[int]
     seed: int | None
     pictured: list[str] | None
+    form: str = ""
+    form_kind: str = ""
 
     @property
     def amended(self) -> bool:
@@ -537,6 +540,8 @@ class Casting(Made):
             size=[int(v) for v in _list(row["size"])],
             seed=_whole(row["seed"]),
             pictured=None if row["pictured"] is None else [str(v) for v in _list(row["pictured"])],
+            form=_text(row["form"]),
+            form_kind=_text(row["form_kind"]),
         )
 
 

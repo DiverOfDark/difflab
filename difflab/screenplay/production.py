@@ -20,7 +20,7 @@ from difflab.core.keys import key
 from difflab.core.settings import Continuity, EditSettings, IngestSettings, Settings
 from difflab.models.minimax_h3 import pipeline
 from difflab.models.minimax_h3.settings import VideoSettings
-from difflab.screenplay import assembling, compiler, crops, drawn, looks, settings, timings, words
+from difflab.screenplay import assembling, checks, compiler, crops, drawn, looks, settings, timings, words
 from difflab.screenplay import config as knobs
 
 _SLUG = re.compile(r"[a-z0-9][a-z0-9_-]*")
@@ -1107,8 +1107,9 @@ def add_casting(shot_id: int, member: str, **changes: Any) -> int:
 
 def edit_casting(casting_id: int, **changes: Any) -> int:
     """`parent` (None its last look, "base", or an earlier look's id), `amend`, `label`, `pictured` (None the
-    compiler's pick, or the looks whose pictures the shot hands over, as `parent` names them); restales its shots."""
-    unknown = set(changes) - {"parent", "amend", "label", "pictured"}
+    compiler's pick, or the looks whose pictures the shot hands over, as `parent` names them), `form` and
+    `form_kind` (what the look turns the member into, "" a look that only adds); restales its shots."""
+    unknown = set(changes) - {"parent", "amend", "label", "pictured", "form", "form_kind"}
     if unknown:
         raise ValueError(f"a casting has no {', '.join(sorted(unknown))} to edit")
     with store.connect() as connection, store.transaction(connection):
@@ -1153,7 +1154,8 @@ def upload_look(casting_id: int, path: str) -> int:
         _, production = _shot_and_production(connection, casting.shot_id)
         member = store.member(connection, casting.member_id)
         assert member is not None
-        role = compiler.DRAWN_ROLE[member.kind]
+        form = looks.resolve(connection, production).looks[casting.id].form
+        role = compiler.DRAWN_ROLE[form.kind if form is not None else member.kind]
         _, kept, _, size = _fitted(production, path, role, f"{member.slug}_look{casting.id}")
         store.set_made(
             connection, "casting", casting.id, store.APPROVED, artifact=kept, review="", reviewed_by=store.PERSON,
@@ -1193,12 +1195,18 @@ def _recast(
             fields["amend"] = " ".join(str(changes["amend"] or "").split())
         if "label" in changes:
             fields["label"] = " ".join(str(changes["label"] or "").split())
+        for name in ("form", "form_kind"):
+            if name in changes:
+                fields[name] = " ".join(str(changes[name] or "").split())
+        if fields.get("form_kind") and fields["form_kind"] not in checks.FORM_KINDS:
+            raise ValueError(f"a member turns into one of {', '.join(checks.FORM_KINDS)}, not {fields['form_kind']}")
         if "pictured" in changes:
             fields["pictured"] = _pictured(before, shot, member.slug, changes["pictured"])
         if "amend" in fields and fields["amend"] and casting.amend != fields["amend"] and not casting.origin:
             fields["origin"] = "by hand"
         store.update_casting(connection, casting.id, **fields)
-        redrawn = any(name in fields and fields[name] != getattr(casting, name) for name in ("amend", "parent"))
+        drawn_from = ("amend", "parent", "form", "form_kind")
+        redrawn = any(name in fields and fields[name] != getattr(casting, name) for name in drawn_from)
         if redrawn:
             store.set_made(connection, "casting", casting.id, store.STALE if casting.artifact else store.MISSING)
             restale_looks(connection, casting.id)
@@ -1218,7 +1226,7 @@ def restage(
     after = looks.resolve(connection, production)
     for look in after.looks.values():
         was = before.looks.get(look.casting.id) if look.casting is not None else None
-        moved = was is None or (was.source, was.words) != (look.source, look.words)
+        moved = was is None or (was.source, was.words, was.form) != (look.source, look.words, look.form)
         if moved and look.casting is not None and look.casting.artifact and look.casting.state != store.STALE:
             store.set_made(connection, "casting", look.casting.id, store.STALE)
     touched = looks.moved(before, after) | also
@@ -1815,7 +1823,11 @@ def _hashes(
             [
                 [s[k] for k in _SHOTS]
                 + [s["prompt"]["text"], s["keyframe"]["key"]]
-                + [[c["member"], c["parent"], c["amend"], c["key"], c["pictured"]] for c in s["castings"]]
+                + [
+                    [c["member"], c["parent"], c["amend"], c["key"], c["pictured"]]
+                    + ([c["form"], c["form_kind"]] if c["form"] else [])
+                    for c in s["castings"]
+                ]
                 for s in shots
             ]
         ),
@@ -1928,7 +1940,8 @@ def _look(resolved: looks.Resolved, look: looks.Look, bases: dict[str, store.Ref
         "id": look.id,
         "member": look.member,
         "label": look.label,
-        "words": look.text,
+        "words": look.said,
+        "form": look.form.noun if look.form else "",
         "shot": None if look.casting is None else look.casting.shot_id,
         "image": _image(look),
         "artifact": look.casting.artifact if look.casting is not None else base.artifact if base else None,
@@ -1961,6 +1974,8 @@ def _castings(
                 "position": casting.position,
                 "parent": casting.parent,
                 "amend": casting.amend,
+                "form": casting.form,
+                "form_kind": casting.form_kind,
                 "label": casting.label,
                 "origin": casting.origin,
                 "size": casting.size,
