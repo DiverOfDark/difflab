@@ -292,6 +292,13 @@ class EditSettings(Settings):
     seconds_h3: float = setting(
         3.0, "H3 seconds", "minimax-h3: the clip the edit plays out in; its last frame is the picture", unit="s", low=1
     )
+    # fl2va pins frame 0 to the start photo, so a new outfit has to be put on on camera; ref2va pins nothing.
+    opening_h3: Literal["pinned", "free"] = setting(
+        "pinned",
+        "H3 opening",
+        "minimax-h3: pinned opens the clip on the start photo (fl2va); free hands every photo over as a reference "
+        "(ref2va), a new shot of the same person rather than this one changed",
+    )
 
     steps_21: int = setting(
         40, "2.1 steps", "Qwen-Image 2.1's base model, with turbo off; Qwen's own pipeline takes 40", low=1, high=100
@@ -321,11 +328,13 @@ class EditSettings(Settings):
     def key_part(self) -> dict[str, Any]:
         # The AIO engine keys as it did before the 2.1 fields existed, so nothing it drew is drawn again.
         part = super().key_part()
-        mine = ("engine", "model_21", "text_encoder_21", "vae_21", "loras", "turbo", "steps_21", "cfg_21", "seconds_h3")
+        mine = ("engine", "model_21", "text_encoder_21", "vae_21", "loras", "turbo", "steps_21", "cfg_21",
+                "seconds_h3", "opening_h3")  # fmt: skip
         if self.engine == "qwen-image-edit":
             return {name: value for name, value in part.items() if name not in mine}
         part.pop("checkpoint")
         part.pop("seconds_h3")
+        part.pop("opening_h3")
         part["loras"] = self.loras_21()
         # Under the AIO's names, as 2.1 was keyed when it shared them: what it drew then is found again.
         part["steps"], part["cfg"] = part.pop("steps_21"), part.pop("cfg_21")

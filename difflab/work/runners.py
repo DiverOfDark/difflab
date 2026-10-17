@@ -119,6 +119,11 @@ def run_create_image(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[s
 
 
 def run_write_video_prompt(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
+    if inputs.get("photo") is None:
+        frames = _references(inputs)
+        return {
+            "text": write_prompt.write_reference_caption(frames, str(inputs["idea"]), VideoPromptSettings(**settings))
+        }
     system = video_prompts.VLM_SYSTEM_PROMPT_EDIT if inputs.get("still") else video_prompts.VLM_SYSTEM_PROMPT
     text = write_prompt.write_video_prompt(
         _opening(inputs), str(inputs["idea"]), VideoPromptSettings(**settings), system
@@ -136,7 +141,8 @@ def run_edit_image(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str
 def run_render_clip(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
     chosen = VideoSettings(**settings)
     references = _references(inputs)
-    clip = render_chunk.render(_opening(inputs), str(inputs["prompt"]), chosen, references=references)
+    opening = _opening(inputs) if inputs.get("photo") is not None else None
+    clip = render_chunk.render(opening, str(inputs["prompt"]), chosen, references=references)
     stem = HubFile.parse(chosen.checkpoint).path.stem
     path = media.save(clip, stem, chosen.seed, announce=False)
     if not inputs.get("still"):

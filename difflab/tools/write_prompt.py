@@ -6,11 +6,13 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Sequence
+from typing import Any
 
 from difflab import prompts as edit_prompts
 from difflab.core.settings import VlmSettings
 from difflab.core.types import Frame
 from difflab.models.exl3vl import ANY_JSON
+from difflab.models.minimax_h3 import caption
 from difflab.models.minimax_h3 import prompts as video_prompts
 from difflab.models.minimax_h3.settings import VideoPromptSettings
 from difflab.tools.ask_vlm import _vlm
@@ -53,6 +55,45 @@ def write_video_prompt(
     if not written:
         raise RuntimeError("the VLM returned an empty prompt")
     return written
+
+
+def _parts(pictures: int) -> dict[str, Any]:
+    each = {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": pictures, "maxItems": pictures}
+    text = {"type": "string", "minLength": 1}
+    fields = {"pictures": each, "kept": each, "summary": text, "style": text, "shot": text, "sound": text}
+    return {**ANY_JSON, "type": "object", "properties": fields, "required": list(fields), "additionalProperties": False}
+
+
+def write_reference_caption(frames: Sequence[Frame], idea: str, settings: VlmSettings | None = None) -> str:
+    """The photos and an edit -> the six-section ref2va caption of the photo already edited."""
+    settings = settings or VIDEO_VLM
+    raw = _vlm(settings).ask(
+        [frame.pil() for frame in frames],
+        idea,
+        system=video_prompts.VLM_SYSTEM_PROMPT_EDIT_REF,
+        title="H3 caption",
+        as_json=True,
+        schema=_parts(len(frames)),
+        **settings.generation(),
+    )
+    data = json.loads(raw)
+    labels = caption.labels(len(frames), tail=False)
+    retention = [
+        f"{label} (appears in [Shot 1]): partially_preserved - {kept.strip()}"
+        for label, kept in zip(labels, data["kept"], strict=True)
+    ]
+    text = (
+        "subject_definitions:\n" + "\n".join(line.strip() for line in data["pictures"]) + "\n\n"
+        f"summary:\n{caption.directive(tail=False, framed=False)} {data['summary'].strip()}\n\n"
+        "retention_analysis:\n" + "\n".join(retention) + "\n\n"
+        f"detailed_description:\n{data['style'].strip()}\n[Shot 1] {data['shot'].strip()}\n\n"
+        f"overall_soundscape:\n{data['sound'].strip()}\n\n"
+        "non_diegetic_music:\nnone\n"
+    )
+    wrong = caption.errors(caption.ide_rules(text) + caption.label_rules(text, labels))
+    if wrong:
+        raise RuntimeError("the VLM's caption breaks H3's format: " + "; ".join(p.message for p in wrong))
+    return text
 
 
 def write_edit_instruction(

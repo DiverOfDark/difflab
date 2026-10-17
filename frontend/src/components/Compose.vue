@@ -35,6 +35,7 @@ const h3Edit = computed(() => job.value.mode === 'picture' && job.value.start &&
 /** What a prompt calls each photo, in the words the engine that reads it was trained on. */
 const tags = computed(() => {
   const j = job.value
+  if (h3Edit.value && j.edit.opening_h3 === 'free') return j.photos.map((_, i) => `<Picture ${i + 1}>`)
   if (j.mode !== 'picture' || j.photos.length < 2 || h3Edit.value) return undefined
   const aio = !drawing(j) && (j.edit.engine ?? 'qwen-image-edit') === 'qwen-image-edit'
   return j.photos.map((_, i) => (aio ? `Picture ${i + 1}` : `<image${i + 1}>`))
@@ -225,10 +226,23 @@ const groups = computed(() => {
     if (h3Edit.value)
       out.push({
         title: 'MiniMax H3 · experimental',
-        meta: 'the Video card sets the clip; photos after the start are references',
+        meta:
+          j.edit.opening_h3 === 'free'
+            ? 'the Video card sets the clip; every photo is a reference'
+            : 'the Video card sets the clip; photos after the start are references',
         rows: [
           engine,
           ...reshape(j),
+          {
+            key: 'opening_h3',
+            hint: 'Pinned opens the clip on the start photo and plays the edit out from it (fl2va). Free hands every photo over as a reference (ref2va): the result is already edited, a new shot of the same person, so clothes change without an action to change them.',
+            get: () => j.edit.opening_h3 ?? 'pinned',
+            set: (v) => (j.edit.opening_h3 = v),
+            options: [
+              ['pinned', 'pinned · fl2va, the photo is frame 0'],
+              ['free', 'free · ref2va, the photos are references'],
+            ],
+          },
           {
             key: 'seconds_h3',
             hint: 'The clip the edit plays out in. Longer gives a slow change room; the cost grows with it.',

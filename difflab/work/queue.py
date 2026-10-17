@@ -115,13 +115,23 @@ def _picture(job: Job) -> list[JobSpec]:
             JobSpec("create_image", {"prompt": prompt_, "aspect": aspect, **given}, "draw the picture", job.edit.data())
         )
         return jobs
-    photo, cut = _fitted(job, photo, jobs)
+    # ref2va has no opening to bring to an aspect: its canvas is the first reference's.
+    if job.edit.engine == "minimax-h3" and job.edit.opening_h3 == "free":
+        photo, references, cut = None, [str(p) for p in job.photos], {}
+    else:
+        photo, cut = _fitted(job, photo, jobs)
     if job.edit.engine == "minimax-h3":
         if job.idea:
             jobs.append(
                 JobSpec(
                     "write_video_prompt",
-                    {"photo": photo, "idea": job.idea, "still": True, **cut},
+                    {
+                        "photo": photo,
+                        "idea": job.idea,
+                        "still": True,
+                        **cut,
+                        **({} if photo else {"references": references}),
+                    },
                     "write the prompt",
                     job.vlm.data(),
                 )
