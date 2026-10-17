@@ -218,8 +218,10 @@ export interface LookRef {
   id: number | null
   member: string
   label: string
-  /** Every amendment from the base on, joined. */
+  /** What it has turned into and every amendment since, joined. */
   words: string
+  /** What it has turned into; '' while it is still itself. */
+  form: string
   /** The shot whose casting made it; null for the base. */
   shot: number | null
   image: 'done' | 'flag' | 'running' | 'pending' | 'failed'
@@ -235,6 +237,9 @@ export interface CastingInfo extends MadeThing {
   position: number
   parent: string | null
   amend: string
+  /** What this look turns the member into, its `amend` then the whole look; '' for a look that only adds. */
+  form: string
+  form_kind: string
   label: string
   /** "from text · ch N ¶P" when the planner wrote it, "by hand" when a person did. */
   origin: string
@@ -691,7 +696,10 @@ export const rewriteShot = (shotId: number) => json<{ run: string; runs: string[
 export const approveShot = (shotId: number) => json<Production & { left: string[] }>(`/api/shots/${shotId}/approve`, post({}))
 export const addCasting = (shotId: number, body: { member: string; parent?: string | null; amend?: string; label?: string }) =>
   json<Production>(`/api/shots/${shotId}/castings`, post(body))
-export const patchCasting = (castingId: number, body: { parent?: string | null; amend?: string; label?: string; pictured?: string[] | null }) =>
+export const patchCasting = (
+  castingId: number,
+  body: { parent?: string | null; amend?: string; label?: string; pictured?: string[] | null; form?: string; form_kind?: string },
+) =>
   json<Production>(`/api/castings/${castingId}`, send('PATCH', body))
 export const deleteCasting = (castingId: number) => json<Production>(`/api/castings/${castingId}`, { method: 'DELETE' })
 export const drawLook = (castingId: number) => json<{ run: string; runs: string[] }>(`/api/castings/${castingId}/draw`, post({}))

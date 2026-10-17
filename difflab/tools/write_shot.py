@@ -85,10 +85,21 @@ def write(take: compose.Take) -> compose.Take:
 def write_one(take: compose.Take, index: int) -> compose.Take:
     """One call for chunk `index`: prose only, around the sentences the compiler already owns."""
     chunk = take.chunks[index]
+    cards = compose.cards_at(take, index)
+
+    def turns(member: str) -> str:
+        """What a member turning into something else in this chunk is by its end."""
+        now = chunk.states.get(member)
+        if now is None or now.becomes == now.was:
+            return ""
+        end = compose.formed(take.cards[member], now.becomes)
+        return f"; by the end of this clip it has turned into the {end.noun} with {end.full()}"
+
     cast = "\n".join(
         f"{c.id} | {c.noun} | {c.full()}"
         + (f", and now {now.before}" if (now := chunk.states.get(c.id)) and now.before else "")
-        for c in (take.cards[m] for m in take.members if m in chunk.cast)
+        + turns(c.id)
+        for c in (cards[m] for m in take.members if m in chunk.cast)
     )
     written = compose.written(chunk)
     beats = "\n".join(

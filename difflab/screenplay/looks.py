@@ -17,13 +17,23 @@ SCOPE = "looks:{production}"
 
 
 @dataclass(frozen=True)
+class Form:
+    """What a member has turned into: its noun and kind from then on, and its whole look in place of its card's."""
+
+    noun: str
+    kind: str
+    look: str
+
+
+@dataclass(frozen=True)
 class Look:
     """The bible's look of a member (`casting` None) or one an amended casting made from `source`."""
 
     member: str
     casting: store.Casting | None
     source: int | None
-    words: tuple[str, ...]  # every amendment from the base on, oldest first
+    words: tuple[str, ...]  # every amendment since the base or the latest `form`, oldest first
+    form: Form | None = None
 
     @property
     def id(self) -> int | None:
@@ -38,6 +48,12 @@ class Look:
     @property
     def text(self) -> str:
         return ", ".join(self.words)
+
+    @property
+    def said(self) -> str:
+        """The look as a person or the planner reads it: what it has become, then what it has beyond that."""
+        became = f"turned into the {self.form.noun}: {self.form.look}" if self.form else ""
+        return "; ".join(part for part in (became, self.text) if part)
 
     @property
     def approved(self) -> bool:
@@ -87,7 +103,9 @@ class Resolved:
 
 def resolve(connection: Any, production: store.Production) -> Resolved:
     """A cut back returns each member to the look it had when the chapter's opening scene was left."""
-    slugs = {member.id: member.slug for member in store.members_of(connection, production.id)}
+    members = store.members_of(connection, production.id)
+    slugs = {member.id: member.slug for member in members}
+    kinds = {member.slug: member.kind for member in members}
     by_shot: dict[int, list[store.Casting]] = {}
     for casting in store.castings_of_production(connection, production.id):
         by_shot.setdefault(casting.shot_id, []).append(casting)
@@ -124,8 +142,15 @@ def resolve(connection: Any, production: store.Production) -> Resolved:
                     source = before
                 look = source
                 if casting.amended:
-                    words = looks[source].words if source is not None else ()
-                    looks[casting.id] = Look(member, casting, source, (*words, " ".join(casting.amend.split())))
+                    said = " ".join(casting.amend.split())
+                    if casting.form.strip():
+                        kind = casting.form_kind.strip() or kinds[member]
+                        looks[casting.id] = Look(member, casting, source, (), Form(casting.form.strip(), kind, said))
+                    else:
+                        start = looks[source] if source is not None else None
+                        words = start.words if start is not None else ()
+                        form = start.form if start is not None else None
+                        looks[casting.id] = Look(member, casting, source, (*words, said), form)
                     look = casting.id
                 here[member] = Placed(casting, shot.id, member, source, look, before, back)
                 latest[member] = look
@@ -145,7 +170,10 @@ def moved(before: Resolved, after: Resolved) -> set[int]:
 
     def shown(resolved: Resolved, shot: int) -> dict[str, tuple[Any, ...]]:
         return {
-            member: tuple((look, resolved.look(member, look).words) for look in (one.source, one.look))
+            member: tuple(
+                (look, resolved.look(member, look).words, resolved.look(member, look).form)
+                for look in (one.source, one.look)
+            )
             for member, one in resolved.placed.get(shot, {}).items()
         }
 
@@ -229,16 +257,25 @@ def draw(production_id: int, casting_ids: list[int], asked_by: str = "person") -
                         f"“{look.label}” starts from “{resolved.looks[look.source].label}”: draw that first"
                     )
                 source, size = parent.artifact, parent.size
-            face = face_of(connection, member)
+            # A look made from one that turned the member into something else is drawn as that thing, and no
+            # person's face rides along: the face is one of the features the form's own words may or may not keep.
+            form = look.form
+            turned = bool(look.casting.form.strip())
+            before = resolved.look(member.slug, look.source).form
+            was = before.noun if before is not None else member.noun
+            kind, noun = (form.kind, form.noun) if form is not None and not turned else (member.kind, member.noun)
+            face = face_of(connection, member) if form is None else None
             worn = next((g for g in member.wardrobe if g["name"] == " ".join(look.label.lower().split())), None)
+            worn = None if turned else worn
             seed = random.randrange(2**32) if look.casting.artifact else (look.casting.seed or editor.seed)
             store.update_casting(connection, casting_id, seed=seed)
             job = store.add_job(
                 connection, run_id, "draw_look",
                 {"production": production_id, "casting": casting_id, "source": source,
-                 "face": member.picture(face) if face else None, "kind": member.kind, "noun": member.noun,
+                 "face": member.picture(face) if face else None, "kind": kind, "noun": noun,
                  "amend": " ".join(look.casting.amend.split()), "size": list(size), "seed": seed,
-                 **({"allowed": member.allowed} if member.allowed.strip() else {}),
+                 **({"form": form.noun, "was": was} if form is not None and turned else {}),
+                 **({"allowed": member.allowed} if member.allowed.strip() and not turned else {}),
                  **({"garment": worn["path"], "garment_name": worn["name"]} if worn else {})},
                 label=f"draw {member.slug} · {look.label}", settings=editor.data(), for_kind="casting",
                 for_id=casting_id,
@@ -246,15 +283,31 @@ def draw(production_id: int, casting_ids: list[int], asked_by: str = "person") -
             jobs[casting_id] = (job.id, list(size))
             store.set_made(connection, "casting", casting_id, store.QUEUED, current_job=job.id)
             base = base_picture(connection, member)
+            # The worker resolves a job's output only at the top of its inputs, so a source drawn in this run is
+            # no picture the judge can be handed: a turned look is then judged against the bible's.
+            pictured = member.picture(base) if base is not None else None
+            bible: dict[str, str] = {member.slug: pictured} if pictured else {}
+            drawn_before: dict[str, str] = {member.slug: source} if isinstance(source, str) else {}
+            if form is None:
+                purpose = (f"a reference picture of the {member.noun} as in its own reference photo, changed only "
+                           f"in this: {look.text}")  # fmt: skip
+                shown = bible
+            elif turned:
+                purpose = f"a reference picture of the {form.noun} that the {was} in its reference photo has become"
+                shown = drawn_before or bible
+                was = was if drawn_before or before is None else member.noun
+            else:
+                purpose = f"a reference picture of the {form.noun} as in its reference photo, changed only in this: "
+                purpose += look.text
+                shown = drawn_before
             store.add_job(
                 connection, run_id, "judge",
                 {"production": production_id, "kind": "look picture",
                  "path": {"from_job": job.id, "output": "frame"},
-                 "purpose": f"a reference picture of the {member.noun} as in its own reference photo, changed only "
-                            f"in this: {look.text}",
-                 "arrangement": f"{{{member.slug}}} alone", "cast": [member.slug],
-                 "pictures": {member.slug: member.picture(base)} if base is not None else {},
-                 "looks": {member.slug: look.text}},
+                 "purpose": purpose, "arrangement": f"{{{member.slug}}} alone", "cast": [member.slug],
+                 "pictures": shown, "looks": {member.slug: look.text},
+                 **({"forms": {member.slug: {**dataclasses.asdict(form), **({"was": was} if turned else {})}}}
+                    if form is not None else {})},
                 label=f"judge {member.slug} · {look.label}", settings=verdicts.data(), for_kind="casting",
                 for_id=casting_id,
             )  # fmt: skip

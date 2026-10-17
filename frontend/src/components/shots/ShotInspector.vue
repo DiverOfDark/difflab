@@ -114,7 +114,8 @@ const refs = computed(() =>
       : 'Not carried further.'
     const issues = verdict(c.review)?.issues ?? []
     let effect: string
-    if (look) effect = `${look.image === 'flag' && issues.length ? `${issues.join('; ')}. ` : ''}Qwen-Image-Edit draws “${look.label}” from “${c.source.label}” plus this amendment. ${carriedText}`
+    const change = c.form ? `turned into the ${c.form}, as these words describe it whole` : 'plus this amendment'
+    if (look) effect = `${look.image === 'flag' && issues.length ? `${issues.join('; ')}. ` : ''}Qwen-Image-Edit draws “${look.label}” from “${c.source.label}” ${change}. ${carriedText}`
     else if (c.back) effect = `Returns to “${c.source.label}” with the cut back to the opening scene.`
     else if (c.is_revert) effect = `Reverts to “${c.source.label}”; the latest was “${c.latest.label}”.`
     else effect = `As it stands: ${c.source.shot === null ? 'the bible base' : `“${c.source.label}” from ${named(c.source.shot)}`}.`
@@ -141,6 +142,11 @@ const setAmend = (c: CastingInfo, value: string) => {
   if (value.trim() === c.amend) return typed.drop(`amend ${c.id}`)
   save(`amend ${c.id}`, () => patchCasting(c.id, { amend: value }))
 }
+const setForm = (c: CastingInfo, value: string) => {
+  if (value.trim() === c.form) return typed.drop(`form ${c.id}`)
+  save(`form ${c.id}`, () => patchCasting(c.id, { form: value, form_kind: value.trim() ? c.form_kind || 'object' : '' }))
+}
+const setFormKind = (c: CastingInfo, value: string) => props.act(`casting ${c.id}`, () => patchCasting(c.id, { form_kind: value }))
 const setLabel = (c: CastingInfo, value: string) => {
   if (value.trim() === c.label) return typed.drop(`label ${c.id}`)
   save(`label ${c.id}`, () => patchCasting(c.id, { label: value }))
@@ -384,6 +390,17 @@ const approve = () =>
                   @input="typed.input(`label ${r.c.id}`, $event)"
                   @change="setLabel(r.c, ($event.target as HTMLInputElement).value)"
                 />
+                <input
+                  class="state"
+                  :value="typed.value(`form ${r.c.id}`, r.c.form)"
+                  placeholder="turns into · empty only adds"
+                  title="what this look turns the member into; the words above are then its whole look"
+                  @input="typed.input(`form ${r.c.id}`, $event)"
+                  @change="setForm(r.c, ($event.target as HTMLInputElement).value)"
+                />
+                <select v-if="r.c.form" :value="r.c.form_kind || 'object'" :disabled="!!busy" @change="setFormKind(r.c, ($event.target as HTMLSelectElement).value)">
+                  <option v-for="k in ['person', 'animal', 'object']" :key="k" :value="k">{{ k }}</option>
+                </select>
                 <button class="link on" :disabled="!!busy || r.look.image === 'running'" @click="draw(r.c)">
                   {{ r.look.image === 'running' ? 'generating…' : `${r.look.image === 'done' || r.look.image === 'flag' ? 'regenerate' : 'generate'} · ~${drawSeconds} s` }}
                 </button>

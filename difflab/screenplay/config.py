@@ -79,6 +79,8 @@ DIRECTOR_SETTLE = (2.0, 1.5)  # the closing beat of the last chunk and one befor
 DIRECTOR_QUIET_MAX = 3.0
 DIRECTOR_LOOK_WORDS = 15  # a lasting change to a member's look, restated in every later clip
 DIRECTOR_LOOK_NAME_WORDS = (2, 4)  # a look's name, as a state chip and a timeline run say it
+DIRECTOR_FORM_WORDS = 30  # the whole look of what a member turned into, said in place of its card's traits
+DIRECTOR_FORM_NOUN_WORDS = (1, 3)  # what it turned into, as its sentences name it ("full moon")
 DIRECTOR_HANDOFF_MIN = 4.0  # s: reach, grip and release all visible
 DIRECTOR_BEAT_MIN = 1.0  # s
 # The plan chooses how many clips and how long each; the longest is the render settings' duration.
