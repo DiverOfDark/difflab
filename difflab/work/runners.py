@@ -81,6 +81,18 @@ def run_write_instruction(inputs: dict[str, Any], settings: dict[str, Any]) -> d
     return {"text": text}
 
 
+def run_write_image_prompt(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
+    text, aspect = write_prompt.write_image_prompt(str(inputs["idea"]), VlmSettings(**settings))
+    return {"text": text, "aspect": aspect}
+
+
+def run_create_image(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
+    chosen = EditSettings(**settings).with_(engine="qwen-image-2.1")
+    made = edit_image.create(str(inputs["prompt"]), str(inputs["aspect"]), chosen)
+    png = media.save(made, chosen.model_stem, chosen.seed, announce=False)
+    return {"image": store.relative(png)}
+
+
 def run_write_video_prompt(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
     text = write_prompt.write_video_prompt(
         _frame(inputs["photo"]), str(inputs["idea"]), VideoPromptSettings(**settings)
@@ -671,6 +683,8 @@ def _thumbnail(frame: Frame, name: str) -> str:
 RUNNERS: dict[str, Runner] = {
     "write_instruction": run_write_instruction,
     "write_video_prompt": run_write_video_prompt,
+    "write_image_prompt": run_write_image_prompt,
+    "create_image": run_create_image,
     "edit_image": run_edit_image,
     "render_clip": run_render_clip,
     "enlarge_pixels": run_enlarge_pixels,

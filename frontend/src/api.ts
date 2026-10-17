@@ -4,7 +4,7 @@ import type { RunState } from './run'
 import { apply, emptyRun } from './run'
 
 export interface Job {
-  mode: 'video' | 'edit' | 'upscale'
+  mode: 'create' | 'video' | 'edit' | 'upscale'
   idea: string
   prompt: string
   photos: string[]
@@ -12,6 +12,8 @@ export interface Job {
   finish_megapixels: number | null
   grade_strength: number | null
   retime_fps: number | null
+  /** A created picture's "W:H"; empty lets the writer pick one, or draws a prompt square. */
+  aspect: string
   /** Each is a tool's whole effective settings, advanced fields the form does not draw included, so a
    *  machine's overrides reach a quick job; a field absent falls back to the code default. */
   video: VideoKnobs & Record<string, unknown>

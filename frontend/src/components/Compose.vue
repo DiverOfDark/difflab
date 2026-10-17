@@ -17,12 +17,14 @@ const props = defineProps<{
 const emit = defineEmits<{ render: [] }>()
 
 const MODES = [
+  { id: 'create', give: 'words alone', get: 'a new picture' },
   { id: 'video', give: 'a photo and words', get: 'one clip with audio' },
   { id: 'edit', give: 'a photo and words', get: 'a picture, restyled' },
   { id: 'upscale', give: 'a finished mp4', get: 'the same cut, larger' },
 ] as const
 
 const USES: Record<string, string[]> = {
+  create: ['words', 'edit', 'vlm'],
   video: ['words', 'photos', 'video', 'delivery', 'vlm'],
   edit: ['words', 'photos', 'edit', 'vlm'],
   upscale: ['clip', 'finish', 'delivery'],
@@ -73,8 +75,10 @@ interface Knob {
 }
 
 /** What the chosen engine will run: the Turbo's own 8, the base model's or the AIO's own field. */
-const editSteps = (job: Job) =>
-  job.edit.engine === 'qwen-image-2.1' ? ((job.edit.turbo ?? true) ? 8 : (job.edit.steps_21 ?? 40)) : job.edit.steps
+const editSteps = (job: Job) => {
+  if (job.mode !== 'create' && job.edit.engine !== 'qwen-image-2.1') return job.edit.steps
+  return (job.edit.turbo ?? true) ? 8 : (job.edit.steps_21 ?? 40)
+}
 
 const num = (read: () => number, write: (n: number) => void) => ({
   get: read,
@@ -141,22 +145,41 @@ const groups = computed(() => {
       ],
     })
   if (shows('edit')) {
-    const is21 = j.edit.engine === 'qwen-image-2.1'
+    // A picture from words alone is Qwen-Image 2.1's: the AIO only edits.
+    const creating = j.mode === 'create'
+    const is21 = creating || j.edit.engine === 'qwen-image-2.1'
     const turbo = is21 && (j.edit.turbo ?? true)
+    const engine: Knob = {
+      key: 'engine',
+      hint: 'Qwen-Image 2.1 draws with its own model and the LoRAs set on the Settings page. Each engine keeps its own steps and cfg.',
+      get: () => j.edit.engine ?? 'qwen-image-edit',
+      set: (v) => (j.edit.engine = v),
+      options: [
+        ['qwen-image-edit', 'qwen-image-edit · the AIO'],
+        ['qwen-image-2.1', 'qwen-image-2.1 · experimental'],
+      ],
+    }
+    const aspect: Knob = {
+      key: 'aspect',
+      hint: 'Width to height. Auto lets the writer pick one for the idea; a prompt is drawn square.',
+      get: () => j.aspect ?? '',
+      set: (v) => (j.aspect = v),
+      options: [
+        ['', 'auto'],
+        ['1:1', '1:1 · square'],
+        ['3:2', '3:2 · landscape'],
+        ['2:3', '2:3 · portrait'],
+        ['4:3', '4:3'],
+        ['3:4', '3:4'],
+        ['16:9', '16:9 · wide'],
+        ['9:16', '9:16 · phone'],
+      ],
+    }
     out.push({
       title: is21 ? 'Qwen-Image 2.1 · experimental' : 'Qwen Image Edit',
       meta: `${editSteps(j)} steps · seed ${j.edit.seed}`,
       rows: [
-        {
-          key: 'engine',
-          hint: 'Qwen-Image 2.1 draws with its own model and the LoRAs set on the Settings page. Each engine keeps its own steps and cfg.',
-          get: () => j.edit.engine ?? 'qwen-image-edit',
-          set: (v) => (j.edit.engine = v),
-          options: [
-            ['qwen-image-edit', 'qwen-image-edit · the AIO'],
-            ['qwen-image-2.1', 'qwen-image-2.1 · experimental'],
-          ],
-        },
+        creating ? aspect : engine,
         ...(is21
           ? [
               {
@@ -212,7 +235,7 @@ const groups = computed(() => {
               ]),
         {
           key: 'megapixels',
-          hint: 'The delivered size. The input is resized to it before the model sees it.',
+          hint: creating ? 'The size it is drawn at.' : 'The delivered size. The input is resized to it before the model sees it.',
           ...num(
             () => j.edit.megapixels,
             (n) => (j.edit.megapixels = n),

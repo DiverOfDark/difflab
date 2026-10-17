@@ -110,6 +110,22 @@ def edit(
     return default_cache.frame(made, produce)
 
 
+def create(prompt: str, aspect: str, settings: EditSettings) -> Frame:
+    """A picture from words alone, on Qwen-Image 2.1 whatever the settings' engine: the AIO only edits. `aspect` is
+    "W:H"; the size is the settings' megapixels at it, on the /32 grid the pipeline would floor to."""
+    settings = settings.with_(engine="qwen-image-2.1")
+    w, h = (int(part) for part in aspect.split(":"))
+    size = tuple(max(32, round(side / 32) * 32) for side in megapixel_size(w, h, settings.megapixels))
+
+    def produce() -> Frame:
+        model: Any = models.registry.acquire(spec(settings))
+        steps, cfg = settings.sampling
+        made = model.create(prompt, size, steps=steps, cfg=cfg, seed=settings.seed, turbo=settings.turbo)
+        return Frame.from_pil(made, origin="created")
+
+    return default_cache.frame(key("create_image", 1, prompt=prompt, settings=settings, size=size), produce)
+
+
 def vae_reference_size(frame: Frame, area: int = VAE_REFERENCE_AREA) -> tuple[int, int]:
     """The size diffusers encodes `frame` at as its VAE reference: `area`, on the /32 grid.
 

@@ -31,6 +31,17 @@ def plan(job: Job) -> list[JobSpec]:
     """Which tool jobs a quick job is."""
     jobs: list[JobSpec] = []
     photo = str(job.photos[0]) if job.photos else None
+    if job.mode == "create":
+        if job.idea:
+            jobs.append(JobSpec("write_image_prompt", {"idea": job.idea}, "write the description", job.vlm.data()))
+            prompt_: Any = output_of(0, "text")
+            aspect: Any = job.aspect or output_of(0, "aspect")
+        else:
+            prompt_, aspect = job.prompt, job.aspect or "1:1"
+        jobs.append(
+            JobSpec("create_image", {"prompt": prompt_, "aspect": aspect}, "draw the picture", job.edit.data())
+        )
+        return jobs
     if job.mode == "edit":
         if job.idea:
             jobs.append(

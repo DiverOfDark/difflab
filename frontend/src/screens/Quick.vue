@@ -1,5 +1,5 @@
 <script setup lang="ts">
-/** The three quick modes: a photo restyled, one clip, an upscale. A render queues and the page follows it. */
+/** The quick modes: a picture from words, a photo restyled, one clip, an upscale. A render queues and the page follows it. */
 import { ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { checkJob, listTools, startRun, startRuns, type Job } from '../api'
@@ -20,6 +20,7 @@ async function blank(): Promise<{ made: Job; models: (job: Job) => Job }> {
     finish_megapixels: null,
     grade_strength: null,
     retime_fps: null,
+    aspect: '',
     video: effective('render_chunk') as Job['video'],
     edit: effective('edit_image') as Job['edit'],
     vlm: effective('write_instruction') as Job['vlm'],
@@ -49,6 +50,14 @@ const failure = ref('')
 blank()
   .then(({ made, models }) => (job.value = models({ ...made, ...state.quick })))
   .catch((error) => (failure.value = `no settings from the server: ${error}`))
+
+// Words alone have nothing to batch over, and the References card that turns batching off is not shown.
+watch(
+  () => job.value?.mode,
+  (mode) => {
+    if (mode === 'create') state.batching = false
+  },
+)
 
 const expand = (base: Job, item: string): Job =>
   base.mode === 'upscale' ? { ...base, clip: item } : { ...base, photos: [item, ...base.photos] }

@@ -46,6 +46,8 @@ class Tool:
 
 TOOLS: tuple[Tool, ...] = (
     Tool("edit_image", 1, ("load editor", "encode", "denoise", "decode", "save"), EditSettings, "Qwen-Image-Edit"),
+    Tool("create_image", 1, ("load editor", "denoise", "decode", "save"), EditSettings, "Qwen-Image 2.1, from words"),
+    Tool("write_image_prompt", 1, ("load VLM", "write"), VlmSettings, "an idea into a picture's description"),
     Tool("ask_vlm", 1, ("load VLM", "answer"), VlmSettings, "one question about a picture"),
     Tool("write_instruction", 1, ("load VLM", "write"), VlmSettings, "an idea into an edit instruction"),
     Tool("write_video_prompt", 1, ("load VLM", "write"), VideoPromptSettings, "an idea into an H3 caption"),

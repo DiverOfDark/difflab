@@ -242,23 +242,50 @@ class Editor21:
         turbo: bool = True,
     ) -> Image.Image:
         """`image` is already at the target size, and every input is encoded at that area."""
+        return self._draw([image, *donors], prompt, image.size, steps, cfg, seed, negative_prompt, turbo)
+
+    def create(
+        self,
+        prompt: str,
+        size: tuple[int, int],
+        steps: int,
+        cfg: float,
+        seed: int,
+        negative_prompt: str = prompts.NEGATIVE_PROMPT,
+        turbo: bool = True,
+    ) -> Image.Image:
+        """A picture from words alone, `size` on the /32 grid."""
+        return self._draw(None, prompt, size, steps, cfg, seed, negative_prompt, turbo)
+
+    def _draw(
+        self,
+        images: list[Image.Image] | None,
+        prompt: str,
+        size: tuple[int, int],
+        steps: int,
+        cfg: float,
+        seed: int,
+        negative_prompt: str,
+        turbo: bool,
+    ) -> Image.Image:
         pipe = self.pipe
+        width, height = size
         base = cast(dict[str, object], FlowMatchEulerDiscreteScheduler.load_config(OFFICIAL.path / "scheduler"))
         pipe.scheduler = FlowMatchEulerDiscreteScheduler.from_config({**base, **(TURBO_SCHEDULER if turbo else {})})
         sigmas = TURBO_SIGMAS if turbo else None
         steps = len(TURBO_SIGMAS) if turbo else steps
         with ui.EditProgress(pipe.transformer, steps) as progress:
             result = pipe(
-                image=[image, *donors],
+                image=images,
                 prompt=prompt,
                 negative_prompt=negative_prompt if cfg > 1 else None,
                 true_cfg_scale=cfg,
                 num_inference_steps=steps,
                 sigmas=sigmas,
-                height=image.height,
-                width=image.width,
+                height=height,
+                width=width,
                 # The condition images are resized to this area; the target's keeps them 1:1 with the output.
-                output_resolution=round(math.sqrt(image.width * image.height)),
+                output_resolution=round(math.sqrt(width * height)),
                 generator=torch.Generator("cpu").manual_seed(seed),
                 callback_on_step_end=progress.on_step_end,
                 # Decoded below instead: inside the call the step-0 prefix KV cache is still held, and a 2 MP
@@ -269,7 +296,7 @@ class Editor21:
             latents = result.images
             del result
             torch.cuda.empty_cache()
-            return _decode(pipe, latents, image.height, image.width)
+            return _decode(pipe, latents, height, width)
 
     def unload(self) -> None:
         self._pipe = None

@@ -6,6 +6,7 @@ the worker runs, so the Render button is disabled while anything is refused.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -18,7 +19,7 @@ from difflab.models.minimax_h3.settings import ReferenceSize, VideoPromptSetting
 
 # edit -> tools.edit_image, video -> tools.render_chunk, upscale -> tools.enlarge_pixels. A chain of
 # shots is a production (`difflab.screenplay`), not a mode.
-Mode = Literal["edit", "video", "upscale"]
+Mode = Literal["create", "edit", "video", "upscale"]
 RETIRED = ("chain",)  # the chained, judged edit, removed 2026-10-17
 
 
@@ -40,6 +41,8 @@ class Job:
     # Frames per second to deliver at, or `None` to leave the render at H3's own 24. A number above
     # it runs `tools.retime` over the finished file.
     retime_fps: int | None = None
+    # A created picture's "W:H". Empty: the writer picks one for an idea, and a prompt is drawn square.
+    aspect: str = ""
     video: VideoSettings = field(default_factory=VideoSettings)
     edit: EditSettings = field(default_factory=EditSettings)
     vlm: VlmSettings = field(default_factory=VlmSettings)  # writes the edit instruction
@@ -64,9 +67,14 @@ class Job:
             return unknown
 
         problems = []
-        if self.mode in ("edit", "video") and bool(self.idea) == bool(self.prompt):
+        if self.mode in ("create", "edit", "video") and bool(self.idea) == bool(self.prompt):
             problems.append("give exactly one of idea / prompt")
-        if self.mode == "upscale":
+        if self.aspect and not re.fullmatch(r"\d{1,2}:\d{1,2}", self.aspect):
+            problems.append(f"aspect={self.aspect!r}: width:height, such as 3:2, or empty")
+        if self.mode == "create":
+            if self.photos:
+                problems.append("create draws from words alone: leave the photos out, or edit one")
+        elif self.mode == "upscale":
             if self.clip is None:
                 problems.append("upscale needs a clip to enlarge")
             elif not self.clip.is_file():
@@ -79,16 +87,16 @@ class Job:
         if self.finish_megapixels is not None and self.finish_megapixels <= 0:
             problems.append(f"finish_megapixels={self.finish_megapixels:g}: leave it unset to deliver as sampled")
         if self.grade_strength is not None:
-            if self.mode == "edit":
-                problems.append("grade_strength: a photo has no chain to drift along")
+            if self.mode in ("create", "edit"):
+                problems.append("grade_strength: a picture has no chain to drift along")
             elif not 0.0 < self.grade_strength <= 1.0:
                 problems.append(
                     f"grade_strength={self.grade_strength:g}: between 0 and 1, or leave it unset - "
                     "it is the exponent, so 0.5 closes half the gap and 1 matches the opening outright"
                 )
         if self.retime_fps is not None:
-            if self.mode == "edit":
-                problems.append("retime_fps: an edited photo has no frame rate")
+            if self.mode in ("create", "edit"):
+                problems.append("retime_fps: a picture has no frame rate")
             elif self.retime_fps <= h3_config.FPS:
                 # Retiming only adds frames, and asking for 24 out of 24 is a whole pass over the
                 # video to write it back unchanged.
@@ -99,7 +107,10 @@ class Job:
     def title(self) -> str:
         """What the run is called in the terminal and the page's list."""
         named = self.clip or (self.photos[0] if self.photos else None)
-        return f"{self.mode} · {named.stem}" if named else self.mode
+        if named:
+            return f"{self.mode} · {named.stem}"
+        words = " ".join((self.idea or self.prompt).split()[:8])
+        return f"{self.mode} · {words}" if words else self.mode
 
     # --- on the wire -----------------------------------------------------------------------------
     def data(self) -> dict[str, Any]:
