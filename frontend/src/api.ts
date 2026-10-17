@@ -562,6 +562,9 @@ export interface Timeline {
 
 export const readTimeline = (id: number, chapter: number | null) =>
   json<Timeline>(`/api/productions/${id}/timeline${chapter === null ? '' : `?chapter=${chapter}`}`)
+/** The run, its rows and the files it made that nothing else uses; refused (409) while it may still be working. */
+export const deleteRun = (id: string) =>
+  json<{ files: number; bytes: number; kept: number }>(`/api/runs/${encodeURIComponent(id)}`, { method: 'DELETE' })
 export const listProductions = () => json<ProductionSummary[]>('/api/productions')
 export const readProduction = (id: number) => json<Production>(`/api/productions/${id}`)
 export const deleteProduction = (id: number) => json<unknown>(`/api/productions/${id}`, { method: 'DELETE' })

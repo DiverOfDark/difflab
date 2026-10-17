@@ -40,7 +40,7 @@ from difflab.screenplay import (
     rendering,
     settings,
 )
-from difflab.work import queue, watchdog
+from difflab.work import cleanup, queue, watchdog
 from difflab.work.quick import Job
 
 STATIC = Path(__file__).parent / "static"  # the built Vue app, when there is one
@@ -854,6 +854,18 @@ def read_run(run_id: str) -> dict[str, Any]:
     if found is None:
         raise HTTPException(404, "no such run")
     return found
+
+
+@app.delete("/api/runs/{run_id}")
+def delete_run(run_id: str) -> dict[str, int]:
+    """The run, its rows and the files it made that nothing else names; refused while it may still be working."""
+    found = runs.one(Path(run_id).name)
+    if found is None:
+        raise HTTPException(404, "no such run")
+    if found["status"] in ("live", "queued", "paused"):
+        raise HTTPException(409, f"the run is {found['status']}: cancel it before deleting it")
+    deleted = cleanup.delete_run(found["id"])
+    return {"files": deleted.files, "bytes": deleted.bytes, "kept": deleted.kept}
 
 
 @app.post("/api/runs/{run_id}/commands")

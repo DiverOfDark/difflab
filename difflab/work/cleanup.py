@@ -193,3 +193,49 @@ def _backups(swept: Swept, dry: bool) -> None:
 
 def _marks(values: Sized) -> str:
     return ", ".join("?" * len(values))
+
+
+_MADE_PATH = re.compile(r"(?:blobs|images|videos)/[\w./-]+\.\w+")
+# Everything else that names a file under output/ and would break without it.
+_USED = (
+    *_GIVEN[:-1],
+    "SELECT pictures FROM prompts",
+    *(f"SELECT artifact FROM {table}" for table in MADE_TABLES.values()),
+    "SELECT j.inputs || j.outputs FROM jobs j WHERE j.run_id != ?",
+    "SELECT path FROM artifacts WHERE run_id IS NULL OR run_id != ?",
+)
+
+
+@dataclass
+class Deleted:
+    files: int = 0
+    bytes: int = 0
+    kept: int = 0  # made by the run, but another run or a production still names them
+
+
+def delete_run(run_id: str) -> Deleted:
+    """A settled run and everything it left: its rows, its folder under runs/, and the files it made that nothing
+    else names. What it was given stays, and so does the cache an identical job would read again."""
+    deleted = Deleted()
+    with store.connect() as connection:
+        made = {artifact.path for artifact in store.artifacts(connection, run_id)}
+        for row in connection.execute("SELECT outputs FROM jobs WHERE run_id = ?", (run_id,)):
+            made.update(_MADE_PATH.findall(row["outputs"] or ""))
+        used: set[str] = set()
+        for query in _USED:
+            for (value,) in connection.execute(query, (run_id,) if "?" in query else ()):
+                used.update(_MADE_PATH.findall(value or ""))
+        doomed = sorted(made - used)
+        deleted.kept = len(made) - len(doomed)
+        with store.transaction(connection):
+            connection.execute("DELETE FROM commands WHERE target_id = ?", (run_id,))
+            connection.execute(f"DELETE FROM artifacts WHERE path IN ({_marks(doomed)})", doomed)
+            connection.execute("DELETE FROM runs WHERE id = ?", (run_id,))
+    for name in doomed:
+        path = store.under_output(name)
+        if path.is_file():
+            deleted.files += 1
+            deleted.bytes += path.stat().st_size
+            path.unlink()
+    shutil.rmtree(config.RUNS_DIR / run_id, ignore_errors=True)
+    return deleted

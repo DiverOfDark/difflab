@@ -5,11 +5,11 @@
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import type { Job } from '../api'
+import { deleteRun, type Job } from '../api'
 import DeliverScreen from '../components/DeliverScreen.vue'
 import RenderScreen from '../components/RenderScreen.vue'
 import { madeNoFiles } from '../run'
-import { record, run, state, watch_ } from '../store'
+import { record, refresh, run, state, unwatch, watch_ } from '../store'
 
 const props = defineProps<{ id: string }>()
 const router = useRouter()
@@ -40,6 +40,24 @@ onMounted(() => {
   if (!state.runs.length) return
 })
 
+const working = computed(() => !run.value || ['live', 'queued', 'paused'].includes(run.value.status))
+const deleting = ref(false)
+
+async function remove() {
+  if (!confirm(`Delete run ${props.id}, its log and every file it made that nothing else uses?`)) return
+  deleting.value = true
+  try {
+    await deleteRun(props.id)
+    unwatch()
+    await refresh()
+    router.push('/runs')
+  } catch (problem) {
+    alert(problem instanceof Error ? problem.message : String(problem))
+  } finally {
+    deleting.value = false
+  }
+}
+
 /** From the run's own record, so the button means what it says: the job on screen, not the form. */
 function again(spec: Job) {
   state.quick = JSON.parse(JSON.stringify(spec)) as Job
@@ -54,6 +72,14 @@ function again(spec: Job) {
       {{ finished }}
     </button>
     <span class="mono muted">{{ id }}</span>
+    <button
+      class="delete"
+      :disabled="working || deleting"
+      :title="working ? 'cancel the run first' : 'delete the run and the files it made'"
+      @click="remove"
+    >
+      {{ deleting ? 'deleting…' : 'delete' }}
+    </button>
   </div>
   <RenderScreen v-if="screen === 'render' && run" :run="run" />
   <DeliverScreen v-else-if="screen === 'deliver' && run" :run="run" :record="record" @again="again" />
@@ -75,6 +101,15 @@ function again(spec: Job) {
   padding: 2px 8px;
   border-color: var(--line);
   color: var(--muted);
+}
+
+.switch .delete {
+  margin-left: auto;
+}
+
+.switch .delete:not(:disabled):hover {
+  color: var(--status-error);
+  border-color: var(--status-error);
 }
 
 .switch button.on {
