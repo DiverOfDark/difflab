@@ -72,6 +72,10 @@ interface Knob {
   options?: [string, string][]
 }
 
+/** What the chosen engine will run: the Turbo's own 8, the base model's or the AIO's own field. */
+const editSteps = (job: Job) =>
+  job.edit.engine === 'qwen-image-2.1' ? ((job.edit.turbo ?? true) ? 8 : (job.edit.steps_21 ?? 40)) : job.edit.steps
+
 const num = (read: () => number, write: (n: number) => void) => ({
   get: read,
   set: (v: string) => write(Number(v)),
@@ -136,14 +140,16 @@ const groups = computed(() => {
         },
       ],
     })
-  if (shows('edit'))
+  if (shows('edit')) {
+    const is21 = j.edit.engine === 'qwen-image-2.1'
+    const turbo = is21 && (j.edit.turbo ?? true)
     out.push({
-      title: j.edit.engine === 'qwen-image-2.1' ? 'Qwen-Image 2.1 · experimental' : 'Qwen Image Edit',
-      meta: `${j.edit.engine === 'qwen-image-2.1' && j.edit.turbo ? 8 : j.edit.steps} steps · seed ${j.edit.seed}`,
+      title: is21 ? 'Qwen-Image 2.1 · experimental' : 'Qwen Image Edit',
+      meta: `${editSteps(j)} steps · seed ${j.edit.seed}`,
       rows: [
         {
           key: 'engine',
-          hint: 'Qwen-Image 2.1 draws with its own model and the LoRAs set on the Settings page.',
+          hint: 'Qwen-Image 2.1 draws with its own model and the LoRAs set on the Settings page. Each engine keeps its own steps and cfg.',
           get: () => j.edit.engine ?? 'qwen-image-edit',
           set: (v) => (j.edit.engine = v),
           options: [
@@ -151,32 +157,59 @@ const groups = computed(() => {
             ['qwen-image-2.1', 'qwen-image-2.1 · experimental'],
           ],
         },
-        {
-          key: 'turbo',
-          hint: "Qwen-Image 2.1 on the Turbo's own 8 steps; off for the base model, which takes steps and cfg.",
-          get: () => String(j.edit.turbo ?? true),
-          set: (v) => (j.edit.turbo = v === 'true'),
-          options: [
-            ['true', 'on · 8 steps'],
-            ['false', 'off · steps below'],
-          ],
-        },
-        {
-          key: 'steps',
-          hint: 'The all-in-one is distilled; eight is the whole of it.',
-          ...num(
-            () => j.edit.steps,
-            (n) => (j.edit.steps = n),
-          ),
-        },
-        {
-          key: 'cfg',
-          hint: 'Stays at 1. Above it the negative prompt starts costing a second pass.',
-          ...num(
-            () => j.edit.cfg,
-            (n) => (j.edit.cfg = n),
-          ),
-        },
+        ...(is21
+          ? [
+              {
+                key: 'turbo',
+                hint: "Qwen-Image 2.1 on the Turbo's own 8 steps; off for the base model, which takes the steps below.",
+                get: () => String(j.edit.turbo ?? true),
+                set: (v: string) => (j.edit.turbo = v === 'true'),
+                options: [
+                  ['true', 'on · 8 steps'],
+                  ['false', 'off · base model'],
+                ] as [string, string][],
+              },
+            ]
+          : []),
+        ...(turbo
+          ? []
+          : is21
+            ? [
+                {
+                  key: 'steps',
+                  hint: "The base model's steps. Qwen's own pipeline takes 40.",
+                  ...num(
+                    () => j.edit.steps_21 ?? 40,
+                    (n) => (j.edit.steps_21 = n),
+                  ),
+                },
+                {
+                  key: 'cfg',
+                  hint: 'Qwen-Image 2.1 is sampled without guidance: 1. Above it the negative prompt costs a second pass.',
+                  ...num(
+                    () => j.edit.cfg_21 ?? 1,
+                    (n) => (j.edit.cfg_21 = n),
+                  ),
+                },
+              ]
+            : [
+                {
+                  key: 'steps',
+                  hint: 'The all-in-one is distilled; eight is the whole of it.',
+                  ...num(
+                    () => j.edit.steps,
+                    (n) => (j.edit.steps = n),
+                  ),
+                },
+                {
+                  key: 'cfg',
+                  hint: 'Stays at 1. Above it the negative prompt starts costing a second pass.',
+                  ...num(
+                    () => j.edit.cfg,
+                    (n) => (j.edit.cfg = n),
+                  ),
+                },
+              ]),
         {
           key: 'megapixels',
           hint: 'The delivered size. The input is resized to it before the model sees it.',
@@ -195,6 +228,7 @@ const groups = computed(() => {
         },
       ],
     })
+  }
   if (shows('delivery'))
     out.push({
       title: 'Delivery',
@@ -297,7 +331,7 @@ const estimate = computed(() => {
   const j = job.value
   const rows: [string, string][] = []
   if (shows('video')) rows.push(['LENGTH', `${j.video.duration.toFixed(1)}s`], ['CANVAS', `${j.video.megapixels} MP`])
-  if (shows('edit')) rows.push(['SIZE', `${j.edit.megapixels} MP`], ['STEPS', String(j.edit.steps)])
+  if (shows('edit')) rows.push(['SIZE', `${j.edit.megapixels} MP`], ['STEPS', String(editSteps(j))])
   if (shows('finish')) rows.push(['DELIVER', j.finish_megapixels ? `${j.finish_megapixels} MP` : '—'])
   return rows
 })

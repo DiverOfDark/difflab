@@ -15,7 +15,17 @@ export interface Job {
   /** Each is a tool's whole effective settings, advanced fields the form does not draw included, so a
    *  machine's overrides reach a quick job; a field absent falls back to the code default. */
   video: VideoKnobs & Record<string, unknown>
-  edit: { steps: number; cfg: number; seed: number; megapixels: number; engine?: string; turbo?: boolean } & Record<string, unknown>
+  edit: {
+    steps: number
+    cfg: number
+    seed: number
+    megapixels: number
+    engine?: string
+    turbo?: boolean
+    /** Qwen-Image 2.1's own, so switching engines changes neither. */
+    steps_21?: number
+    cfg_21?: number
+  } & Record<string, unknown>
   /** The edit instruction's writer, and the H3 caption's: the video graph asked for different numbers. */
   vlm: VlmKnobs & Record<string, unknown>
   video_vlm: VlmKnobs & Record<string, unknown>

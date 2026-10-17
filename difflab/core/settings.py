@@ -270,6 +270,23 @@ class EditSettings(Settings):
         True, "turbo", "Qwen-Image 2.1 on the Turbo's own 8 sigmas, and steps is unused; off for the base model"
     )
 
+    steps_21: int = setting(
+        40, "2.1 steps", "Qwen-Image 2.1's base model, with turbo off; Qwen's own pipeline takes 40", low=1, high=100
+    )
+    cfg_21: float = setting(
+        1.0,
+        "2.1 cfg",
+        "Qwen-Image 2.1 is sampled without guidance; above 1 the negative prompt costs a second pass",
+        low=1,
+        high=8,
+        advanced=True,
+    )
+
+    @property
+    def sampling(self) -> tuple[int, float]:
+        """The steps and cfg the chosen engine runs at: each keeps its own, so switching engines changes neither."""
+        return (self.steps_21, self.cfg_21) if self.engine == "qwen-image-2.1" else (self.steps, self.cfg)
+
     @property
     def model_stem(self) -> str:
         reference = self.model_21 if self.engine == "qwen-image-2.1" else self.checkpoint
@@ -281,11 +298,13 @@ class EditSettings(Settings):
     def key_part(self) -> dict[str, Any]:
         # The AIO engine keys as it did before the 2.1 fields existed, so nothing it drew is drawn again.
         part = super().key_part()
-        mine = ("engine", "model_21", "text_encoder_21", "loras", "turbo")
+        mine = ("engine", "model_21", "text_encoder_21", "loras", "turbo", "steps_21", "cfg_21")
         if self.engine == "qwen-image-edit":
             return {name: value for name, value in part.items() if name not in mine}
         part.pop("checkpoint")
         part["loras"] = self.loras_21()
+        # Under the AIO's names, as 2.1 was keyed when it shared them: what it drew then is found again.
+        part["steps"], part["cfg"] = part.pop("steps_21"), part.pop("cfg_21")
         if self.turbo:
             part.pop("steps")
         return part
