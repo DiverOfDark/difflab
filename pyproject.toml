@@ -13,10 +13,14 @@ dependencies = [
     "exllamav3>=1.5.3",
     "fastapi>=0.141.1",
     "numpy>=2.5.3",
+    "omegaconf>=2.3",
+    "onnxruntime>=1.31",
+    "opencv-python-headless>=4.12",
     "pillow>=12.3.0",
     "pypdf>=6",
     "python-multipart>=0.0.32",
     "regex>=2026.9.10",
+    "roma>=1.5",
     "safetensors>=0.8.0",
     "scipy>=1.18.1",
     "sentencepiece>=0.2.2",
@@ -24,6 +28,7 @@ dependencies = [
     "tqdm>=4.70.1",
     "transformers>=5.17.0",
     "uvicorn>=0.53.0",
+    "yacs>=0.1.8",
 ]
 
 # Everything is pixi's: Python and its packages from PyPI, and from conda-forge what is not a Python
@@ -98,6 +103,7 @@ dev = [
 [tool.ruff]
 line-length = 120
 target-version = "py313"
+extend-exclude = ["difflab/models/sam3d_body"]  # Meta's code, kept as released
 
 [tool.ruff.lint]
 select = [
@@ -129,6 +135,11 @@ python_version = "3.13"
 files = ["difflab"]
 strict = true
 ignore_missing_imports = true
+exclude = ["difflab/models/sam3d_body/"]
+
+[[tool.mypy.overrides]]
+module = "difflab.models.sam3d_body.*"
+follow_imports = "skip"
 
 # Large, dynamically typed ML libraries: treat them as Any instead of analysing them
 # (their pipelines register components at runtime, which mypy cannot see).

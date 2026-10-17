@@ -3,7 +3,7 @@
 import os
 from pathlib import Path
 
-from difflab.core.hub import Checkpoint
+from difflab.core.hub import Checkpoint, HubFile
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 OUTPUT_DIR = PROJECT_DIR / "output"
@@ -92,3 +92,26 @@ BACKUPS_KEEP = 5
 
 # A chained edit's check fails at this probability that its fault is real (`tools/chain_edit.faults`).
 CHAIN_FAULT_ODDS = 0.5
+
+# The person kept across a chained edit, measured (`tools/likeness`). SAM 3D Body's ViT-H checkpoint as Meta
+# released it, mirrored with its SAM License gate (the account's Hugging Face token must have accepted it).
+_BODY = "LibreYOLO/LibreSAM3DBodyh-mesh@a745fa6fcd5d71e16c4da921a28a6bb6f1ff9e3e"
+BODY_CHECKPOINT = HubFile.parse(f"{_BODY}:model.ckpt")
+BODY_CONFIG = HubFile.parse(f"{_BODY}:model_config.yaml")
+# The MHR rig (Apache 2.0). Its sha256 352e271a… is that of mhr_model.pt in Meta's MHR v1.0.1 release assets.zip.
+BODY_RIG = HubFile.parse("apozz/sam-3d-body-safetensors@0c0bd82453ec0a6c14caa2de3ae47c667c11546a:assets/mhr_model.pt")
+_FACES = "DIAMONIK7777/antelopev2@ba0c3e10f4548361eb9a63265d87ce1140ab5a05"
+FACE_DETECTOR = HubFile.parse(f"{_FACES}:scrfd_10g_bnkps.onnx")
+FACE_RECOGNISER = HubFile.parse(f"{_FACES}:glintr100.onnx")
+FACE_LANDMARKS = HubFile.parse(f"{_FACES}:2d106det.onnx")
+FACE_DETECT_SCORE = 0.5
+FACE_EYE_PIXELS = 12  # an eye narrower than this is a few pixels of iris: its colour is noise
+# Where a measured change becomes as likely as not (`tools/likeness`), and how fast the odds turn around it. Girths:
+# a clean edit moved them by 1.3% (robust sigma, 2026-10-17 probe), a dress swap under 6%, a 10% slimming 6-8%.
+LIKENESS_GIRTH_CUT, LIKENESS_GIRTH_SPREAD = 0.06, 0.01
+# ArcFace distance: 0.27 is the 95th percentile of 33 clean edits; above it were real drift, a face the AIO redrew.
+LIKENESS_IDENTITY_CUT, LIKENESS_IDENTITY_SPREAD = 0.27, 0.03
+# Iris colour over the skin's (`likeness._against`): clean edits 31.6 at the 95th percentile (one of 30 at 68),
+# synthetic warm and cool casts at most 38, the AIO's blue-eye edits 50-223 (and one 18).
+LIKENESS_EYE_CUT, LIKENESS_EYE_SPREAD = 40.0, 5.0
+LIKENESS_EYE_OPEN = 0.2  # an eye's outline height over width below which its iris is too little to read
