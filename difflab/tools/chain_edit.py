@@ -17,7 +17,7 @@ from difflab.core.types import Frame
 from difflab.models.exl3vl import ANY_JSON
 from difflab.models.minimax_h3.caption import Problem
 from difflab.screenplay import config as h3
-from difflab.tools import direct, edit_image, likeness
+from difflab.tools import direct, edit_image
 
 INSTRUCTION = {"type": "string", "minLength": 1, "maxLength": 1500}
 QUOTE = {"type": "string", "maxLength": 300}
@@ -184,36 +184,31 @@ def traits(original: Frame) -> list[str]:
 
 
 def changed(original: Frame, image: Frame, edits: list[str], body: bool) -> list[Fault]:
-    """The traits of `original`'s people that `image` lost, leaving out those `edits` set out to change: the VLM's
-    checklist, then what `likeness` measures. The checklist is one question: on 26 planted and clean pictures
-    (2026-10-15) it caught what one question per trait caught, 13 of 20 with no false alarm, at 9 s a picture
-    against 37. It caught no body stretched, widened or slimmed by a tenth to a fifth (2026-10-17); the girths do."""
+    """The traits of `original`'s people that `image` lost, leaving out those `edits` set out to change. All in one
+    question: on 26 planted and clean pictures (2026-10-15) it caught what one question per trait caught, 13 of 20
+    with no false alarm, at 9 s a picture against 37. Neither caught a body stretched or widened by a fifth."""
     if not body:
         return []
     listed = _listed(edits)
-    kept = [trait for trait in traits(original) if not _targeted(listed, trait)]
-    out = []
-    if kept:
-        data = direct.ask_json(
-            prompts.CHAIN_JUDGE_SYSTEM, prompts.CHAIN_TRAIT_LIST_USER.format(traits=_listed(kept)),
-            [_view(original), _view(image)], lambda _: [], "chain · judge the person", h3.RULING_TOKENS * 2,
-            schema=_shape(traits={"type": "array", "items": HOLDS, "minItems": len(kept), "maxItems": len(kept)}),
-            odds=True,
-        )  # fmt: skip
-        out = [
-            Fault(f"{BODY_PREFIX}{trait}; it now shows {verdict['seen']}", 1 - float(verdict["holds"]))
-            for trait, verdict in zip(kept, data["traits"], strict=True)
-        ]
-    measured = [c for c in likeness.changes(original, image) if not _targeted(listed, likeness.TRAITS[c.trait])]
-    return out + [Fault(f"{BODY_PREFIX}{c.measured}", c.chance) for c in measured]
-
-
-def _targeted(listed: str, trait: str) -> bool:
+    kept = [
+        trait for trait in traits(original)
+        if not direct.ask_json(
+            prompts.CHAIN_TRAITS_SYSTEM, prompts.CHAIN_TARGETED_USER.format(edits=listed, trait=trait), [],
+            lambda _: [], "chain · targeted", h3.RULING_TOKENS, schema=TARGETED,
+        )["changes"]
+    ]  # fmt: skip
+    if not kept:
+        return []
     data = direct.ask_json(
-        prompts.CHAIN_TRAITS_SYSTEM, prompts.CHAIN_TARGETED_USER.format(edits=listed, trait=trait), [],
-        lambda _: [], "chain · targeted", h3.RULING_TOKENS, schema=TARGETED,
+        prompts.CHAIN_JUDGE_SYSTEM, prompts.CHAIN_TRAIT_LIST_USER.format(traits=_listed(kept)),
+        [_view(original), _view(image)], lambda _: [], "chain · judge the person", h3.RULING_TOKENS * 2,
+        schema=_shape(traits={"type": "array", "items": HOLDS, "minItems": len(kept), "maxItems": len(kept)}),
+        odds=True,
     )  # fmt: skip
-    return bool(data["changes"])
+    return [
+        Fault(f"{BODY_PREFIX}{trait}; it now shows {verdict['seen']}", 1 - float(verdict["holds"]))
+        for trait, verdict in zip(kept, data["traits"], strict=True)
+    ]
 
 
 class _Shown:
