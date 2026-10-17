@@ -63,6 +63,14 @@ def _watched() -> bool:
     return events.active() is not None
 
 
+def stop_if_cancelled() -> None:
+    """Where a job can stop: every stage start, edit step, sampled block and streamed answer. Checked only on
+    sampling ticks, a cancel pressed during an edit or a VLM question waited for the whole job (12 min, a
+    chained edit, 2026-10-17)."""
+    if context.current().cancel.is_set():
+        raise context.Cancelled
+
+
 def _say(text: str) -> None:
     """Print, but only when nothing is recording - otherwise the page has it and stdout is quiet."""
     if not _watched():
@@ -120,6 +128,7 @@ def step(label: str) -> Iterator[Callable[[str], None]]:
         nonlocal detail
         detail = text
 
+    stop_if_cancelled()
     t0 = time.perf_counter()
     events.emit(protocol.StageStart(label=label))
     try:
@@ -242,6 +251,7 @@ def live_answer(title: str, echo: bool = True) -> Iterator[Callable[..., None]]:
 
     def update(latest: str, **counted: float) -> None:
         nonlocal text
+        stop_if_cancelled()
         text = latest
         numbers.update(counted)
         if throttle():
@@ -288,8 +298,7 @@ def progress(label: str, total: int, unit: str = "step") -> Iterator[Callable[[]
     def advance() -> None:
         nonlocal count
         count += 1
-        if context.current().cancel.is_set():
-            raise context.Cancelled
+        stop_if_cancelled()
         if throttle(final=count == total):
             events.emit(
                 protocol.StageProgress(
@@ -394,8 +403,7 @@ def sampling(label: str, steps: int, blocks: int) -> Iterator[Callable[[], None]
     def tick() -> None:
         nonlocal count
         count += 1
-        if context.current().cancel.is_set():
-            raise context.Cancelled
+        stop_if_cancelled()
         if throttle(final=count == total):
             events.emit(
                 protocol.StageProgress(
@@ -436,6 +444,7 @@ class EditProgress:
 
     def on_step_end(self, pipe: Any, step: int, timestep: Any, callback_kwargs: dict[str, Any]) -> dict[str, Any]:
         """Pipeline `callback_on_step_end`: one denoising step done."""
+        stop_if_cancelled()
         self._denoised = step + 1
         profiling.step()
         if self._throttle(final=self._denoised == self._steps):

@@ -141,17 +141,22 @@ class Exl3VL:
         def drain(
             show: Callable[[str], None], tallied: tuple[str, ...] = ("prompt_tokens", "cached_tokens", "new_tokens")
         ) -> str:
-            said = ""
-            while generator.num_remaining_jobs():
-                for result in generator.iterate():
-                    if chunk := result.get("text"):
-                        said += chunk
-                        show(said)
-                    if result.get("eos"):
-                        for name, field in (("prefill_seconds", "time_prefill"), ("decode_seconds", "time_generate")):
-                            numbers[name] += result[field]
-                        for name in tallied:
-                            numbers[name] += result[name]
+            said, timed = "", (("prefill_seconds", "time_prefill"), ("decode_seconds", "time_generate"))
+            try:
+                while generator.num_remaining_jobs():
+                    for result in generator.iterate():
+                        if chunk := result.get("text"):
+                            said += chunk
+                            show(said)
+                        if result.get("eos"):
+                            for name, field in timed:
+                                numbers[name] += result[field]
+                            for name in tallied:
+                                numbers[name] += result[name]
+            except BaseException:
+                # A cancelled answer left in the queue would be drained as the next question's.
+                generator.clear_queue()
+                raise
             return said
 
         def run(text: str, cap: int, stops: list[int], shape: list[Any] | None, show: Callable[[str], None]) -> str:

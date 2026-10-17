@@ -19,6 +19,7 @@ from difflab.models.minimax_h3.settings import ReferenceSize, VideoPromptSetting
 # edit -> tools.edit_image, video -> tools.render_chunk, upscale -> tools.enlarge_pixels. A chain of
 # shots is a production (`difflab.screenplay`), not a mode.
 Mode = Literal["edit", "video", "upscale"]
+RETIRED = ("chain",)  # the chained, judged edit, removed 2026-10-17
 
 
 @dataclass(frozen=True)
@@ -111,7 +112,9 @@ class Job:
     @classmethod
     def of(cls, data: Mapping[str, Any]) -> Job:
         """A job from data, refusing keys it does not know: a typo, or a field since renamed, either of
-        which would otherwise render something other than what was asked for."""
+        which would otherwise render something other than what was asked for. A retired field is dropped: every
+        run before 2026-10-17 recorded `chain`, and "again" on one sends its spec back."""
+        data = {name: value for name, value in data.items() if name not in RETIRED}
         unknown = sorted(set(data) - set(cls.__dataclass_fields__))
         if unknown:
             raise ValueError(f"a job has no {', '.join(unknown)} (known: {', '.join(cls.__dataclass_fields__)})")
