@@ -142,6 +142,10 @@ CLIP_TAKES = 3
 # The shortest shot a silent panel gets. 73 frames on H3's grid: the PRD's 2-3 s estimate, until a spike
 # measures the shortest landed shot that still reads as motion rather than a morph.
 MANGA_SHOT_MIN = 3.04
+# Thoughts and narration are subtitles, read rather than heard: subtitle guidance runs about 17 characters a
+# second for adults, some 3 English words. Spoken at DIRECTOR_WORDS_PER_SECOND, one 33-word narration box made
+# a 14.4 s shot of a TV screen (2026-10-17, One-Punch Man p6).
+MANGA_READ_WORDS_PER_SECOND = 3.0
 MANGA_READ_PIXELS = 1024 * 1024  # the panel being read: lettering needs the detail
 MANGA_TOKENS = {"read": 2048, "confirm": 1024, "cast": 2048, "fill": 12288}
 MANGA_SURVEY_PANELS = 12  # cleaned panels the survey sees at once: the first, then one per character

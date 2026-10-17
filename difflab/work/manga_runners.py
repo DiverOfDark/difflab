@@ -497,7 +497,7 @@ def _captions(panel: fill_shots.Given) -> list[dict[str, Any]]:
         if balloon.kind in read_page.SPOKEN:
             continue
         out.append({"start": round(at, 2), "line": balloon.text, "kind": balloon.kind})
-        at = min(at + len(balloon.text.split()) / knobs.DIRECTOR_WORDS_PER_SECOND, max(panel.seconds - 1.0, 0.0))
+        at = min(at + len(balloon.text.split()) / knobs.MANGA_READ_WORDS_PER_SECOND, max(panel.seconds - 1.0, 0.0))
     return out
 
 

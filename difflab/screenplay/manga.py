@@ -33,8 +33,10 @@ def shortest(longest: float) -> float:
 
 def seconds_for(script: read_page.Script, longest: float) -> tuple[float, bool]:
     """A panel's length from its lettering, and whether that lettering fits the longest shot at all."""
-    said = sum(len(b.text.split()) for b in script.balloons)
-    wanted = said / knobs.DIRECTOR_WORDS_PER_SECOND + knobs.DIRECTOR_DIALOGUE_TAIL if said else 0.0
+    said = sum(len(b.text.split()) for b in script.balloons if b.kind in read_page.SPOKEN)
+    read = sum(len(b.text.split()) for b in script.balloons if b.kind not in read_page.SPOKEN)
+    lettered = said / knobs.DIRECTOR_WORDS_PER_SECOND + read / knobs.MANGA_READ_WORDS_PER_SECOND
+    wanted = lettered + knobs.DIRECTOR_DIALOGUE_TAIL if lettered else 0.0
     floor = shortest(longest)
     if wanted <= floor:
         return floor, True
