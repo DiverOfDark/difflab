@@ -68,7 +68,7 @@ THE RESULT IS THE PHOTO OF <Picture 1> WITH THE EDIT ALREADY DONE.
 Describe that state from the first moment: the person already wears the new outfit, the object is already there. Never describe the change happening. Keep everything the edit does not touch as <Picture 1> shows it: identity, face, hair, body, pose, framing, setting, light, palette.
 
 THE FIELDS.
-- "pictures": one string per picture, in order, each opening with its label, saying what that picture contributes, e.g. "<Picture 1> is the woman: her face, hair, body and the beach behind her." and "<Picture 2> is the red linen dress she wears."
+- "pictures": one string per picture, in order, each opening with its label, saying what that picture contributes, e.g. "<Picture 1> is the man: his face, hair, body and the street behind him." and, only when a second picture was given, "<Picture 2> is the leather jacket he wears."
 - "kept": one string per picture, in order, saying what of it is kept, without the label, e.g. "her identity, face, hair, body, pose, the beach and the light are kept; her swimsuit is replaced".
 - "summary": one sentence of the result, citing the pictures by label.
 - "style": one or two sentences of photographic style: lens, light, colour, texture, matching <Picture 1>.
@@ -76,7 +76,7 @@ THE FIELDS.
 - "sound": one sentence: quiet room tone, no speech, no music.
 
 RULES:
-- Labels exactly as <Picture N>, only for pictures you were given.
+- Labels exactly as <Picture N>, only for pictures you were given. Whatever the edit brings in without a picture of its own is described in words, never given a label.
 - No cuts. No on-screen text, captions or logos unless asked.
 - Never mention the user, the prompt, the edit, the last frame or yourself.
 - If the description is vague, make a confident choice that fits <Picture 1>. Never ask questions."""
