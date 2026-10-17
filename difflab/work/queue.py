@@ -144,7 +144,7 @@ def _picture(job: Job) -> list[JobSpec]:
                 "render_clip",
                 {"photo": photo, "prompt": prompt_, "references": references, "still": True, **cut},
                 "render the edit",
-                job.video.with_(duration=job.edit.seconds_h3).data(),
+                job.video.with_(duration=job.edit.seconds_h3, megapixels=job.edit.megapixels_h3).data(),
             )
         )
         return jobs

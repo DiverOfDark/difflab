@@ -228,8 +228,8 @@ const groups = computed(() => {
         title: 'MiniMax H3 · experimental',
         meta:
           j.edit.opening_h3 === 'free'
-            ? 'the Video card sets the clip; every photo is a reference'
-            : 'the Video card sets the clip; photos after the start are references',
+            ? 'the Video card sets the model; every photo is a reference'
+            : 'the Video card sets the model; photos after the start are references',
         rows: [
           engine,
           ...reshape(j),
@@ -249,6 +249,14 @@ const groups = computed(() => {
             ...num(
               () => j.edit.seconds_h3 ?? 3,
               (n) => (j.edit.seconds_h3 = n),
+            ),
+          },
+          {
+            key: 'megapixels_h3',
+            hint: "The clip's canvas, and so the picture's size. The Video card's canvas is for videos and is not used here.",
+            ...num(
+              () => j.edit.megapixels_h3 ?? 0.98,
+              (n) => (j.edit.megapixels_h3 = n),
             ),
           },
         ],
@@ -433,7 +441,7 @@ const estimate = computed(() => {
   const j = job.value
   const rows: [string, string][] = []
   const seconds = h3Edit.value ? (j.edit.seconds_h3 ?? 3) : j.video.duration
-  if (shows('video')) rows.push(['LENGTH', `${seconds.toFixed(1)}s`], ['CANVAS', `${j.video.megapixels} MP`])
+  if (shows('video')) rows.push(['LENGTH', `${seconds.toFixed(1)}s`], ['CANVAS', `${h3Edit.value ? (j.edit.megapixels_h3 ?? 0.98) : j.video.megapixels} MP`])
   if (shows('edit') && !h3Edit.value) rows.push(['SIZE', `${j.edit.megapixels} MP`], ['STEPS', String(editSteps(j))])
   if (shows('finish')) rows.push(['DELIVER', j.finish_megapixels ? `${j.finish_megapixels} MP` : '—'])
   return rows

@@ -34,6 +34,7 @@ export interface Job {
     /** minimax-h3's clip, in seconds; the video card's duration is the video mode's. */
     seconds_h3?: number
     opening_h3?: string
+    megapixels_h3?: number
   } & Record<string, unknown>
   /** The edit instruction's writer, and the H3 caption's: the video graph asked for different numbers. */
   vlm: VlmKnobs & Record<string, unknown>

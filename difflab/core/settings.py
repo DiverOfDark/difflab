@@ -299,6 +299,10 @@ class EditSettings(Settings):
         "minimax-h3: pinned opens the clip on the start photo (fl2va); free hands every photo over as a reference "
         "(ref2va), a new shot of the same person rather than this one changed",
     )
+    # Measured 2026-10-18 on 3 s: 0.4 MP rendered in 74 s at 736x576 and redrew the face; 0.9 MP took 108 s.
+    megapixels_h3: float = setting(
+        0.98, "H3 canvas", "minimax-h3: the clip's canvas, and so the picture's size", unit="MP", low=0.1, high=2.5
+    )
 
     steps_21: int = setting(
         40, "2.1 steps", "Qwen-Image 2.1's base model, with turbo off; Qwen's own pipeline takes 40", low=1, high=100
@@ -329,12 +333,13 @@ class EditSettings(Settings):
         # The AIO engine keys as it did before the 2.1 fields existed, so nothing it drew is drawn again.
         part = super().key_part()
         mine = ("engine", "model_21", "text_encoder_21", "vae_21", "loras", "turbo", "steps_21", "cfg_21",
-                "seconds_h3", "opening_h3")  # fmt: skip
+                "seconds_h3", "opening_h3", "megapixels_h3")  # fmt: skip
         if self.engine == "qwen-image-edit":
             return {name: value for name, value in part.items() if name not in mine}
         part.pop("checkpoint")
         part.pop("seconds_h3")
         part.pop("opening_h3")
+        part.pop("megapixels_h3")
         part["loras"] = self.loras_21()
         # Under the AIO's names, as 2.1 was keyed when it shared them: what it drew then is found again.
         part["steps"], part["cfg"] = part.pop("steps_21"), part.pop("cfg_21")
