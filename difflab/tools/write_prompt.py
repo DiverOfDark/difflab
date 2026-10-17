@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Sequence
 
 from difflab import prompts as edit_prompts
 from difflab.core.settings import VlmSettings
@@ -23,6 +24,18 @@ DESCRIBED = {
     "required": ["rewritten_prompt", "wh_ratio"],
     "additionalProperties": False,
 }
+FOLLOWED = {
+    **ANY_JSON,
+    "type": "object",
+    "properties": {
+        "rewritten_prompt": {"type": "string", "minLength": 1},
+        "wh_ratio": {"type": "string"},
+        "ratio_follow": {"type": "string"},
+    },
+    "required": ["rewritten_prompt", "wh_ratio", "ratio_follow"],
+    "additionalProperties": False,
+}
+TAG = re.compile(r"<image(\d+)>")
 
 
 def write_video_prompt(
@@ -43,14 +56,22 @@ def write_video_prompt(
 
 
 def write_edit_instruction(
-    frame: Frame, idea: str, settings: VlmSettings | None = None, engine: str = "qwen-image-edit"
+    frame: Frame,
+    idea: str,
+    settings: VlmSettings | None = None,
+    engine: str = "qwen-image-edit",
+    references: Sequence[Frame] = (),
 ) -> str:
-    """A rough idea plus the frame -> one finished instruction, in the words `engine` was trained on."""
+    """A rough idea, the frame and its references -> one finished instruction, in the words `engine` was trained on."""
     settings = settings or VlmSettings()
+    if engine != "qwen-image-2.1":
+        system = edit_prompts.VLM_SYSTEM_PROMPT
+    else:
+        system = edit_prompts.VLM_SYSTEM_PROMPT_21_MANY if references else edit_prompts.VLM_SYSTEM_PROMPT_21
     written = _vlm(settings).ask(
-        frame.pil(),
+        [frame.pil(), *(reference.pil() for reference in references)],
         idea,
-        system=edit_prompts.VLM_SYSTEM_PROMPT_21 if engine == "qwen-image-2.1" else edit_prompts.VLM_SYSTEM_PROMPT,
+        system=system,
         title="edit instruction",
         **settings.generation(),
     )
@@ -59,16 +80,19 @@ def write_edit_instruction(
     return written
 
 
-def write_image_prompt(idea: str, settings: VlmSettings | None = None) -> tuple[str, str]:
-    """A rough idea -> the description Qwen-Image 2.1 draws from, and the aspect ratio it was written for."""
+def write_image_prompt(
+    idea: str, settings: VlmSettings | None = None, references: Sequence[Frame] = ()
+) -> tuple[str, str]:
+    """A rough idea and any references -> the description Qwen-Image 2.1 draws from, and the aspect ratio it was
+    written for."""
     settings = settings or VlmSettings()
     raw = _vlm(settings).ask(
-        None,
+        [reference.pil() for reference in references] or None,
         idea,
-        system=edit_prompts.VLM_SYSTEM_PROMPT_CREATE,
+        system=edit_prompts.VLM_SYSTEM_PROMPT_REFS if references else edit_prompts.VLM_SYSTEM_PROMPT_CREATE,
         title="picture description",
         as_json=True,
-        schema=DESCRIBED,
+        schema=FOLLOWED if references else DESCRIBED,
         **settings.generation(),
     )
     data = json.loads(raw)
@@ -76,4 +100,10 @@ def write_image_prompt(idea: str, settings: VlmSettings | None = None) -> tuple[
     if not written:
         raise RuntimeError("the VLM returned an empty description")
     ratio = str(data["wh_ratio"])
-    return written, ratio if RATIO.match(ratio) else "1:1"
+    if RATIO.match(ratio):
+        return written, ratio
+    followed = TAG.fullmatch(str(data.get("ratio_follow", "")).strip())
+    if followed and 1 <= int(followed[1]) <= len(references):
+        image = references[int(followed[1]) - 1]
+        return written, f"{image.width}:{image.height}"
+    return written, "1:1"

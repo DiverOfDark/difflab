@@ -1,5 +1,5 @@
 <script setup lang="ts">
-/** The quick modes: a picture from words, a photo restyled, one clip, an upscale. A render queues and the page follows it. */
+/** The quick modes: a picture, one clip, an upscale. A render queues and the page follows it. */
 import { ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { checkJob, listTools, startRun, startRuns, type Job } from '../api'
@@ -16,6 +16,7 @@ async function blank(): Promise<{ made: Job; models: (job: Job) => Job }> {
     idea: '',
     prompt: '',
     photos: [],
+    start: false,
     clip: null,
     finish_megapixels: null,
     grade_strength: null,
@@ -47,21 +48,21 @@ const problems = ref<string[]>([])
 const starting = ref(false)
 const failure = ref('')
 
+/** Runs before 2026-10-17 were a "create" or an "edit"; both are a picture now, the edit's first photo its start. */
+const MERGED: Record<string, boolean> = { create: false, edit: true }
+const merged = (job: Job | null): Partial<Job> => {
+  if (!job) return {}
+  const mode: string = job.mode
+  return mode in MERGED ? { ...job, mode: 'picture', start: MERGED[mode]! } : job
+}
+
 // A run's "again" may predate a part of the job; the server's defaults fill what it lacks.
 blank()
-  .then(({ made, models }) => (job.value = models({ ...made, ...state.quick })))
+  .then(({ made, models }) => (job.value = models({ ...made, ...merged(state.quick) })))
   .catch((error) => (failure.value = `no settings from the server: ${error}`))
 
-// Words alone have nothing to batch over, and the References card that turns batching off is not shown.
-watch(
-  () => job.value?.mode,
-  (mode) => {
-    if (mode === 'create') state.batching = false
-  },
-)
-
 const expand = (base: Job, item: string): Job =>
-  base.mode === 'upscale' ? { ...base, clip: item } : { ...base, photos: [item, ...base.photos] }
+  base.mode === 'upscale' ? { ...base, clip: item } : { ...base, photos: [item, ...base.photos], start: true }
 
 /** The server is what says whether a job is renderable - the same check a render runs. A batch is
  *  checked on its first item: the rest differ only in an uploaded file, which exists. */

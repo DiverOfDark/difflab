@@ -1,4 +1,4 @@
-"""The three quick modes, as a value that fits in a request: a photo restyled, one clip, an upscale.
+"""The quick modes, as a value that fits in a request: a picture, one clip, an upscale.
 
 Nothing here imports torch: the server checks a job without a model package, with the same `check`
 the worker runs, so the Render button is disabled while anything is refused.
@@ -17,23 +17,27 @@ from difflab.core.settings import EditSettings, VlmSettings
 from difflab.models.minimax_h3 import config as h3_config
 from difflab.models.minimax_h3.settings import ReferenceSize, VideoPromptSettings, VideoSettings
 
-# edit -> tools.edit_image, video -> tools.render_chunk, upscale -> tools.enlarge_pixels. A chain of
+# picture -> tools.edit_image, video -> tools.render_chunk, upscale -> tools.enlarge_pixels. A chain of
 # shots is a production (`difflab.screenplay`), not a mode.
-Mode = Literal["create", "edit", "video", "upscale"]
+Mode = Literal["picture", "video", "upscale"]
 # Mirrors `screenplay.production.FITS`: the photo centre-cropped to `aspect`, or kept whole and drawn out to it.
 Fit = Literal["crop", "extend"]
 RETIRED = ("chain",)  # the chained, judged edit, removed 2026-10-17
+# "create" and "edit" became one "picture" on 2026-10-17; every run before it recorded one of them.
+MERGED = {"create": False, "edit": True}
 
 
 @dataclass(frozen=True)
 class Job:
     """One render, described. Give `idea` (the VLM writes the words) or `prompt` (they are written).
-    `photos[0]` is what the result opens on; the rest are references, in the order given."""
+    A clip opens on `photos[0]`; a picture starts from it only when `start` is set. The rest are
+    references, in the order given."""
 
     mode: Mode
     idea: str = ""
     prompt: str = ""
     photos: tuple[Path, ...] = ()
+    start: bool = False
     clip: Path | None = None  # the mp4 to enlarge
     # The finish an upscale delivers at, in megapixels.
     finish_megapixels: float | None = None
@@ -72,13 +76,15 @@ class Job:
             return unknown
 
         problems = []
-        if self.mode in ("create", "edit", "video") and bool(self.idea) == bool(self.prompt):
+        if self.mode in ("picture", "video") and bool(self.idea) == bool(self.prompt):
             problems.append("give exactly one of idea / prompt")
         if self.aspect and not re.fullmatch(r"[1-9]\d?:[1-9]\d?", self.aspect):
             problems.append(f"aspect={self.aspect!r}: width:height, such as 3:2, or empty")
-        if self.mode == "create":
-            if self.photos:
-                problems.append("create draws from words alone: leave the photos out, or edit one")
+        if self.mode == "picture":
+            if self.start and not self.photos:
+                problems.append("no start photo: add one, or draw from the words and references alone")
+            elif not self.start and self.edit.engine == "minimax-h3":
+                problems.append("minimax-h3 plays a clip out from a start photo: mark one, or pick a Qwen engine")
         elif self.mode == "upscale":
             if self.clip is None:
                 problems.append("upscale needs a clip to enlarge")
@@ -92,7 +98,7 @@ class Job:
         if self.finish_megapixels is not None and self.finish_megapixels <= 0:
             problems.append(f"finish_megapixels={self.finish_megapixels:g}: leave it unset to deliver as sampled")
         if self.grade_strength is not None:
-            if self.mode in ("create", "edit"):
+            if self.mode == "picture":
                 problems.append("grade_strength: a picture has no chain to drift along")
             elif not 0.0 < self.grade_strength <= 1.0:
                 problems.append(
@@ -100,7 +106,7 @@ class Job:
                     "it is the exponent, so 0.5 closes half the gap and 1 matches the opening outright"
                 )
         if self.retime_fps is not None:
-            if self.mode in ("create", "edit"):
+            if self.mode == "picture":
                 problems.append("retime_fps: a picture has no frame rate")
             elif self.retime_fps <= h3_config.FPS:
                 # Retiming only adds frames, and asking for 24 out of 24 is a whole pass over the
@@ -131,6 +137,8 @@ class Job:
         which would otherwise render something other than what was asked for. A retired field is dropped: every
         run before 2026-10-17 recorded `chain`, and "again" on one sends its spec back."""
         data = {name: value for name, value in data.items() if name not in RETIRED}
+        if data.get("mode") in MERGED:
+            data = {**data, "start": MERGED[data["mode"]], "mode": "picture"}
         unknown = sorted(set(data) - set(cls.__dataclass_fields__))
         if unknown:
             raise ValueError(f"a job has no {', '.join(unknown)} (known: {', '.join(cls.__dataclass_fields__)})")

@@ -4,10 +4,12 @@ import type { RunState } from './run'
 import { apply, emptyRun } from './run'
 
 export interface Job {
-  mode: 'create' | 'video' | 'edit' | 'upscale'
+  mode: 'picture' | 'video' | 'upscale'
   idea: string
   prompt: string
   photos: string[]
+  /** A picture starts from `photos[0]`; unset, every photo is a reference and the canvas is fresh. */
+  start: boolean
   clip: string | null
   finish_megapixels: number | null
   grade_strength: number | null

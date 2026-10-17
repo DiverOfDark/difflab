@@ -29,69 +29,10 @@ def output_of(position: int, name: str) -> dict[str, Any]:
 
 def plan(job: Job) -> list[JobSpec]:
     """Which tool jobs a quick job is."""
+    if job.mode == "picture":
+        return _picture(job)
     jobs: list[JobSpec] = []
-    photo: Any = str(job.photos[0]) if job.photos else None
-    # Only when given, so a job without one keeps the inputs every earlier run recorded.
-    cut: dict[str, Any] = {}
-    if job.mode in ("edit", "video") and job.aspect:
-        if job.fit == "extend":
-            jobs.append(
-                JobSpec("extend_photo", {"photo": photo, "aspect": job.aspect}, "draw the photo out", job.edit.data())
-            )
-            photo = output_of(0, "image")
-        else:
-            cut = {"aspect": job.aspect}
-    if job.mode == "create":
-        if job.idea:
-            jobs.append(JobSpec("write_image_prompt", {"idea": job.idea}, "write the description", job.vlm.data()))
-            prompt_: Any = output_of(0, "text")
-            aspect: Any = job.aspect or output_of(0, "aspect")
-        else:
-            prompt_, aspect = job.prompt, job.aspect or "1:1"
-        jobs.append(JobSpec("create_image", {"prompt": prompt_, "aspect": aspect}, "draw the picture", job.edit.data()))
-        return jobs
-    if job.mode == "edit" and job.edit.engine == "minimax-h3":
-        if job.idea:
-            jobs.append(
-                JobSpec(
-                    "write_video_prompt",
-                    {"photo": photo, "idea": job.idea, "still": True, **cut},
-                    "write the prompt",
-                    job.vlm.data(),
-                )
-            )
-            prompt_ = output_of(len(jobs) - 1, "text")
-        else:
-            prompt_ = job.prompt
-        references = [str(p) for p in job.photos[1:]]
-        jobs.append(
-            JobSpec(
-                "render_clip",
-                {"photo": photo, "prompt": prompt_, "references": references, "still": True, **cut},
-                "render the edit",
-                job.video.with_(duration=job.edit.seconds_h3).data(),
-            )
-        )
-        return jobs
-    if job.mode == "edit":
-        if job.idea:
-            jobs.append(
-                JobSpec(
-                    "write_instruction",
-                    {"photo": photo, "idea": job.idea, "engine": job.edit.engine, **cut},
-                    "write the instruction",
-                    job.vlm.data(),
-                )
-            )
-            instruction: Any = output_of(len(jobs) - 1, "text")
-        else:
-            instruction = job.prompt
-        jobs.append(
-            JobSpec(
-                "edit_image", {"photo": photo, "instruction": instruction, **cut}, "edit the photo", job.edit.data()
-            )
-        )
-        return jobs
+    photo, cut = _fitted(job, str(job.photos[0]) if job.photos else None, jobs)
     if job.mode == "video":
         if job.idea:
             jobs.append(
@@ -139,6 +80,83 @@ def plan(job: Job) -> list[JobSpec]:
                 settings.effective("retime")[0].data(),
             )
         )
+    return jobs
+
+
+def _fitted(job: Job, photo: Any, jobs: list[JobSpec]) -> tuple[Any, dict[str, Any]]:
+    """The photo brought to the job's aspect: drawn out by a job of its own, or a cut its readers make."""
+    if not job.aspect:
+        # Only when given, so a job without one keeps the inputs every earlier run recorded.
+        return photo, {}
+    if job.fit == "crop":
+        return photo, {"aspect": job.aspect}
+    jobs.append(JobSpec("extend_photo", {"photo": photo, "aspect": job.aspect}, "draw the photo out", job.edit.data()))
+    return output_of(len(jobs) - 1, "image"), {}
+
+
+def _picture(job: Job) -> list[JobSpec]:
+    """A start photo is edited; without one, the words and any references are drawn on a fresh canvas."""
+    jobs: list[JobSpec] = []
+    photo = str(job.photos[0]) if job.start else None
+    references = [str(p) for p in job.photos[1 if job.start else 0 :]]
+    # Only when there are any: a job's inputs are its row, and a run without references reads as it did.
+    given: dict[str, Any] = {"references": references} if references else {}
+    if photo is None:
+        if job.idea:
+            jobs.append(
+                JobSpec("write_image_prompt", {"idea": job.idea, **given}, "write the description", job.vlm.data())
+            )
+            prompt_: Any = output_of(0, "text")
+            aspect: Any = job.aspect or output_of(0, "aspect")
+        else:
+            prompt_, aspect = job.prompt, job.aspect or "1:1"
+        jobs.append(
+            JobSpec("create_image", {"prompt": prompt_, "aspect": aspect, **given}, "draw the picture", job.edit.data())
+        )
+        return jobs
+    photo, cut = _fitted(job, photo, jobs)
+    if job.edit.engine == "minimax-h3":
+        if job.idea:
+            jobs.append(
+                JobSpec(
+                    "write_video_prompt",
+                    {"photo": photo, "idea": job.idea, "still": True, **cut},
+                    "write the prompt",
+                    job.vlm.data(),
+                )
+            )
+            prompt_ = output_of(len(jobs) - 1, "text")
+        else:
+            prompt_ = job.prompt
+        jobs.append(
+            JobSpec(
+                "render_clip",
+                {"photo": photo, "prompt": prompt_, "references": references, "still": True, **cut},
+                "render the edit",
+                job.video.with_(duration=job.edit.seconds_h3).data(),
+            )
+        )
+        return jobs
+    if job.idea:
+        jobs.append(
+            JobSpec(
+                "write_instruction",
+                {"photo": photo, "idea": job.idea, "engine": job.edit.engine, **given, **cut},
+                "write the instruction",
+                job.vlm.data(),
+            )
+        )
+        instruction: Any = output_of(len(jobs) - 1, "text")
+    else:
+        instruction = job.prompt
+    jobs.append(
+        JobSpec(
+            "edit_image",
+            {"photo": photo, "instruction": instruction, **given, **cut},
+            "edit the photo",
+            job.edit.data(),
+        )
+    )
     return jobs
 
 

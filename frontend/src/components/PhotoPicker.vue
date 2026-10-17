@@ -17,8 +17,11 @@ const props = defineProps<{
   /** Every item is a run of its own. */
   each?: boolean
   accept?: string
+  /** Any one photo may be marked the start, which moves it first; `start` says whether the first is one. */
+  startable?: boolean
+  start?: boolean
 }>()
-const emit = defineEmits<{ 'update:photos': [photos: string[]] }>()
+const emit = defineEmits<{ 'update:photos': [photos: string[]]; 'update:start': [start: boolean] }>()
 
 const known = ref<Record<string, Asset>>({})
 const busy = ref(false)
@@ -64,10 +67,19 @@ function onPick(event: Event) {
 }
 
 function remove(index: number) {
+  if (index === 0 && props.start) emit('update:start', false)
   emit(
     'update:photos',
     props.photos.filter((_, i) => i !== index),
   )
+}
+
+function mark(index: number) {
+  if (index === 0 && props.start) return emit('update:start', false)
+  const next = [...props.photos]
+  next.unshift(...next.splice(index, 1))
+  emit('update:photos', next)
+  emit('update:start', true)
 }
 
 function drop(index: number) {
@@ -120,7 +132,17 @@ const thumb = (path: string) => known.value[path]?.thumb ?? thumbUrl(path)
         <div class="what">
           <div class="name">{{ name(path) }}</div>
           <div v-if="index === 0 && !labels?.length && !empty" class="opens">opens the take</div>
+          <div v-else-if="index === 0 && start" class="opens">the start · edited into the result</div>
         </div>
+        <button
+          v-if="startable"
+          class="tag"
+          :class="{ off: !(index === 0 && start) }"
+          :title="index === 0 && start ? 'make it a reference again' : 'start from this photo'"
+          @click.stop="mark(index)"
+        >
+          start
+        </button>
         <button
           v-if="labels?.[index]"
           class="tag"
@@ -214,6 +236,12 @@ img,
 
 .tag:hover {
   background: var(--bg-overlay);
+}
+
+.tag.off {
+  background: none;
+  color: var(--dim);
+  border: 1px solid var(--line);
 }
 
 .tag.copied {

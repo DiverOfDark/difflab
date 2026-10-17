@@ -84,24 +84,29 @@ def _opening(inputs: dict[str, Any]) -> Frame:
     return photo.crop_to_aspect(_ratio(inputs["aspect"])) if inputs.get("aspect") else photo
 
 
+def _references(inputs: dict[str, Any]) -> list[Frame]:
+    return [_frame(p) for p in inputs.get("references", [])]
+
+
 def run_write_instruction(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
     text = write_prompt.write_edit_instruction(
         _opening(inputs),
         str(inputs["idea"]),
         VlmSettings(**settings),
         str(inputs.get("engine", "qwen-image-edit")),
+        _references(inputs),
     )
     return {"text": text}
 
 
 def run_write_image_prompt(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
-    text, aspect = write_prompt.write_image_prompt(str(inputs["idea"]), VlmSettings(**settings))
+    text, aspect = write_prompt.write_image_prompt(str(inputs["idea"]), VlmSettings(**settings), _references(inputs))
     return {"text": text, "aspect": aspect}
 
 
 def run_create_image(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
     chosen = EditSettings(**settings).with_(engine="qwen-image-2.1")
-    made = edit_image.create(str(inputs["prompt"]), str(inputs["aspect"]), chosen)
+    made = edit_image.create(str(inputs["prompt"]), str(inputs["aspect"]), chosen, _references(inputs))
     png = media.save(made, chosen.model_stem, chosen.seed, announce=False)
     return {"image": store.relative(png)}
 
@@ -116,14 +121,14 @@ def run_write_video_prompt(inputs: dict[str, Any], settings: dict[str, Any]) -> 
 
 def run_edit_image(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
     chosen = EditSettings(**settings)
-    made = edit_image.edit(_opening(inputs), str(inputs["instruction"]), chosen)
+    made = edit_image.edit(_opening(inputs), str(inputs["instruction"]), chosen, donors=_references(inputs))
     png = media.save(made, chosen.model_stem, chosen.seed, announce=False)
     return {"image": store.relative(png)}
 
 
 def run_render_clip(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
     chosen = VideoSettings(**settings)
-    references = [_frame(p) for p in inputs.get("references", [])]
+    references = _references(inputs)
     clip = render_chunk.render(_opening(inputs), str(inputs["prompt"]), chosen, references=references)
     stem = HubFile.parse(chosen.checkpoint).path.stem
     path = media.save(clip, stem, chosen.seed, announce=False)

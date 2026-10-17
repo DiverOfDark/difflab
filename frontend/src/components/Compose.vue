@@ -17,20 +17,34 @@ const props = defineProps<{
 const emit = defineEmits<{ render: [] }>()
 
 const MODES = [
-  { id: 'create', give: 'words alone', get: 'a new picture' },
+  { id: 'picture', give: 'words, a start, references', get: 'a picture, drawn or edited' },
   { id: 'video', give: 'a photo and words', get: 'one clip with audio' },
-  { id: 'edit', give: 'a photo and words', get: 'a picture, restyled' },
   { id: 'upscale', give: 'a finished mp4', get: 'the same cut, larger' },
 ] as const
 
 const USES: Record<string, string[]> = {
-  create: ['words', 'edit', 'vlm'],
+  picture: ['words', 'photos', 'edit', 'vlm'],
   video: ['words', 'photos', 'video', 'delivery', 'vlm'],
-  edit: ['words', 'photos', 'edit', 'vlm'],
   upscale: ['clip', 'finish', 'delivery'],
 }
+/** Without a start the canvas is fresh, and only Qwen-Image 2.1 draws one: the engine is not asked. */
+const drawing = (j: Job) => j.mode === 'picture' && !j.start
 /** An H3 edit is sampled on the video knobs; the edit card keeps only the engine. */
-const h3Edit = computed(() => job.value.mode === 'edit' && job.value.edit.engine === 'minimax-h3')
+const h3Edit = computed(() => job.value.mode === 'picture' && job.value.start && job.value.edit.engine === 'minimax-h3')
+
+/** What a prompt calls each photo, in the words the engine that reads it was trained on. */
+const tags = computed(() => {
+  const j = job.value
+  if (j.mode !== 'picture' || j.photos.length < 2 || h3Edit.value) return undefined
+  const aio = !drawing(j) && (j.edit.engine ?? 'qwen-image-edit') === 'qwen-image-edit'
+  return j.photos.map((_, i) => (aio ? `Picture ${i + 1}` : `<image${i + 1}>`))
+})
+
+function setBatching(on: boolean) {
+  batching.value = on
+  // A batch's items are the starts; the photos left beside them are only references.
+  if (on && job.value.mode === 'picture') job.value.start = false
+}
 const uses = computed(() => [...(USES[job.value.mode] ?? []), ...(h3Edit.value ? ['video'] : [])])
 const shows = (part: string) => uses.value.includes(part)
 
@@ -78,7 +92,7 @@ interface Knob {
 
 /** What the chosen engine will run: the Turbo's own 8, the base model's or the AIO's own field. */
 const editSteps = (job: Job) => {
-  if (job.mode !== 'create' && job.edit.engine !== 'qwen-image-2.1') return job.edit.steps
+  if (!drawing(job) && job.edit.engine !== 'qwen-image-2.1') return job.edit.steps
   return (job.edit.turbo ?? true) ? 8 : (job.edit.steps_21 ?? 40)
 }
 
@@ -187,8 +201,7 @@ const groups = computed(() => {
       ],
     })
   if (shows('edit')) {
-    // A picture from words alone is Qwen-Image 2.1's: the AIO only edits.
-    const creating = j.mode === 'create'
+    const creating = drawing(j)
     const is21 = creating || j.edit.engine === 'qwen-image-2.1'
     const turbo = is21 && (j.edit.turbo ?? true)
     const engine: Knob = {
@@ -204,7 +217,7 @@ const groups = computed(() => {
     }
     const aspect: Knob = {
       key: 'aspect',
-      hint: 'Width to height. Auto lets the writer pick one for the idea; a prompt is drawn square.',
+      hint: 'Width to height. Auto lets the writer pick one for the idea, or follow a reference; a prompt is drawn square.',
       get: () => j.aspect ?? '',
       set: (v) => (j.aspect = v),
       options: [['', 'auto'], ...SHAPES],
@@ -212,7 +225,7 @@ const groups = computed(() => {
     if (h3Edit.value)
       out.push({
         title: 'MiniMax H3 · experimental',
-        meta: 'the Video card sets the clip; photos after the first are references',
+        meta: 'the Video card sets the clip; photos after the start are references',
         rows: [
           engine,
           ...reshape(j),
@@ -447,8 +460,8 @@ const label = computed(() => {
         <div class="head">
           <h5>References</h5>
           <div class="segmented">
-            <button :class="{ on: !batching }" @click="batching = false">ONE</button>
-            <button :class="{ on: batching }" @click="batching = true">BATCH</button>
+            <button :class="{ on: !batching }" @click="setBatching(false)">ONE</button>
+            <button :class="{ on: batching }" @click="setBatching(true)">BATCH</button>
           </div>
         </div>
         <div v-if="batching" class="body">
@@ -475,7 +488,15 @@ const label = computed(() => {
             <span class="label">clip</span>
             <input v-model="job.clip" placeholder="an mp4 under output/, or its full path" />
           </label>
-          <PhotoPicker v-if="shows('photos')" v-model:photos="job.photos" />
+          <PhotoPicker
+            v-if="job.mode === 'picture'"
+            v-model:photos="job.photos"
+            v-model:start="job.start"
+            startable
+            :labels="tags"
+            empty="Optional. Mark one the start to edit it; the rest are references. With no start the picture is drawn fresh."
+          />
+          <PhotoPicker v-else-if="shows('photos')" v-model:photos="job.photos" />
         </div>
       </section>
 

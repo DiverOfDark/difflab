@@ -110,9 +110,10 @@ def edit(
     return default_cache.frame(made, produce)
 
 
-def create(prompt: str, aspect: str, settings: EditSettings) -> Frame:
-    """A picture from words alone, on Qwen-Image 2.1 whatever the settings' engine: the AIO only edits. `aspect` is
-    "W:H"; the size is the settings' megapixels at it, on the /32 grid the pipeline would floor to."""
+def create(prompt: str, aspect: str, settings: EditSettings, references: Sequence[Frame] = ()) -> Frame:
+    """A picture from words and `references` on a fresh canvas, on Qwen-Image 2.1 whatever the settings' engine: the
+    AIO needs a picture to start from. `aspect` is "W:H"; the size is the settings' megapixels at it, on the /32 grid
+    the pipeline would floor to."""
     settings = settings.with_(engine="qwen-image-2.1")
     w, h = (int(part) for part in aspect.split(":"))
     size = tuple(max(32, round(side / 32) * 32) for side in megapixel_size(w, h, settings.megapixels))
@@ -120,10 +121,26 @@ def create(prompt: str, aspect: str, settings: EditSettings) -> Frame:
     def produce() -> Frame:
         model: Any = models.registry.acquire(spec(settings))
         steps, cfg = settings.sampling
-        made = model.create(prompt, size, steps=steps, cfg=cfg, seed=settings.seed, turbo=settings.turbo)
+        made = model.create(
+            named(prompt, settings, len(references)) if references else prompt,
+            size,
+            steps=steps,
+            cfg=cfg,
+            seed=settings.seed,
+            turbo=settings.turbo,
+            references=[reference.pil() for reference in references],
+        )
         return Frame.from_pil(made, origin="created")
 
-    return default_cache.frame(key("create_image", 1, prompt=prompt, settings=settings, size=size), produce)
+    made = key(
+        "create_image",
+        1,
+        prompt=prompt,
+        settings=settings,
+        size=size,
+        **({"references": [reference.pixels for reference in references]} if references else {}),
+    )
+    return default_cache.frame(made, produce)
 
 
 def vae_reference_size(frame: Frame, area: int = VAE_REFERENCE_AREA) -> tuple[int, int]:

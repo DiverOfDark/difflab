@@ -56,13 +56,17 @@ const folder = computed(() => {
 const spec = computed<Job | null>(() => props.record?.spec ?? null)
 const PICTURE = /\.(png|jpe?g|webp)$/i
 
-/** An edit's next take opens on the picture it made, keeping the references after it; anything else
- *  is asked again as it was. */
+/** A picture's next take starts from the picture it made, keeping its references; anything else is
+ *  asked again as it was. */
 function takeFrom() {
   const base = spec.value
   if (!base) return
   const made = current.value?.path
-  emit('again', base.mode === 'edit' && made && PICTURE.test(made) ? { ...base, photos: [made, ...base.photos.slice(1)] } : base)
+  const mode: string = base.mode
+  if (!['picture', 'create', 'edit'].includes(mode) || !made || !PICTURE.test(made)) return emit('again', base)
+  const started = mode === 'edit' || (mode === 'picture' && base.start)
+  const references = started ? base.photos.slice(1) : base.photos
+  emit('again', { ...base, mode: 'picture', start: true, photos: [made, ...references] })
 }
 const jobs = computed(() => props.record?.jobs ?? [])
 const took = (seconds: number | null | undefined) => (seconds == null ? '' : duration(seconds))
@@ -101,7 +105,9 @@ const poster = (it: Item) => {
 const sampled = computed<{ seed: number; megapixels: number } | null>(() => {
   const j = spec.value
   if (!j) return null
-  if (j.mode === 'edit') return j.edit
+  const mode: string = j.mode
+  const h3 = j.edit.engine === 'minimax-h3' && (mode === 'edit' || (mode === 'picture' && j.start))
+  if (['picture', 'create', 'edit'].includes(mode) && !h3) return j.edit
   return j.video
 })
 

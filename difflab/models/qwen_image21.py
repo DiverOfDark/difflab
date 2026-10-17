@@ -253,9 +253,10 @@ class Editor21:
         seed: int,
         negative_prompt: str = prompts.NEGATIVE_PROMPT,
         turbo: bool = True,
+        references: Sequence[Image.Image] = (),
     ) -> Image.Image:
-        """A picture from words alone, `size` on the /32 grid."""
-        return self._draw(None, prompt, size, steps, cfg, seed, negative_prompt, turbo)
+        """A picture on a fresh canvas, `size` on the /32 grid, with any `references` as its condition images."""
+        return self._draw(list(references) or None, prompt, size, steps, cfg, seed, negative_prompt, turbo)
 
     def _draw(
         self,
