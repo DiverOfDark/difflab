@@ -932,9 +932,6 @@ Answer only JSON, in this shape:
 {{"shown":"his head and bare shoulders","colours":"short black hair, pale skin, brown eyes, a white headband"}}"""
 COMPOSE_MANGA_SHOWN_USER = "The {noun}, whose colours are: {colours}. What of the {noun} does this panel show?"
 COMPOSE_MANGA_CAST = " Picture 1 shows only the {who}'s {shown}, and stays that: colour it {colours}."
-# The trigger the Qwen-Image 2.1 manga-colouring LoRA (civitai 2968883) was trained on, tags and all.
-COMPOSE_MANGA_COLOUR = "color <image1> manga panel"
-COMPOSE_MANGA_COLOUR_REFERENCE = ". <image2> is color reference"
 COMPOSE_MANGA_STYLE = " Picture {picture} is only a reference for the look: match its colour palette, line weight and shading, and take nothing else from it."
 
 MANGA_STYLE = (

@@ -211,8 +211,6 @@ def _queue_chapter(connection: Any, chapter_id: int, asked_by: str, keyframes_on
     verdicts, _ = settings.effective("judge", production.id)
     assert isinstance(verdicts, JudgeSettings)
     editor, _ = settings.effective("edit_image", production.id)
-    # A manga keyframe is coloured, not drawn, often by a LoRA the cleaning and the sheets must not carry.
-    colourist, _ = settings.effective("compose_keyframe", production.id)
     keyframes = [store.keyframe_of(connection, shot.id) for shot in shots]
     tails, lands = compiler.joins(keyframes, shots, carries)
     # Which shots open on the one before's latents: the compiler captioned them so, and a shot re-creating
@@ -243,7 +241,7 @@ def _queue_chapter(connection: Any, chapter_id: int, asked_by: str, keyframes_on
                 connection, run_id, "compose_keyframe",
                 {**drawn, "production": production.id, "shot": shot.id, "note": keyframe.note,
                  "size": _canvas(production), "seed": seed},
-                label=f"shot {shot.position + 1}: draw the panel as anime", settings=colourist.data(),
+                label=f"shot {shot.position + 1}: draw the panel as anime", settings=editor.data(),
                 for_kind="keyframe", for_id=keyframe.id,
             )  # fmt: skip
             store.set_made(connection, "keyframe", keyframe.id, store.QUEUED, current_job=composed.id, seed=seed)
