@@ -295,7 +295,9 @@ def from_video(
         start = index * chosen.duration
         end = min(start + chosen.duration, seconds)
         anchor = _anchor(path, start)
-        prompt = captions.caption_for(instruction, len(kept) + 1, keyframe=True)
+        # The next shot opens on the source's frame at `end`, and a shot ends on the next one's keyframe.
+        lands = f"the source footage's frame at {end:.1f}s, where the next shot begins" if index + 1 < count else ""
+        prompt = captions.caption_for(instruction, len(kept) + 1, keyframe=True, lands=lands)
         prompt = captions.cite_source(prompt, start, end, tail=index > 0 and carried.tail_frames > 0)
         shot = production.add_shot(made.id, prompt, chosen.duration, keyframe=anchor, action=instruction.strip())
         with store.connect() as connection, store.transaction(connection):

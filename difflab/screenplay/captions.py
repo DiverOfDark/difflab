@@ -7,41 +7,46 @@ from __future__ import annotations
 import re
 
 from difflab.models.minimax_h3 import caption
+from difflab.screenplay import words
 
 SOUNDSCAPE = "The location sound of <Video 1> continues unchanged: its room tone, movement and voices."
 EDITING = "[video editing + keyframe completion + reference generation]"
 CONTINUING = "[video continuation + keyframe completion + reference generation + audio reference]"
 
 
-def renumbered(said: str, keyframe: bool) -> str:
-    """Picture numbers moved down one when no keyframe holds <Picture 1>. <Picture 1> itself is left,
-    so a caption naming it in a keyframe-free shot is refused by name rather than quietly moved."""
-    if keyframe:
+def renumbered(said: str, keyframe: bool, lands: bool = False) -> str:
+    """Picture numbers past <Picture 1> moved down one when no keyframe holds <Picture 1>, up one when
+    the last frame takes <Picture 2>. <Picture 1> itself is left, so a caption naming it in a
+    keyframe-free shot is refused by name rather than quietly moved."""
+    by = int(lands) - int(not keyframe)
+    if not by:
         return said
     return re.sub(
-        r"<Picture (\d+)>", lambda m: f"<Picture {int(m.group(1)) - 1}>" if int(m.group(1)) > 1 else m.group(0), said
+        r"<Picture (\d+)>", lambda m: f"<Picture {int(m.group(1)) + by}>" if int(m.group(1)) > 1 else m.group(0), said
     )
 
 
-def caption_for(instruction: str, pictures: int, keyframe: bool = True) -> str:
-    """A one-line instruction wrapped in the six sections, or passed through if it already is one."""
+def caption_for(instruction: str, pictures: int, keyframe: bool = True, lands: str = "") -> str:
+    """A one-line instruction wrapped in the six sections, or passed through if it already is one.
+    `lands` is the frame the shot ends on, said as <Picture 2>; it needs a keyframe."""
     if any(name == "subject_definitions" for name, *_ in caption.sections(instruction)):
         return instruction.strip() + "\n"
-    said = renumbered(instruction.strip().rstrip("."), keyframe)
-    first = 2 if keyframe else 1
+    lands = lands if keyframe else ""
+    said = renumbered(instruction.strip().rstrip("."), keyframe, bool(lands))
+    first = 3 if lands else 2 if keyframe else 1
+    photos = range(first, first + pictures - (1 if keyframe else 0))
     subjects = ["<Picture 1> is this shot's first frame: the video starts exactly from it."] if keyframe else []
-    subjects += [
-        f"<Picture {index}> is a reference photograph; keep what it shows of its subject."
-        for index in range(first, first + pictures - (1 if keyframe else 0))
-    ]
+    subjects += [words.SENTENCES["last_frame"].format(arrangement=lands)] if lands else []
+    subjects += [f"<Picture {index}> is a reference photograph; keep what it shows of its subject." for index in photos]
     retention = (
         ["<Picture 1> ([Shot 1] first frame): fully_preserved - the shot starts from its framing and light."]
         if keyframe
         else []
     )
+    retention += [words.SENTENCES["retain_last"]] if lands else []
     retention += [
         f"<Picture {index}> (appears in [Shot 1]): partially_preserved - what it shows of its subject is kept."
-        for index in range(first, first + pictures - (1 if keyframe else 0))
+        for index in photos
     ]
     return (
         "subject_definitions:\n" + "\n".join(subjects) + "\n\n"
