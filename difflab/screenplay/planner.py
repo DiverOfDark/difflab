@@ -245,12 +245,14 @@ def _queue_chapter(connection: Any, chapter_id: int, asked_by: str, keyframes_on
                 for_kind="keyframe", for_id=keyframe.id,
             )  # fmt: skip
             store.set_made(connection, "keyframe", keyframe.id, store.QUEUED, current_job=composed.id, seed=seed)
-            framed.append((
-                {"production": production.id, "kind": "keyframe", "path": _output(composed.id, "frame"),
-                 "purpose": f"the comic panel redrawn as one frame of a colour anime ({shot.action})",
-                 "arrangement": str(drawn["action"]), "cast": cast, "pictures": drawn["pictures"]},
-                f"shot {shot.position + 1}: judge the keyframe", keyframe.id,
-            ))  # fmt: skip
+            # A coloured panel is its own keyframe: judged against the sheets, its fixes redrew faces.
+            if not production.manifest.get("coloured"):
+                framed.append((
+                    {"production": production.id, "kind": "keyframe", "path": _output(composed.id, "frame"),
+                     "purpose": f"the comic panel redrawn as one frame of a colour anime ({shot.action})",
+                     "arrangement": str(drawn["action"]), "cast": cast, "pictures": drawn["pictures"]},
+                    f"shot {shot.position + 1}: judge the keyframe", keyframe.id,
+                ))  # fmt: skip
             openings.append(_output(composed.id, "frame"))
         elif keyframe.source == store.COMPOSED and resolved.waiting(shot.id):
             openings.append(None)  # only a keyframes run gets here: `check` refuses a render

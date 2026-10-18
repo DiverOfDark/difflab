@@ -914,12 +914,11 @@ COMPOSE_MANGA_SHEET_KEEP = " Keep every colour exactly as this picture shows it.
 # told to draw each "exactly as in" its sheet or to take "only the colours, never its pose, size or framing".
 # Told "the man has <colours>" with no sheet, it still drew the whole man over three of the five close-ups.
 COMPOSE_MANGA_ANIME = """\
-{verb} this comic panel as one frame of a full-colour anime, in clean anime line art with flat cel shading and painted backgrounds. Picture 1 is the frame: keep its composition, camera angle and framing, and every figure, pose and object exactly where it is and exactly as large, a figure the frame cuts off staying cut off and a close-up staying a close-up; continue the scene out over any blurred band at the edges. Add no person, face or figure.{cast}{style}"""
-COMPOSE_MANGA_COLOUR_VERB = "Colour"
-# Overgeared ch.1, 2026-10-18: told a coloured panel's cast colours off their sheets, the editor redrew a man with
-# greying brown hair as white-haired and old and swapped three others for new people, so a coloured panel keeps its own.
-COMPOSE_MANGA_REDRAW_VERB = "Redraw"
-COMPOSE_MANGA_KEEP_COLOURS = " Keep every colour, face and hair exactly as Picture 1 shows it."
+Colour this comic panel as one frame of a full-colour anime, in clean anime line art with flat cel shading and painted backgrounds. Picture 1 is the frame: keep its composition, camera angle and framing, and every figure, pose and object exactly where it is and exactly as large, a figure the frame cuts off staying cut off and a close-up staying a close-up; continue the scene out over any blurred band at the edges. Add no person, face or figure.{cast}{style}"""
+# A coloured panel is not redrawn. Overgeared ch.1, 2026-10-18: redrawn as anime, a man with greying brown hair came
+# out white-haired and old in shots 2, 3 and 7, told his sheet's colours or told only to keep the panel's own.
+COMPOSE_MANGA_EXTEND = """\
+The sharp comic panel in the middle is part of a wider scene. Replace the blurred bands at its {sides} with the rest of that scene, continuing its ground, sky, walls, light and perspective out to the edges, drawn in the panel's own art style and colours. Keep everything in the sharp panel exactly as it is: every person, face, pose, object and colour, in the same place and size. No borders, frames, seams, text or speech balloons."""
 COMPOSE_MANGA_COLOURS_SYSTEM = """\
 You read the colours off an anime character design sheet, for a painter who colours the same character in other pictures and never sees the sheet.
 

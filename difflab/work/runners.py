@@ -556,22 +556,22 @@ def _anime_keyframe(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
     with store.connect() as connection:
         nouns = {m.slug: m.noun for m in store.members_of(connection, production_id)}
         production = store.production(connection, production_id)
-    coloured = bool(production and production.manifest.get("coloured"))
     chosen = EditSettings(**settings).with_(seed=int(inputs["seed"]))
     width, height = (int(inputs["size"][0]), int(inputs["size"][1]))
+    if production is not None and production.manifest.get("coloured"):
+        return _panel_keyframe(inputs, chosen, width, height)
     base = cut_crops.padded(_frame(inputs["base"]), width, height)
     style = _frame(inputs["style"]) if inputs.get("style") else None
     donors = [style] if style is not None else []
     # Told a character's whole colours, the editor drew the whole character over close-ups of his head
     # (One-Punch Man p3-6, three of five close-ups), so it is told only the parts the panel shows.
-    cast = words.COMPOSE_MANGA_KEEP_COLOURS if coloured else ""
-    for slug, path in ({} if coloured else inputs.get("pictures") or {}).items():
+    cast = ""
+    for slug, path in (inputs.get("pictures") or {}).items():
         noun = nouns.get(slug, slug.replace("_", " "))
         shown, colours = panel_shows(str(inputs["base"]), noun, sheet_colours(str(path), noun))
         if shown:
             cast += words.COMPOSE_MANGA_CAST.format(who=noun, shown=shown, colours=colours)
     said = words.COMPOSE_MANGA_ANIME.format(
-        verb=words.COMPOSE_MANGA_REDRAW_VERB if coloured else words.COMPOSE_MANGA_COLOUR_VERB,
         cast=cast,
         style=words.COMPOSE_MANGA_STYLE.format(picture=2) if style is not None else "",
     ).strip()
@@ -589,6 +589,27 @@ def _anime_keyframe(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
         ui.note(f"keyframe already drawn as {made}")
         return Skipped({"frame": store.relative(target), "key": str(made)})
     frame = edit_image.edit(base, said, chosen, size=(width, height), donors=donors)
+    frame.resized(width, height).pil().save(target)
+    record.artifact_made(target, store.IMAGE, chosen.seed, key=str(made))
+    return {"frame": store.relative(target), "key": str(made)}
+
+
+def _panel_keyframe(inputs: dict[str, Any], chosen: EditSettings, width: int, height: int) -> dict[str, Any]:
+    """A coloured panel as its own keyframe: only the bands it is padded with to the canvas are drawn."""
+    panel = _frame(inputs["base"])
+    shape, canvas = panel.width / panel.height, width / height
+    sides = "" if abs(shape - canvas) < 0.02 * canvas else "left and right" if shape < canvas else "top and bottom"
+    said = words.COMPOSE_MANGA_EXTEND.format(sides=sides) if sides else ""
+    told = " ".join(str(inputs.get("note") or "").replace("Fix:", " ").split()).rstrip(".")
+    if told:
+        said += " " + words.COMPOSE_NOTE.format(note=told)
+    made = key("panel_keyframe", 1, panel=panel.pixels, said=said, settings=chosen, size=[width, height])
+    target = cache.path(made, ".png")
+    if target.is_file():
+        ui.note(f"keyframe already drawn as {made}")
+        return Skipped({"frame": store.relative(target), "key": str(made)})
+    base = cut_crops.padded(panel, width, height)
+    frame = edit_image.edit(base, said, chosen, size=(width, height)) if said else base
     frame.resized(width, height).pil().save(target)
     record.artifact_made(target, store.IMAGE, chosen.seed, key=str(made))
     return {"frame": store.relative(target), "key": str(made)}
