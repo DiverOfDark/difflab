@@ -200,8 +200,12 @@ def _decode(pipe: QwenImage21Pipeline, latents: torch.Tensor, height: int, width
     shape = (1, pipe.vae.config.z_dim, 1, 1, 1)
     mean = torch.tensor(pipe.vae.config.latents_mean).view(shape).to(latents)
     std = torch.tensor(pipe.vae.config.latents_std).view(shape).to(latents)
+    vae = pipe.vae
+    # The decoder without diffusers' feature cache: for one frame it only holds a clone of every conv's input, 515x
+    # the output's elements (8.6 GB bf16 at 2 MP), and an edit ran out of memory in it with 21.2 GB in use
+    # (2026-10-19). Uncached, the upsamplers skip their time conv as the first chunk's "Rep" does: bit-identical.
     with torch.no_grad():
-        pixels = pipe.vae.decode(latents * std + mean, return_dict=False)[0][:, :, 0]
+        pixels = vae.decoder(vae.post_quant_conv(latents * std + mean), first_chunk=True).clamp(-1, 1)[:, :, 0]
     decoded: Image.Image = pipe.image_processor.postprocess(pixels, output_type="pil")[0]
     return decoded
 
