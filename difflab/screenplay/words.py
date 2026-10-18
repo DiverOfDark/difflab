@@ -912,6 +912,7 @@ COMPOSE_MANGA_SHEET_KEEP = " Keep every colour exactly as this picture shows it.
 # Measured 2026-10-17/18 on One-Punch Man pp. 3-6: handed the sheets as pictures, the editor pasted the sheet's whole
 # figure over a close-up of an arm and over antenna tips, five panels in a row coming out as one portrait, whether
 # told to draw each "exactly as in" its sheet or to take "only the colours, never its pose, size or framing".
+# Told "the man has <colours>" with no sheet, it still drew the whole man over three of the five close-ups.
 COMPOSE_MANGA_ANIME = """\
 Colour this comic panel as one frame of a full-colour anime, in clean anime line art with flat cel shading and painted backgrounds. Picture 1 is the frame: keep its composition, camera angle and framing, and every figure, pose and object exactly where it is and exactly as large, a figure the frame cuts off staying cut off and a close-up staying a close-up; continue the scene out over any blurred band at the edges. Add no person, face or figure.{cast}{style}"""
 COMPOSE_MANGA_COLOURS_SYSTEM = """\
@@ -922,7 +923,7 @@ Name the colour of every part that shows: hair, skin, eyes, each piece of clothi
 Answer only JSON, in this shape:
 {{"colours":"short black hair, pale skin, brown eyes, a white headband, a dark grey t-shirt, blue jeans"}}"""
 COMPOSE_MANGA_COLOURS_USER = "The colours of this {noun}?"
-COMPOSE_MANGA_CAST = " The {who} has {colours}."
+COMPOSE_MANGA_CAST = " Where Picture 1 shows any part of the {who}, colour only that part, from: {colours}."
 COMPOSE_MANGA_STYLE = " Picture {picture} is only a reference for the look: match its colour palette, line weight and shading, and take nothing else from it."
 
 MANGA_STYLE = (
