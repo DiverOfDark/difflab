@@ -584,12 +584,21 @@ def _anime_keyframe(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
     made = key(
         "anime_keyframe", 2, base=base.pixels, said=said, settings=chosen, size=[width, height],
         **({"donors": [d.pixels for d in donors]} if donors else {}),
+        **({"padded": "after"} if chosen.engine == "qwen-image-2.1" else {}),
     )  # fmt: skip
     target = cache.path(made, ".png")
     if target.is_file():
         ui.note(f"keyframe already drawn as {made}")
         return Skipped({"frame": store.relative(target), "key": str(made)})
-    frame = edit_image.edit(base, said, chosen, size=(width, height), donors=donors)
+    if chosen.engine == "qwen-image-2.1":
+        # Coloured as the panel it is: handed it padded, the LoRA left the blurred bands blurred and grey.
+        panel = _frame(inputs["base"])
+        own = tuple(
+            max(16, side // 16 * 16) for side in megapixel_size(panel.width, panel.height, width * height / 1e6)
+        )
+        frame = cut_crops.padded(edit_image.edit(panel, said, chosen, size=own, donors=donors), width, height)
+    else:
+        frame = edit_image.edit(base, said, chosen, size=(width, height), donors=donors)
     frame.resized(width, height).pil().save(target)
     record.artifact_made(target, store.IMAGE, chosen.seed, key=str(made))
     return {"frame": store.relative(target), "key": str(made)}
