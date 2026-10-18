@@ -70,13 +70,13 @@ def put(scope_kind: str, scope_id: str, tool: str, values: dict[str, Any]) -> di
         raise ValueError(f"scope is one of {', '.join(SCOPES)}")
     cls = settings_class(tool)
     resolved, notes = cls.resolve(values)
-    defaults = cls()
+    below = effective(tool)[0] if scope_kind == PRODUCTION else cls()
     kept = {
         name: getattr(resolved, name)
         for name in values
         if name in {f.name for f in dataclasses.fields(cls)}
         and not any(f".{name}:" in note or f"called {name!r}" in note for note in notes)
-        and getattr(resolved, name) != getattr(defaults, name)
+        and getattr(resolved, name) != getattr(below, name)
     }
     fields = {f.name: f for f in dataclasses.fields(cls)}
     chosen = [
