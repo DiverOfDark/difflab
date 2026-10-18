@@ -594,16 +594,27 @@ def _anime_keyframe(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
     return {"frame": store.relative(target), "key": str(made)}
 
 
+PANEL_SHOWN = 0.75
+
+
 def _panel_keyframe(inputs: dict[str, Any], chosen: EditSettings, width: int, height: int) -> dict[str, Any]:
     """A coloured panel as its own keyframe: only the bands it is padded with to the canvas are drawn."""
-    panel = _frame(inputs["base"])
+    whole = _frame(inputs["base"])
+    # Fitted whole, a wide panel left 60% of a 9:16 canvas to invent and the editor stacked it into three panels or
+    # hung it as a picture on a wall (Overgeared ch.1, 6 of 14), so it is cut until the bands are a quarter at most.
+    scale = max(
+        min(width / whole.width, height / whole.height), PANEL_SHOWN * max(width / whole.width, height / whole.height)
+    )
+    wide, tall = min(whole.width, round(width / scale)), min(whole.height, round(height / scale))
+    left, top = (whole.width - wide) // 2, (whole.height - tall) // 2
+    panel = Frame.from_pil(whole.pil().crop((left, top, left + wide, top + tall)))
     shape, canvas = panel.width / panel.height, width / height
     sides = "" if abs(shape - canvas) < 0.02 * canvas else "left and right" if shape < canvas else "top and bottom"
     said = words.COMPOSE_MANGA_EXTEND.format(sides=sides) if sides else ""
     told = " ".join(str(inputs.get("note") or "").replace("Fix:", " ").split()).rstrip(".")
     if told:
         said += " " + words.COMPOSE_NOTE.format(note=told)
-    made = key("panel_keyframe", 1, panel=panel.pixels, said=said, settings=chosen, size=[width, height])
+    made = key("panel_keyframe", 2, panel=panel.pixels, said=said, settings=chosen, size=[width, height])
     target = cache.path(made, ".png")
     if target.is_file():
         ui.note(f"keyframe already drawn as {made}")

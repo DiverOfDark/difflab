@@ -918,7 +918,7 @@ Colour this comic panel as one frame of a full-colour anime, in clean anime line
 # A coloured panel is not redrawn. Overgeared ch.1, 2026-10-18: redrawn as anime, a man with greying brown hair came
 # out white-haired and old in shots 2, 3 and 7, told his sheet's colours or told only to keep the panel's own.
 COMPOSE_MANGA_EXTEND = """\
-The sharp comic panel in the middle is part of a wider scene. Replace the blurred bands at its {sides} with the rest of that scene, continuing its ground, sky, walls, light and perspective out to the edges, drawn in the panel's own art style and colours. Keep everything in the sharp panel exactly as it is: every person, face, pose, object and colour, in the same place and size. No borders, frames, seams, text or speech balloons."""
+The sharp comic panel in the middle is part of a wider scene. Replace the blurred bands at its {sides} with the rest of that scene, continuing its ground, sky, walls, light and perspective out to the edges, drawn in the panel's own art style and colours. Keep everything in the sharp panel exactly as it is: every person, face, pose, object and colour, in the same place and size. The result is one single frame of that scene: no panel borders or gutters, no second panel, never the panel shown as a picture inside another scene, no seams, text or speech balloons."""
 COMPOSE_MANGA_COLOURS_SYSTEM = """\
 You read the colours off an anime character design sheet, for a painter who colours the same character in other pictures and never sees the sheet.
 
