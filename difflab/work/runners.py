@@ -593,9 +593,8 @@ def _anime_keyframe(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
     if chosen.engine == "qwen-image-2.1":
         # Coloured as the panel it is: handed it padded, the LoRA left the blurred bands blurred and grey.
         panel = _frame(inputs["base"])
-        own = tuple(
-            max(16, side // 16 * 16) for side in megapixel_size(panel.width, panel.height, width * height / 1e6)
-        )
+        wide, tall = megapixel_size(panel.width, panel.height, width * height / 1e6)
+        own = (max(16, wide // 16 * 16), max(16, tall // 16 * 16))
         frame = cut_crops.padded(edit_image.edit(panel, said, chosen, size=own, donors=donors), width, height)
     else:
         frame = edit_image.edit(base, said, chosen, size=(width, height), donors=donors)
