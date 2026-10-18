@@ -559,17 +559,23 @@ def _anime_keyframe(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
     width, height = (int(inputs["size"][0]), int(inputs["size"][1]))
     base = cut_crops.padded(_frame(inputs["base"]), width, height)
     style = _frame(inputs["style"]) if inputs.get("style") else None
-    # Told a character's whole colours, the editor drew the whole character over close-ups of his head
-    # (One-Punch Man p3-6, three of five close-ups), so it is told only the parts the panel shows.
-    cast = ""
-    for slug, path in (inputs.get("pictures") or {}).items():
-        noun = nouns.get(slug, slug.replace("_", " "))
-        shown, colours = panel_shows(str(inputs["base"]), noun, sheet_colours(str(path), noun))
-        if shown:
-            cast += words.COMPOSE_MANGA_CAST.format(who=noun, shown=shown, colours=colours)
-    said = words.COMPOSE_MANGA_ANIME.format(
-        cast=cast, style=words.COMPOSE_MANGA_STYLE.format(picture=2) if style is not None else ""
-    ).strip()
+    sheets = [_frame(p) for p in (inputs.get("pictures") or {}).values()]
+    if chosen.engine == "qwen-image-2.1":
+        donors = [_side_by_side(sheets)] if sheets else []
+        said = words.COMPOSE_MANGA_COLOUR + (words.COMPOSE_MANGA_COLOUR_REFERENCE if donors else "")
+    else:
+        donors = [style] if style is not None else []
+        # Told a character's whole colours, the editor drew the whole character over close-ups of his head
+        # (One-Punch Man p3-6, three of five close-ups), so it is told only the parts the panel shows.
+        cast = ""
+        for slug, path in (inputs.get("pictures") or {}).items():
+            noun = nouns.get(slug, slug.replace("_", " "))
+            shown, colours = panel_shows(str(inputs["base"]), noun, sheet_colours(str(path), noun))
+            if shown:
+                cast += words.COMPOSE_MANGA_CAST.format(who=noun, shown=shown, colours=colours)
+        said = words.COMPOSE_MANGA_ANIME.format(
+            cast=cast, style=words.COMPOSE_MANGA_STYLE.format(picture=2) if style is not None else ""
+        ).strip()
     if str(inputs.get("look") or "").strip():
         said += " " + words.COMPOSE_LOOK_WORDS.format(look=str(inputs["look"]).strip().rstrip("."))
     told = " ".join(str(inputs.get("note") or "").replace("Fix:", " ").split()).rstrip(".")
@@ -577,16 +583,29 @@ def _anime_keyframe(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
         said += " " + words.COMPOSE_NOTE.format(note=told)
     made = key(
         "anime_keyframe", 2, base=base.pixels, said=said, settings=chosen, size=[width, height],
-        **({"style": style.pixels} if style is not None else {}),
+        **({"donors": [d.pixels for d in donors]} if donors else {}),
     )  # fmt: skip
     target = cache.path(made, ".png")
     if target.is_file():
         ui.note(f"keyframe already drawn as {made}")
         return Skipped({"frame": store.relative(target), "key": str(made)})
-    frame = edit_image.edit(base, said, chosen, size=(width, height), donors=[style] if style is not None else [])
+    frame = edit_image.edit(base, said, chosen, size=(width, height), donors=donors)
     frame.resized(width, height).pil().save(target)
     record.artifact_made(target, store.IMAGE, chosen.seed, key=str(made))
     return {"frame": store.relative(target), "key": str(made)}
+
+
+def _side_by_side(frames: list[Frame]) -> Frame:
+    if len(frames) == 1:
+        return frames[0]
+    tall = max(f.height for f in frames)
+    images = [f.pil().resize((round(f.width * tall / f.height), tall)) for f in frames]
+    out = Image.new("RGB", (sum(i.width for i in images), tall), "white")
+    left = 0
+    for image in images:
+        out.paste(image, (left, 0))
+        left += image.width
+    return Frame.from_pil(out)
 
 
 def run_draw_look(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
