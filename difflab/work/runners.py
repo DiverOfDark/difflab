@@ -555,6 +555,8 @@ def _anime_keyframe(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
     production_id = int(inputs["production"])
     with store.connect() as connection:
         nouns = {m.slug: m.noun for m in store.members_of(connection, production_id)}
+        production = store.production(connection, production_id)
+    coloured = bool(production and production.manifest.get("coloured"))
     chosen = EditSettings(**settings).with_(seed=int(inputs["seed"]))
     width, height = (int(inputs["size"][0]), int(inputs["size"][1]))
     base = cut_crops.padded(_frame(inputs["base"]), width, height)
@@ -562,14 +564,16 @@ def _anime_keyframe(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
     donors = [style] if style is not None else []
     # Told a character's whole colours, the editor drew the whole character over close-ups of his head
     # (One-Punch Man p3-6, three of five close-ups), so it is told only the parts the panel shows.
-    cast = ""
-    for slug, path in (inputs.get("pictures") or {}).items():
+    cast = words.COMPOSE_MANGA_KEEP_COLOURS if coloured else ""
+    for slug, path in ({} if coloured else inputs.get("pictures") or {}).items():
         noun = nouns.get(slug, slug.replace("_", " "))
         shown, colours = panel_shows(str(inputs["base"]), noun, sheet_colours(str(path), noun))
         if shown:
             cast += words.COMPOSE_MANGA_CAST.format(who=noun, shown=shown, colours=colours)
     said = words.COMPOSE_MANGA_ANIME.format(
-        cast=cast, style=words.COMPOSE_MANGA_STYLE.format(picture=2) if style is not None else ""
+        verb=words.COMPOSE_MANGA_REDRAW_VERB if coloured else words.COMPOSE_MANGA_COLOUR_VERB,
+        cast=cast,
+        style=words.COMPOSE_MANGA_STYLE.format(picture=2) if style is not None else "",
     ).strip()
     if str(inputs.get("look") or "").strip():
         said += " " + words.COMPOSE_LOOK_WORDS.format(look=str(inputs["look"]).strip().rstrip("."))
