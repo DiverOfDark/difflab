@@ -908,13 +908,21 @@ COMPOSE_MANGA_SHEET = """\
 Redraw this {noun} as a full-colour anime character design sheet: one front view of the whole {noun}, standing, in the middle of the frame on a plain white background, in clean anime line art with flat cel shading. Keep the same face, hair style, build and clothes design: {traits}.{colours} Choose one clear colour for every part and give no text."""
 COMPOSE_MANGA_SHEET_COLOURS = " Colours: {colours}."
 COMPOSE_MANGA_SHEET_KEEP = " Keep every colour exactly as this picture shows it."
-# The panel redrawn as the shot's first frame, each character from its approved sheet.
-# Measured 2026-10-17 on One-Punch Man pp. 3-6: told to keep the composition and draw each character "exactly as
-# in" its sheet, the editor pasted the sheet's whole figure over a close-up of an arm and over antenna tips, five
-# panels in a row coming out as one portrait, and drew a cast into a panel holding only a balloon.
+# The panel redrawn as the shot's first frame, each character in its approved sheet's colours, said in words.
+# Measured 2026-10-17/18 on One-Punch Man pp. 3-6: handed the sheets as pictures, the editor pasted the sheet's whole
+# figure over a close-up of an arm and over antenna tips, five panels in a row coming out as one portrait, whether
+# told to draw each "exactly as in" its sheet or to take "only the colours, never its pose, size or framing".
 COMPOSE_MANGA_ANIME = """\
-Colour this comic panel as one frame of a full-colour anime, in clean anime line art with flat cel shading and painted backgrounds. Picture 1 is the frame: keep its composition, camera angle and framing, and every figure, pose and object exactly where it is and exactly as large, a figure the frame cuts off staying cut off and a close-up staying a close-up; continue the scene out over any blurred band at the edges. Add no person, face or figure. {cast}{style}"""
-COMPOSE_MANGA_CAST = "Where Picture 1 shows the {who}, take only the colours of its hair, skin, eyes and clothes from {pictures}, never its pose, size or framing."
+Colour this comic panel as one frame of a full-colour anime, in clean anime line art with flat cel shading and painted backgrounds. Picture 1 is the frame: keep its composition, camera angle and framing, and every figure, pose and object exactly where it is and exactly as large, a figure the frame cuts off staying cut off and a close-up staying a close-up; continue the scene out over any blurred band at the edges. Add no person, face or figure.{cast}{style}"""
+COMPOSE_MANGA_COLOURS_SYSTEM = """\
+You read the colours off an anime character design sheet, for a painter who colours the same character in other pictures and never sees the sheet.
+
+Name the colour of every part that shows: hair, skin, eyes, each piece of clothing, shoes, and anything worn or growing on the body such as horns or antennae. Name colours plainly ("dark navy", "pale peach"), each with its part, in one phrase of at most {words} words, no sentence around it.
+
+Answer only JSON, in this shape:
+{{"colours":"short black hair, pale skin, brown eyes, a white headband, a dark grey t-shirt, blue jeans"}}"""
+COMPOSE_MANGA_COLOURS_USER = "The colours of this {noun}?"
+COMPOSE_MANGA_CAST = " The {who} has {colours}."
 COMPOSE_MANGA_STYLE = " Picture {picture} is only a reference for the look: match its colour palette, line weight and shading, and take nothing else from it."
 
 MANGA_STYLE = (

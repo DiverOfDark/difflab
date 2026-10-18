@@ -62,7 +62,7 @@ from difflab.tools import (
 )
 from difflab.tools import cards as cast_cards
 from difflab.work import Skipped
-from difflab.work.manga_runners import MANGA_RUNNERS
+from difflab.work.manga_runners import MANGA_RUNNERS, sheet_colours
 from difflab.work.plan_runners import PLAN_RUNNERS
 
 Runner = Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]]
@@ -558,14 +558,14 @@ def _anime_keyframe(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
     chosen = EditSettings(**settings).with_(seed=int(inputs["seed"]))
     width, height = (int(inputs["size"][0]), int(inputs["size"][1]))
     base = cut_crops.padded(_frame(inputs["base"]), width, height)
-    pictures = {str(slug): _frame(path) for slug, path in (inputs.get("pictures") or {}).items()}
     style = _frame(inputs["style"]) if inputs.get("style") else None
-    cast = " ".join(
-        words.COMPOSE_MANGA_CAST.format(who=nouns.get(slug, slug.replace("_", " ")), pictures=f"Picture {n}")
-        for n, slug in enumerate(pictures, 2)
+    cast = "".join(
+        words.COMPOSE_MANGA_CAST.format(who=noun, colours=sheet_colours(str(path), noun))
+        for slug, path in (inputs.get("pictures") or {}).items()
+        for noun in [nouns.get(slug, slug.replace("_", " "))]
     )
     said = words.COMPOSE_MANGA_ANIME.format(
-        cast=cast, style=words.COMPOSE_MANGA_STYLE.format(picture=len(pictures) + 2) if style is not None else ""
+        cast=cast, style=words.COMPOSE_MANGA_STYLE.format(picture=2) if style is not None else ""
     ).strip()
     if str(inputs.get("look") or "").strip():
         said += " " + words.COMPOSE_LOOK_WORDS.format(look=str(inputs["look"]).strip().rstrip("."))
@@ -573,16 +573,14 @@ def _anime_keyframe(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
     if told:
         said += " " + words.COMPOSE_NOTE.format(note=told)
     made = key(
-        "anime_keyframe", 1, base=base.pixels, said=said, settings=chosen, size=[width, height],
-        pictures={slug: frame.pixels for slug, frame in pictures.items()},
+        "anime_keyframe", 2, base=base.pixels, said=said, settings=chosen, size=[width, height],
         **({"style": style.pixels} if style is not None else {}),
     )  # fmt: skip
     target = cache.path(made, ".png")
     if target.is_file():
         ui.note(f"keyframe already drawn as {made}")
         return Skipped({"frame": store.relative(target), "key": str(made)})
-    donors = [*pictures.values(), *([style] if style is not None else [])]
-    frame = edit_image.edit(base, said, chosen, size=(width, height), donors=donors)
+    frame = edit_image.edit(base, said, chosen, size=(width, height), donors=[style] if style is not None else [])
     frame.resized(width, height).pil().save(target)
     record.artifact_made(target, store.IMAGE, chosen.seed, key=str(made))
     return {"frame": store.relative(target), "key": str(made)}

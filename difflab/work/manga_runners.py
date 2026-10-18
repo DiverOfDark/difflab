@@ -429,7 +429,30 @@ def run_colour_sheet(inputs: dict[str, Any], settings_: dict[str, Any]) -> dict[
                 connection, member.id, manga.SHEET, crop.photo, crop.box, size, (size[0] // 32) * (size[1] // 32),
                 [member.slug], 0.0, artifact=path, key=str(made),
             )  # fmt: skip
+    sheet_colours(path, member.noun)
     return {"frame": path, "key": str(made)}
+
+
+COLOUR_WORDS = 40
+
+
+def sheet_colours(path: str, noun: str) -> str:
+    """A sheet's colours in words: what a keyframe is told, since handed the sheet itself the editor draws it in."""
+    image = read_page._shrunk(load_image(_path(path)), knobs.DIRECTOR_PHOTO_PIXELS)
+
+    def gate(data: Any) -> list[caption.Problem]:
+        said = str(data["colours"]).split()
+        if not said:
+            return [direct.problem('"colours" names the colour of every part that shows')]
+        if len(said) > COLOUR_WORDS:
+            return [direct.problem(f'"colours" has {len(said)} words: at most {COLOUR_WORDS}')]
+        return []
+
+    data = direct.ask_json(
+        words.COMPOSE_MANGA_COLOURS_SYSTEM.format(words=COLOUR_WORDS),
+        words.COMPOSE_MANGA_COLOURS_USER.format(noun=noun), [image], gate, "sheet colours", 512,
+    )  # fmt: skip
+    return " ".join(str(data["colours"]).split()).rstrip(".")
 
 
 # --- filling -------------------------------------------------------------------------------------------
