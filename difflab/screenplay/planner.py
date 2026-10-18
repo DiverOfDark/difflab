@@ -319,7 +319,9 @@ def _queue_chapter(connection: Any, chapter_id: int, asked_by: str, keyframes_on
         prompt = store.prompt_of(connection, shot.id)
         clip = store.clip_of(connection, shot.id)
         cast = [str(m) for m in shot.plan.get("cast", [])]
-        judged = bool(cast or shot.action)
+        # The judge is shown no source footage: everyone a redone shot keeps from it reads as a stranger, and
+        # its retake was rewritten to empty the room.
+        judged = bool(cast or shot.action) and not shot.plan.get("source")
         if keyframe.source == store.REFS:
             opening = None
         elif openings[shot.position] is not None:
