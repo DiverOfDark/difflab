@@ -455,6 +455,25 @@ def sheet_colours(path: str, noun: str) -> str:
     return " ".join(str(data["colours"]).split()).rstrip(".")
 
 
+def panel_shows(panel: str, noun: str, colours: str) -> tuple[str, str]:
+    """What of a character a panel shows, and the colours of only that, or two "" when it shows none."""
+    image = read_page._shrunk(load_image(_path(panel)), knobs.DIRECTOR_PHOTO_PIXELS)
+
+    def gate(data: Any) -> list[caption.Problem]:
+        shown, kept = str(data["shown"]).split(), str(data["colours"]).split()
+        if bool(shown) != bool(kept):
+            return [direct.problem('"shown" and "colours" are both "" or both said')]
+        if len(kept) > COLOUR_WORDS:
+            return [direct.problem(f'"colours" has {len(kept)} words: at most {COLOUR_WORDS}')]
+        return []
+
+    data = direct.ask_json(
+        words.COMPOSE_MANGA_SHOWN_SYSTEM.format(words=COLOUR_WORDS),
+        words.COMPOSE_MANGA_SHOWN_USER.format(noun=noun, colours=colours), [image], gate, "panel shows", 512,
+    )  # fmt: skip
+    return tuple(" ".join(str(data[k]).split()).rstrip(".") for k in ("shown", "colours"))  # type: ignore[return-value]
+
+
 # --- filling -------------------------------------------------------------------------------------------
 KEPT = ("panel", "captions", "motion_comic")  # a manga shot's own: what no planner or writer rewrites
 

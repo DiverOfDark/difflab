@@ -62,7 +62,7 @@ from difflab.tools import (
 )
 from difflab.tools import cards as cast_cards
 from difflab.work import Skipped
-from difflab.work.manga_runners import MANGA_RUNNERS, sheet_colours
+from difflab.work.manga_runners import MANGA_RUNNERS, panel_shows, sheet_colours
 from difflab.work.plan_runners import PLAN_RUNNERS
 
 Runner = Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]]
@@ -559,11 +559,14 @@ def _anime_keyframe(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
     width, height = (int(inputs["size"][0]), int(inputs["size"][1]))
     base = cut_crops.padded(_frame(inputs["base"]), width, height)
     style = _frame(inputs["style"]) if inputs.get("style") else None
-    cast = "".join(
-        words.COMPOSE_MANGA_CAST.format(who=noun, colours=sheet_colours(str(path), noun))
-        for slug, path in (inputs.get("pictures") or {}).items()
-        for noun in [nouns.get(slug, slug.replace("_", " "))]
-    )
+    # Told a character's whole colours, the editor drew the whole character over close-ups of his head
+    # (One-Punch Man p3-6, three of five close-ups), so it is told only the parts the panel shows.
+    cast = ""
+    for slug, path in (inputs.get("pictures") or {}).items():
+        noun = nouns.get(slug, slug.replace("_", " "))
+        shown, colours = panel_shows(str(inputs["base"]), noun, sheet_colours(str(path), noun))
+        if shown:
+            cast += words.COMPOSE_MANGA_CAST.format(who=noun, shown=shown, colours=colours)
     said = words.COMPOSE_MANGA_ANIME.format(
         cast=cast, style=words.COMPOSE_MANGA_STYLE.format(picture=2) if style is not None else ""
     ).strip()

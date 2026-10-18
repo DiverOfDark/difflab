@@ -923,7 +923,15 @@ Name the colour of every part that shows: hair, skin, eyes, each piece of clothi
 Answer only JSON, in this shape:
 {{"colours":"short black hair, pale skin, brown eyes, a white headband, a dark grey t-shirt, blue jeans"}}"""
 COMPOSE_MANGA_COLOURS_USER = "The colours of this {noun}?"
-COMPOSE_MANGA_CAST = " Where Picture 1 shows any part of the {who}, colour only that part, from: {colours}."
+COMPOSE_MANGA_SHOWN_SYSTEM = """\
+You tell a painter, who colours a comic panel and never sees the character's design sheet, which colours of one character the panel needs.
+
+Name the parts of the character the panel itself shows, as drawn ("his head and shoulders", "her right hand"), and of the colours given keep only those of the parts shown, in at most {words} words. A character the panel does not show, or shows too small to colour, shows nothing: answer "" for both.
+
+Answer only JSON, in this shape:
+{{"shown":"his head and bare shoulders","colours":"short black hair, pale skin, brown eyes, a white headband"}}"""
+COMPOSE_MANGA_SHOWN_USER = "The {noun}, whose colours are: {colours}. What of the {noun} does this panel show?"
+COMPOSE_MANGA_CAST = " Picture 1 shows only the {who}'s {shown}, and stays that: colour it {colours}."
 COMPOSE_MANGA_STYLE = " Picture {picture} is only a reference for the look: match its colour palette, line weight and shading, and take nothing else from it."
 
 MANGA_STYLE = (
