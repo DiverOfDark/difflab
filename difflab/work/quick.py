@@ -82,7 +82,11 @@ class Job:
             problems.append(f"aspect={self.aspect!r}: width:height, such as 3:2, or empty")
         if self.mode == "picture":
             if self.start and not self.photos:
-                problems.append("no start photo: add one, or draw from the words and references alone")
+                problems.append(
+                    "no photo to edit: add one, or pick qwen-image-2.1 to draw from the words alone"
+                    if self.edit.engine != "qwen-image-2.1"
+                    else "no start photo: add one, or draw from the words and references alone"
+                )
             elif not self.start and self.edit.engine == "minimax-h3":
                 problems.append("minimax-h3 plays a clip out from a start photo: mark one, or pick a Qwen engine")
         elif self.mode == "upscale":

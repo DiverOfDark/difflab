@@ -22,6 +22,13 @@ const MODES = [
   { id: 'upscale', give: 'a finished mp4', get: 'the same cut, larger' },
 ] as const
 
+// Measured on 2026-10-17/18 on this machine: 2.1 at ~32 s an edit, H3's 3 s clip at 0.98 MP at ~2 min.
+const ENGINES = [
+  { id: 'qwen-image-edit', name: 'Qwen Edit', give: 'edits the start photo', get: 'the AIO, 8 steps' },
+  { id: 'qwen-image-2.1', name: 'Qwen 2.1', give: 'edits the start, or draws fresh without one', get: '~30 s' },
+  { id: 'minimax-h3', name: 'MiniMax H3', give: 'plays the edit out as a clip from the start', get: 'last frame · ~2 min' },
+] as const
+
 const USES: Record<string, string[]> = {
   picture: ['words', 'photos', 'edit', 'vlm'],
   video: ['words', 'photos', 'video', 'delivery', 'vlm'],
@@ -29,7 +36,7 @@ const USES: Record<string, string[]> = {
 }
 /** Without a start the canvas is fresh, and only Qwen-Image 2.1 draws one: the engine is not asked. */
 const drawing = (j: Job) => j.mode === 'picture' && !j.start
-/** An H3 edit is sampled on the video knobs; the edit card keeps only the engine. */
+/** An H3 edit is sampled on the video model, on knobs of its own. */
 const h3Edit = computed(() => job.value.mode === 'picture' && job.value.start && job.value.edit.engine === 'minimax-h3')
 
 /** What a prompt calls each photo, in the words the engine that reads it was trained on. */
@@ -46,6 +53,17 @@ function setBatching(on: boolean) {
   // A batch's items are the starts; the photos left beside them are only references.
   if (on && job.value.mode === 'picture') job.value.start = false
 }
+/** Only 2.1 draws on a fresh canvas; the others edit a photo, so the first one uploaded is the start. */
+const needsStart = computed(
+  () => job.value.mode === 'picture' && !batching.value && (job.value.edit.engine ?? 'qwen-image-edit') !== 'qwen-image-2.1',
+)
+watch(
+  () => [needsStart.value, job.value.start],
+  () => {
+    if (needsStart.value && !job.value.start) job.value.start = true
+  },
+  { immediate: true },
+)
 const uses = computed(() => [...(USES[job.value.mode] ?? []), ...(h3Edit.value ? ['video'] : [])])
 const shows = (part: string) => uses.value.includes(part)
 
@@ -164,15 +182,15 @@ const groups = computed(() => {
                   (n) => (j.video.duration = n),
                 ),
               },
+              {
+                key: 'megapixels',
+                hint: 'The canvas. 0.4 is the fast one, 0.98 is what the workflow was benchmarked at.',
+                ...num(
+                  () => j.video.megapixels,
+                  (n) => (j.video.megapixels = n),
+                ),
+              },
             ]),
-        {
-          key: 'megapixels',
-          hint: 'The canvas. 0.4 is the fast one, 0.98 is what the workflow was benchmarked at.',
-          ...num(
-            () => j.video.megapixels,
-            (n) => (j.video.megapixels = n),
-          ),
-        },
         {
           key: 'steps',
           hint: '8 reproduces the graph, 4 the spec. More on a distilled model mostly buys nothing.',
@@ -205,17 +223,6 @@ const groups = computed(() => {
     const creating = drawing(j)
     const is21 = creating || j.edit.engine === 'qwen-image-2.1'
     const turbo = is21 && (j.edit.turbo ?? true)
-    const engine: Knob = {
-      key: 'engine',
-      hint: 'Qwen-Image 2.1 draws with its own model and the LoRAs set on the Settings page. Each engine keeps its own steps and cfg.',
-      get: () => j.edit.engine ?? 'qwen-image-edit',
-      set: (v) => (j.edit.engine = v),
-      options: [
-        ['qwen-image-edit', 'qwen-image-edit · the AIO'],
-        ['qwen-image-2.1', 'qwen-image-2.1 · experimental'],
-        ['minimax-h3', 'minimax-h3 · a clip, its last frame kept'],
-      ],
-    }
     const aspect: Knob = {
       key: 'aspect',
       hint: 'Width to height. Auto lets the writer pick one for the idea, or follow a reference; a prompt is drawn square.',
@@ -231,7 +238,6 @@ const groups = computed(() => {
             ? 'the Video card sets the model; every photo is a reference'
             : 'the Video card sets the model; photos after the start are references',
         rows: [
-          engine,
           ...reshape(j),
           {
             key: 'opening_h3',
@@ -266,7 +272,7 @@ const groups = computed(() => {
         title: is21 ? 'Qwen-Image 2.1 · experimental' : 'Qwen Image Edit',
         meta: `${editSteps(j)} steps · seed ${j.edit.seed}`,
         rows: [
-          ...(creating ? [aspect] : [engine, ...reshape(j)]),
+          ...(creating ? [aspect] : reshape(j)),
           ...(is21
             ? [
                 {
@@ -515,8 +521,13 @@ const label = computed(() => {
             v-model:photos="job.photos"
             v-model:start="job.start"
             startable
+            :start-fixed="needsStart"
             :labels="tags"
-            empty="Optional. Mark one the start to edit it; the rest are references. With no start the picture is drawn fresh."
+            :empty="
+              needsStart
+                ? 'Drop the photo to edit. The first is the start; any after it are references.'
+                : 'Optional. Mark one the start to edit it; the rest are references. With no start the picture is drawn fresh.'
+            "
           />
           <PhotoPicker v-else-if="shows('photos')" v-model:photos="job.photos" />
         </div>
@@ -544,6 +555,25 @@ const label = computed(() => {
     </div>
 
     <aside class="aside">
+      <section v-if="job.mode === 'picture'" class="card">
+        <div class="head">
+          <h5>Model</h5>
+          <span class="label">{{ needsStart ? 'needs a start photo' : 'start optional' }}</span>
+        </div>
+        <div class="modes models">
+          <button
+            v-for="e in ENGINES"
+            :key="e.id"
+            class="mode"
+            :class="{ on: (job.edit.engine ?? 'qwen-image-edit') === e.id }"
+            @click="job.edit.engine = e.id"
+          >
+            <span class="id">{{ e.name }}</span>
+            <span class="give">{{ e.give }}</span>
+            <span class="get">{{ e.get }}</span>
+          </button>
+        </div>
+      </section>
       <section v-for="g in groups" :key="g.title" class="card">
         <button class="group" @click="toggle(g.title)">
           <span class="title">{{ g.title }}</span>
@@ -612,6 +642,29 @@ const label = computed(() => {
   grid-template-columns: repeat(auto-fit, minmax(152px, 1fr));
   gap: var(--space-1);
   padding: var(--space-2);
+}
+
+.models {
+  grid-template-columns: 1fr;
+}
+
+.models .mode {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  column-gap: var(--space-2);
+}
+
+.models .give {
+  grid-column: 1 / -1;
+  grid-row: 2;
+}
+
+.models .get {
+  grid-row: 1;
+  grid-column: 2;
+  margin-top: 0;
+  color: var(--muted);
 }
 
 .mode {

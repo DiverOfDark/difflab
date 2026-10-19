@@ -20,6 +20,8 @@ const props = defineProps<{
   /** Any one photo may be marked the start, which moves it first; `start` says whether the first is one. */
   startable?: boolean
   start?: boolean
+  /** The model only edits: the start can be moved to another photo, never unmarked. */
+  startFixed?: boolean
 }>()
 const emit = defineEmits<{ 'update:photos': [photos: string[]]; 'update:start': [start: boolean] }>()
 
@@ -75,7 +77,7 @@ function remove(index: number) {
 }
 
 function mark(index: number) {
-  if (index === 0 && props.start) return emit('update:start', false)
+  if (index === 0 && props.start) return props.startFixed || emit('update:start', false)
   const next = [...props.photos]
   next.unshift(...next.splice(index, 1))
   emit('update:photos', next)
@@ -138,7 +140,7 @@ const thumb = (path: string) => known.value[path]?.thumb ?? thumbUrl(path)
           v-if="startable"
           class="tag"
           :class="{ off: !(index === 0 && start) }"
-          :title="index === 0 && start ? 'make it a reference again' : 'start from this photo'"
+          :title="index === 0 && start ? (startFixed ? 'this model edits the start: mark another to move it' : 'make it a reference again') : 'start from this photo'"
           @click.stop="mark(index)"
         >
           start
