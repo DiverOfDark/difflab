@@ -112,6 +112,7 @@ DOING = {
     "enlarge_pixels": "rendering",
     "draw_reference": "drawing", "draw_look": "drawing", "compose_keyframe": "drawing", "edit_image": "drawing",
     "create_image": "drawing", "plate_ref": "drawing", "cut_crops": "drawing", "extend_opening": "drawing",
+    "extend_photo": "drawing",
     "judge": "judging",
     "assemble": "assembling", "film": "assembling", "master": "assembling",
 }  # fmt: skip

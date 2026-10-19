@@ -12,8 +12,10 @@ export interface Job {
   finish_megapixels: number | null
   grade_strength: number | null
   retime_fps: number | null
-  /** A created picture's "W:H"; empty lets the writer pick one, or draws a prompt square. */
+  /** "W:H". A created picture's: empty lets the writer pick one, or draws a prompt square. An edit's or a
+   *  take's: the photo is brought to it by `fit`; empty keeps the photo's own. */
   aspect: string
+  fit: 'crop' | 'extend'
   /** Each is a tool's whole effective settings, advanced fields the form does not draw included, so a
    *  machine's overrides reach a quick job; a field absent falls back to the code default. */
   video: VideoKnobs & Record<string, unknown>

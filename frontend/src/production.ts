@@ -75,6 +75,7 @@ export const ASPECTS: { label: string; value: number | null }[] = [
   { label: '9:16', value: 9 / 16 },
   { label: '1:1', value: 1 },
   { label: '4:3', value: 4 / 3 },
+  { label: '3:4', value: 3 / 4 },
   { label: '2.39:1', value: 2.39 },
 ]
 

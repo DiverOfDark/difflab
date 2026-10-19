@@ -41,6 +41,7 @@ from difflab.screenplay import production as production_module
 from difflab.tools import (
     assemble,
     compose_keyframe,
+    cut_crops,
     direct,
     draw_reference,
     edit_image,
@@ -71,9 +72,19 @@ def _frame(value: Any) -> Frame:
     return media.frame_from_image(_path(value))
 
 
+def _ratio(aspect: Any) -> float:
+    w, h = (int(part) for part in str(aspect).split(":"))
+    return w / h
+
+
+def _opening(inputs: dict[str, Any]) -> Frame:
+    photo = _frame(inputs["photo"])
+    return photo.crop_to_aspect(_ratio(inputs["aspect"])) if inputs.get("aspect") else photo
+
+
 def run_write_instruction(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
     text = write_prompt.write_edit_instruction(
-        _frame(inputs["photo"]),
+        _opening(inputs),
         str(inputs["idea"]),
         VlmSettings(**settings),
         str(inputs.get("engine", "qwen-image-edit")),
@@ -94,15 +105,13 @@ def run_create_image(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[s
 
 
 def run_write_video_prompt(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
-    text = write_prompt.write_video_prompt(
-        _frame(inputs["photo"]), str(inputs["idea"]), VideoPromptSettings(**settings)
-    )
+    text = write_prompt.write_video_prompt(_opening(inputs), str(inputs["idea"]), VideoPromptSettings(**settings))
     return {"text": text}
 
 
 def run_edit_image(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
     chosen = EditSettings(**settings)
-    made = edit_image.edit(_frame(inputs["photo"]), str(inputs["instruction"]), chosen)
+    made = edit_image.edit(_opening(inputs), str(inputs["instruction"]), chosen)
     png = media.save(made, chosen.model_stem, chosen.seed, announce=False)
     return {"image": store.relative(png)}
 
@@ -110,7 +119,7 @@ def run_edit_image(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str
 def run_render_clip(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
     chosen = VideoSettings(**settings)
     references = [_frame(p) for p in inputs.get("references", [])]
-    clip = render_chunk.render(_frame(inputs["photo"]), str(inputs["prompt"]), chosen, references=references)
+    clip = render_chunk.render(_opening(inputs), str(inputs["prompt"]), chosen, references=references)
     path = media.save(clip, HubFile.parse(chosen.checkpoint).path.stem, chosen.seed, announce=False)
     return {"video": store.relative(path)}
 
@@ -538,6 +547,32 @@ def run_extend_opening(inputs: dict[str, Any], settings: dict[str, Any]) -> dict
     return outputs
 
 
+def run_extend_photo(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
+    """A quick job's photo at `aspect`, drawn out as a production's opening is; close to it, cropped instead."""
+    chosen = EditSettings(**settings)
+    photo = _frame(inputs["photo"])
+    ratio = _ratio(inputs["aspect"])
+    if not cut_crops.extends(photo, ratio):
+        made = key("extend_photo", 1, photo=photo.pixels, ratio=ratio)
+        target = cache.path(made, ".png")
+        if not target.is_file():
+            photo.crop_to_aspect(ratio).pil().save(target)
+        return {"image": store.relative(target)}
+    box = cut_crops.around(photo, ratio)
+    padded = cut_crops.padded(photo, round(box.right - box.left), round(box.bottom - box.top))
+    said = words.COMPOSE_EXTEND_OPENING.format(sides="left and right" if box.left < 0 else "top and bottom")
+    made = key("extend_photo", 1, padded=padded.pixels, said=said, settings=chosen)
+    target = cache.path(made, ".png")
+    outputs = {"image": store.relative(target)}
+    if target.is_file():
+        ui.note(f"already extended as {made}")
+        return Skipped(outputs)
+    edited = edit_image.edit(padded, said, chosen, size=edit_image.vae_reference_size(padded))
+    edited.resized(padded.width, padded.height).pil().save(target)
+    record.artifact_made(target, store.IMAGE, chosen.seed, key=str(made))
+    return outputs
+
+
 def run_draw_reference(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
     with store.connect() as connection:
         member = store.member(connection, int(inputs["member"]))
@@ -701,6 +736,7 @@ RUNNERS: dict[str, Runner] = {
     "draw_look": run_draw_look,
     "plate_ref": run_plate_ref,
     "extend_opening": run_extend_opening,
+    "extend_photo": run_extend_photo,
     "judge": run_judge,
     **PLAN_RUNNERS,
 }
