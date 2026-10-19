@@ -30,7 +30,17 @@ def output_of(position: int, name: str) -> dict[str, Any]:
 def plan(job: Job) -> list[JobSpec]:
     """Which tool jobs a quick job is."""
     jobs: list[JobSpec] = []
-    photo = str(job.photos[0]) if job.photos else None
+    photo: Any = str(job.photos[0]) if job.photos else None
+    # Only when given, so a job without one keeps the inputs every earlier run recorded.
+    cut: dict[str, Any] = {}
+    if job.mode in ("edit", "video") and job.aspect:
+        if job.fit == "extend":
+            jobs.append(
+                JobSpec("extend_photo", {"photo": photo, "aspect": job.aspect}, "draw the photo out", job.edit.data())
+            )
+            photo = output_of(0, "image")
+        else:
+            cut = {"aspect": job.aspect}
     if job.mode == "create":
         if job.idea:
             jobs.append(JobSpec("write_image_prompt", {"idea": job.idea}, "write the description", job.vlm.data()))
@@ -47,21 +57,21 @@ def plan(job: Job) -> list[JobSpec]:
             jobs.append(
                 JobSpec(
                     "write_instruction",
-                    {"photo": photo, "idea": job.idea, "engine": job.edit.engine},
+                    {"photo": photo, "idea": job.idea, "engine": job.edit.engine, **cut},
                     "write the instruction",
                     job.vlm.data(),
                 )
             )
-            instruction: Any = output_of(0, "text")
+            instruction: Any = output_of(len(jobs) - 1, "text")
         else:
             instruction = job.prompt
         jobs.append(
-            JobSpec("edit_image", {"photo": photo, "instruction": instruction}, "edit the photo", job.edit.data())
+            JobSpec(
+                "edit_image", {"photo": photo, "instruction": instruction, **cut}, "edit the photo", job.edit.data()
+            )
         )
         return jobs
     if job.mode == "video":
-        # Only when given, so a take without one keeps the inputs every earlier run recorded.
-        cut = {"aspect": job.aspect} if job.aspect else {}
         if job.idea:
             jobs.append(
                 JobSpec(
@@ -71,7 +81,7 @@ def plan(job: Job) -> list[JobSpec]:
                     job.video_vlm.data(),
                 )
             )
-            prompt: Any = output_of(0, "text")
+            prompt: Any = output_of(len(jobs) - 1, "text")
         else:
             prompt = job.prompt
         references = [str(p) for p in job.photos[1:]]

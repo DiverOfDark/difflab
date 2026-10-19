@@ -21,6 +21,7 @@ async function blank(): Promise<{ made: Job; models: (job: Job) => Job }> {
     grade_strength: null,
     retime_fps: null,
     aspect: '',
+    fit: 'crop',
     video: effective('render_chunk') as Job['video'],
     edit: effective('edit_image') as Job['edit'],
     vlm: effective('write_instruction') as Job['vlm'],

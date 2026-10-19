@@ -102,6 +102,31 @@ const SHAPES: [string, string][] = [
   ['9:16', '9:16 · phone'],
 ]
 
+/** An edit's or a take's photo brought to a shape, as a production's first photo is to its canvas. */
+const reshape = (j: Job): Knob[] => [
+  {
+    key: 'aspect',
+    hint: 'Width to height, before the writer or the model sees the photo.',
+    get: () => j.aspect ?? '',
+    set: (v) => (j.aspect = v),
+    options: [['', "the photo's own"], ...SHAPES],
+  },
+  ...(j.aspect
+    ? [
+        {
+          key: 'fit',
+          hint: 'crop cuts the photo to the shape; extend keeps it whole and has the editor draw the sides. Within a tenth of the shape it crops.',
+          get: () => j.fit ?? 'crop',
+          set: (v: string) => (j.fit = v as Job['fit']),
+          options: [
+            ['crop', 'crop · centre-cut'],
+            ['extend', 'extend · the editor draws the sides'],
+          ] as [string, string][],
+        },
+      ]
+    : []),
+]
+
 const groups = computed(() => {
   const j = job.value
   const out: { title: string; meta: string; rows: Knob[] }[] = []
@@ -110,13 +135,7 @@ const groups = computed(() => {
       title: 'Video',
       meta: `${j.video.steps} steps · seed ${j.video.seed}`,
       rows: [
-        {
-          key: 'aspect',
-          hint: 'Width to height. The photo is centre-cropped to it before the writer or the model sees it.',
-          get: () => j.aspect ?? '',
-          set: (v) => (j.aspect = v),
-          options: [['', "the photo's own"], ...SHAPES],
-        },
+        ...reshape(j),
         {
           key: 'duration',
           hint: 'Seconds of clip. The frame count rounds up to the grid the VAE encodes, so 2 renders as 2.33.',
@@ -187,7 +206,7 @@ const groups = computed(() => {
       title: is21 ? 'Qwen-Image 2.1 · experimental' : 'Qwen Image Edit',
       meta: `${editSteps(j)} steps · seed ${j.edit.seed}`,
       rows: [
-        creating ? aspect : engine,
+        ...(creating ? [aspect] : [engine, ...reshape(j)]),
         ...(is21
           ? [
               {

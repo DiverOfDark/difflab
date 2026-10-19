@@ -20,6 +20,8 @@ from difflab.models.minimax_h3.settings import ReferenceSize, VideoPromptSetting
 # edit -> tools.edit_image, video -> tools.render_chunk, upscale -> tools.enlarge_pixels. A chain of
 # shots is a production (`difflab.screenplay`), not a mode.
 Mode = Literal["create", "edit", "video", "upscale"]
+# Mirrors `screenplay.production.FITS`: the photo centre-cropped to `aspect`, or kept whole and drawn out to it.
+Fit = Literal["crop", "extend"]
 RETIRED = ("chain",)  # the chained, judged edit, removed 2026-10-17
 
 
@@ -41,9 +43,10 @@ class Job:
     # Frames per second to deliver at, or `None` to leave the render at H3's own 24. A number above
     # it runs `tools.retime` over the finished file.
     retime_fps: int | None = None
-    # "W:H". A created picture's: empty, the writer picks one for an idea and a prompt is drawn square. A
-    # take's: the opening photo is centre-cropped to it; empty keeps the photo's own.
+    # "W:H". A created picture's: empty, the writer picks one for an idea and a prompt is drawn square. An
+    # edit's or a take's: the photo is brought to it by `fit`; empty keeps the photo's own.
     aspect: str = ""
+    fit: Fit = "crop"
     video: VideoSettings = field(default_factory=VideoSettings)
     edit: EditSettings = field(default_factory=EditSettings)
     vlm: VlmSettings = field(default_factory=VlmSettings)  # writes the edit instruction
@@ -59,6 +62,7 @@ class Job:
         """Everything wrong that a file and a folder can say; empty means the worker reaches a model."""
         chosen = (
             ("mode", self.mode, get_args(Mode)),
+            ("fit", self.fit, get_args(Fit)),
             ("video.reference_size", self.video.reference_size, get_args(ReferenceSize)),
         )
         unknown = [
