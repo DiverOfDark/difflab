@@ -594,34 +594,21 @@ def _anime_keyframe(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
     return {"frame": store.relative(target), "key": str(made)}
 
 
-PANEL_SHOWN = 0.75
-
-
 def _panel_keyframe(inputs: dict[str, Any], chosen: EditSettings, width: int, height: int) -> dict[str, Any]:
-    """A coloured panel as its own keyframe: only the bands it is padded with to the canvas are drawn."""
-    whole = _frame(inputs["base"])
-    # Fitted whole, a wide panel left 60% of a 9:16 canvas to invent and the editor stacked it into three panels or
-    # hung it as a picture on a wall (Overgeared ch.1, 6 of 14), so it is cut until the bands are a quarter at most.
-    scale = max(
-        min(width / whole.width, height / whole.height), PANEL_SHOWN * max(width / whole.width, height / whole.height)
-    )
-    wide, tall = min(whole.width, round(width / scale)), min(whole.height, round(height / scale))
-    left, top = (whole.width - wide) // 2, (whole.height - tall) // 2
-    panel = Frame.from_pil(whole.pil().crop((left, top, left + wide, top + tall)))
-    shape, canvas = panel.width / panel.height, width / height
-    sides = "" if abs(shape - canvas) < 0.02 * canvas else "left and right" if shape < canvas else "top and bottom"
-    said = words.COMPOSE_MANGA_EXTEND.format(sides=sides) if sides else ""
+    """A coloured panel cut to the canvas as its own keyframe, edited only by a note."""
+    # Nothing is drawn around it. Overgeared ch.1, 2026-10-19: redrawn as anime, a greying man came out white-haired
+    # and old in three shots; padded, the editor stacked wide panels into three or hung them as a picture on a wall,
+    # 6 of 14 with the bands at 60% of a 9:16 canvas and 9 of 28 with them cut to 25%.
+    panel = _frame(inputs["base"]).crop_to_aspect(width / height).resized(width, height)
     told = " ".join(str(inputs.get("note") or "").replace("Fix:", " ").split()).rstrip(".")
-    if told:
-        said += " " + words.COMPOSE_NOTE.format(note=told)
-    made = key("panel_keyframe", 2, panel=panel.pixels, said=said, settings=chosen, size=[width, height])
+    said = words.COMPOSE_NOTE.format(note=told) if told else ""
+    made = key("panel_keyframe", 3, panel=panel.pixels, said=said, **({"settings": chosen} if told else {}))
     target = cache.path(made, ".png")
     if target.is_file():
         ui.note(f"keyframe already drawn as {made}")
         return Skipped({"frame": store.relative(target), "key": str(made)})
-    base = cut_crops.padded(panel, width, height)
-    frame = edit_image.edit(base, said, chosen, size=(width, height)) if said else base
-    frame.resized(width, height).pil().save(target)
+    frame = edit_image.edit(panel, said, chosen, size=(width, height)).resized(width, height) if told else panel
+    frame.pil().save(target)
     record.artifact_made(target, store.IMAGE, chosen.seed, key=str(made))
     return {"frame": store.relative(target), "key": str(made)}
 
