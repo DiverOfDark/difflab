@@ -1,8 +1,8 @@
 """The director filling shots it is given: a comic's panels, one clip each, their length, cast and words fixed.
 
-One call per chapter, like `plan_shots`, so the model sees every join. The balloons are never retyped: the
-model times each by its number and the program puts the comic's words in, so every line is said word for
-word, once, in its own shot."""
+One call per part of a chapter, cut only where a clip cuts, so the model sees every join. The balloons are never
+retyped: the model times each by its number and the program puts the comic's words in, so every line is said
+word for word, once, in its own shot."""
 
 from __future__ import annotations
 
@@ -18,6 +18,9 @@ from difflab.screenplay import config as h3
 from difflab.screenplay import words
 from difflab.tools import direct, read_page, ruling
 
+# Overgeared ch.1's 66 and 77 clips in one answer ran past MANGA_TOKENS["fill"] and left the JSON open at ~48k
+# characters, every repair alike: ~190 tokens a clip.
+PART = 24
 PHASES = ("carry", "build", "primary", "reaction", "settle")
 BEATS = (1, 4)
 
@@ -95,30 +98,33 @@ def take_from(data: Any, base: compose.Take, given: list[Given]) -> compose.Take
     )
 
 
-def fill(base: compose.Take, given: list[Given], aliases: dict[str, str]) -> compose.Take:
-    """`base.cards` holds every member; `aliases` are the reader's names for each, so the panels' words find it."""
-    living = [m for m in base.members if base.cards[m].kind in compose.LIVING]
-    places = [m for m in base.members if base.cards[m].kind == "environment"]
-    cast = "\n".join(
-        f"{c.id} | {c.kind} | {c.noun} | {c.full()}" + (f" | also called {aliases[c.id]}" if aliases.get(c.id) else "")
-        for c in (base.cards[m] for m in [*living, *places])
-    )
+def _parts(given: list[Given]) -> list[tuple[list[Given], bool]]:
+    """The clips in parts of at most PART, each ending where a clip cuts; whether each part ends the chapter."""
+    out: list[tuple[list[Given], bool]] = []
+    start = 0
+    while start < len(given):
+        end = min(start + PART, len(given))
+        if end < len(given):
+            end = next((i + 1 for i in range(end - 1, start, -1) if not given[i].lands), end)
+        out.append((given[start:end], end == len(given)))
+        start = end
+    return out
+
+
+def _fill_part(
+    base: compose.Take, given: list[Given], places: list[str], cast: str, moves: str, system: str, last: bool
+) -> Any:
     clips = []
     for number, panel in enumerate(given, 1):
         if panel.lands:
             joins = "ENDS ON THE NEXT PANEL (lands)"
         else:
-            joins = "the next clip cuts" if number < len(given) else "the last clip"
+            joins = "the next clip cuts" if number < len(given) or not last else "the last clip"
         spoken = "; ".join(f'{n}. {{{b.speaker}}} ({b.kind}): "{b.text}"' for n, b in enumerate(panel.spoken, 1))
         clips.append(words.MANGA_FILL_CLIP.format(
             number=number, seconds=round(panel.seconds, 2), joins=joins, action=panel.action,
             cast=", ".join(f"{{{m}}}" for m in panel.cast) or "nobody", balloons=spoken or "none",
         ))  # fmt: skip
-    moves = "\n".join(f"- {name}: {s.format(toward='the member')}" for name, s in words.CAMERA_MOVES.items())
-    system = words.MANGA_FILL_SYSTEM.format(
-        beat_min=h3.DIRECTOR_BEAT_MIN, words_per_second=h3.DIRECTOR_WORDS_PER_SECOND,
-        dialogue_tail=h3.DIRECTOR_DIALOGUE_TAIL, closing_words=h3.DIRECTOR_CLOSING_WORDS,
-    )  # fmt: skip
     question = words.MANGA_FILL_USER.format(
         cast=cast, places=", ".join(places) or "-", clips="\n".join(clips), moves=moves
     )
@@ -134,8 +140,25 @@ def fill(base: compose.Take, given: list[Given], aliases: dict[str, str]) -> com
         take = take_from(data, base, given)
         return ruling.mouths(take) + ruling.leaving(take)
 
-    data = direct.ask_json(system, question, [], gate, "fill", h3.DIRECTOR_TOKENS["plan"] + 4096,
+    return direct.ask_json(system, question, [], gate, "fill", h3.DIRECTOR_TOKENS["plan"] + 4096,
                            repairs=h3.DIRECTOR_PLAN_REPAIRS)  # fmt: skip
+
+
+def fill(base: compose.Take, given: list[Given], aliases: dict[str, str]) -> compose.Take:
+    """`base.cards` holds every member; `aliases` are the reader's names for each, so the panels' words find it."""
+    living = [m for m in base.members if base.cards[m].kind in compose.LIVING]
+    places = [m for m in base.members if base.cards[m].kind == "environment"]
+    cast = "\n".join(
+        f"{c.id} | {c.kind} | {c.noun} | {c.full()}" + (f" | also called {aliases[c.id]}" if aliases.get(c.id) else "")
+        for c in (base.cards[m] for m in [*living, *places])
+    )
+    moves = "\n".join(f"- {name}: {s.format(toward='the member')}" for name, s in words.CAMERA_MOVES.items())
+    system = words.MANGA_FILL_SYSTEM.format(
+        beat_min=h3.DIRECTOR_BEAT_MIN, words_per_second=h3.DIRECTOR_WORDS_PER_SECOND,
+        dialogue_tail=h3.DIRECTOR_DIALOGUE_TAIL, closing_words=h3.DIRECTOR_CLOSING_WORDS,
+    )  # fmt: skip
+    parts = [_fill_part(base, part, places, cast, moves, system, last) for part, last in _parts(given)]
+    data = {"ambience": parts[0]["ambience"], "clips": [clip for part in parts for clip in part["clips"]]}
     take = take_from(data, base, given)
     for index, chunk in enumerate(take.chunks):
         ui.panel(f"fill · clip {index + 1}", {
