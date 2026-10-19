@@ -62,7 +62,7 @@ from difflab.tools import (
 )
 from difflab.tools import cards as cast_cards
 from difflab.work import Skipped
-from difflab.work.manga_runners import MANGA_RUNNERS, panel_shows, sheet_colours
+from difflab.work.manga_runners import MANGA_RUNNERS, panel_focus, panel_shows, sheet_colours
 from difflab.work.plan_runners import PLAN_RUNNERS
 
 Runner = Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]]
@@ -269,6 +269,8 @@ def run_render_shot(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
     events.emit(protocol.ItemEnd(index=position, seconds=round(time.perf_counter() - started, 1), activity="done"))
     return {**outputs, "cut": made.cut}
 
+
+PANEL_CUT_OFF = 1.15  # off the canvas's shape by more than this, a panel's cut is placed by the VLM
 
 # How far a motion-comic shot moves over its length: a still that drifts this much reads as a camera, not a zoom.
 COMIC_ZOOM = 0.12
@@ -599,18 +601,43 @@ def _panel_keyframe(inputs: dict[str, Any], chosen: EditSettings, width: int, he
     # Nothing is drawn around it. Overgeared ch.1, 2026-10-19: redrawn as anime, a greying man came out white-haired
     # and old in three shots; padded, the editor stacked wide panels into three or hung them as a picture on a wall,
     # 6 of 14 with the bands at 60% of a 9:16 canvas and 9 of 28 with them cut to 25%.
-    panel = _frame(inputs["base"]).crop_to_aspect(width / height).resized(width, height)
+    whole = _frame(inputs["base"])
+    action = str(inputs.get("action") or "")
     told = " ".join(str(inputs.get("note") or "").replace("Fix:", " ").split()).rstrip(".")
     said = words.COMPOSE_NOTE.format(note=told) if told else ""
-    made = key("panel_keyframe", 3, panel=panel.pixels, said=said, **({"settings": chosen} if told else {}))
+    made = key(
+        "panel_keyframe", 4, panel=whole.pixels, size=[width, height], said=said,
+        **({"focus": [action, words.COMPOSE_PANEL_FOCUS_SYSTEM]} if _cut_off(whole, width / height) else {}),
+        **({"settings": chosen} if told else {}),
+    )  # fmt: skip
     target = cache.path(made, ".png")
     if target.is_file():
         ui.note(f"keyframe already drawn as {made}")
         return Skipped({"frame": store.relative(target), "key": str(made)})
+    if _cut_off(whole, width / height):
+        panel = _window(whole, width / height, panel_focus(str(inputs["base"]), action)).resized(width, height)
+    else:
+        panel = whole.crop_to_aspect(width / height).resized(width, height)
     frame = edit_image.edit(panel, said, chosen, size=(width, height)).resized(width, height) if told else panel
     frame.pil().save(target)
     record.artifact_made(target, store.IMAGE, chosen.seed, key=str(made))
     return {"frame": store.relative(target), "key": str(made)}
+
+
+def _cut_off(frame: Frame, ratio: float) -> bool:
+    own = frame.width / frame.height
+    return max(own, ratio) / min(own, ratio) > PANEL_CUT_OFF
+
+
+def _window(frame: Frame, ratio: float, centre: tuple[float, float]) -> Frame:
+    """The largest `ratio` window of the frame, as near centred on `centre` as its edges allow."""
+    if frame.width / frame.height > ratio:
+        wide = round(frame.height * ratio)
+        left = min(max(round(centre[0] * frame.width - wide / 2), 0), frame.width - wide)
+        return frame.crop((left, 0, left + wide, frame.height))
+    tall = round(frame.width / ratio)
+    top = min(max(round(centre[1] * frame.height - tall / 2), 0), frame.height - tall)
+    return frame.crop((0, top, frame.width, top + tall))
 
 
 def run_draw_look(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:

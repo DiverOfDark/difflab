@@ -474,6 +474,26 @@ def panel_shows(panel: str, noun: str, colours: str) -> tuple[str, str]:
     return tuple(" ".join(str(data[k]).split()).rstrip(".") for k in ("shown", "colours"))  # type: ignore[return-value]
 
 
+def panel_focus(panel: str, action: str) -> tuple[float, float]:
+    """The centre of what a panel's moment is about, as fractions of its width and height."""
+    image = read_page._shrunk(load_image(_path(panel)), knobs.DIRECTOR_PHOTO_PIXELS)
+
+    def gate(data: Any) -> list[caption.Problem]:
+        box = data.get("box") if isinstance(data, dict) else None
+        if not (isinstance(box, list) and len(box) == 4 and all(isinstance(v, int | float) for v in box)):
+            return [direct.problem('"box" is four numbers [left, top, right, bottom]')]
+        if not (0 <= box[0] < box[2] <= 1000 and 0 <= box[1] < box[3] <= 1000):
+            return [direct.problem(f"{box} is not a box inside 0-1000 with left < right and top < bottom")]
+        return []
+
+    data = direct.ask_json(
+        words.COMPOSE_PANEL_FOCUS_SYSTEM, words.COMPOSE_PANEL_FOCUS_USER.format(action=action or "-"), [image], gate,
+        "panel focus", 256,
+    )  # fmt: skip
+    left, top, right, bottom = (float(v) / 1000 for v in data["box"])
+    return (left + right) / 2, (top + bottom) / 2
+
+
 # --- filling -------------------------------------------------------------------------------------------
 KEPT = ("panel", "captions", "motion_comic")  # a manga shot's own: what no planner or writer rewrites
 

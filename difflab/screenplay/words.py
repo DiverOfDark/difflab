@@ -933,6 +933,12 @@ Name the parts of the character the panel itself shows, as drawn ("his head and 
 Answer only JSON, in this shape:
 {{"shown":"his head and bare shoulders","colours":"short black hair, pale skin, brown eyes, a white headband"}}"""
 COMPOSE_MANGA_SHOWN_USER = "The {noun}, whose colours are: {colours}. What of the {noun} does this panel show?"
+COMPOSE_PANEL_FOCUS_SYSTEM = """\
+A comic panel is cut to a narrower frame for an anime, and the cut must keep what the moment is about. Say where in the panel the one thing a viewer must see is: the face of whoever acts or speaks, or, when no face matters, the figure or object the moment is about.
+
+Answer only JSON, in this shape:
+{"box":[420,80,640,360]}  the box [left, top, right, bottom] on a 0-1000 scale of the panel."""
+COMPOSE_PANEL_FOCUS_USER = "The moment: {action}\nWhere is what the viewer must see?"
 COMPOSE_MANGA_CAST = " Picture 1 shows only the {who}'s {shown}, and stays that: colour it {colours}."
 COMPOSE_MANGA_STYLE = " Picture {picture} is only a reference for the look: match its colour palette, line weight and shading, and take nothing else from it."
 
