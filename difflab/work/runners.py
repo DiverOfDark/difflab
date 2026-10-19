@@ -71,6 +71,14 @@ def _frame(value: Any) -> Frame:
     return media.frame_from_image(_path(value))
 
 
+def _opening(inputs: dict[str, Any]) -> Frame:
+    photo = _frame(inputs["photo"])
+    if not inputs.get("aspect"):
+        return photo
+    w, h = (int(part) for part in str(inputs["aspect"]).split(":"))
+    return photo.crop_to_aspect(w / h)
+
+
 def run_write_instruction(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
     text = write_prompt.write_edit_instruction(
         _frame(inputs["photo"]),
@@ -94,9 +102,7 @@ def run_create_image(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[s
 
 
 def run_write_video_prompt(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
-    text = write_prompt.write_video_prompt(
-        _frame(inputs["photo"]), str(inputs["idea"]), VideoPromptSettings(**settings)
-    )
+    text = write_prompt.write_video_prompt(_opening(inputs), str(inputs["idea"]), VideoPromptSettings(**settings))
     return {"text": text}
 
 
@@ -110,7 +116,7 @@ def run_edit_image(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str
 def run_render_clip(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
     chosen = VideoSettings(**settings)
     references = [_frame(p) for p in inputs.get("references", [])]
-    clip = render_chunk.render(_frame(inputs["photo"]), str(inputs["prompt"]), chosen, references=references)
+    clip = render_chunk.render(_opening(inputs), str(inputs["prompt"]), chosen, references=references)
     path = media.save(clip, HubFile.parse(chosen.checkpoint).path.stem, chosen.seed, announce=False)
     return {"video": store.relative(path)}
 

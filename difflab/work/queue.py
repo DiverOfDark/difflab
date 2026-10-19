@@ -60,10 +60,15 @@ def plan(job: Job) -> list[JobSpec]:
         )
         return jobs
     if job.mode == "video":
+        # Only when given, so a take without one keeps the inputs every earlier run recorded.
+        cut = {"aspect": job.aspect} if job.aspect else {}
         if job.idea:
             jobs.append(
                 JobSpec(
-                    "write_video_prompt", {"photo": photo, "idea": job.idea}, "write the prompt", job.video_vlm.data()
+                    "write_video_prompt",
+                    {"photo": photo, "idea": job.idea, **cut},
+                    "write the prompt",
+                    job.video_vlm.data(),
                 )
             )
             prompt: Any = output_of(0, "text")
@@ -73,7 +78,7 @@ def plan(job: Job) -> list[JobSpec]:
         jobs.append(
             JobSpec(
                 "render_clip",
-                {"photo": photo, "prompt": prompt, "references": references},
+                {"photo": photo, "prompt": prompt, "references": references, **cut},
                 "render the clip",
                 job.video.data(),
             )

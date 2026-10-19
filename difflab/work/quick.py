@@ -41,7 +41,8 @@ class Job:
     # Frames per second to deliver at, or `None` to leave the render at H3's own 24. A number above
     # it runs `tools.retime` over the finished file.
     retime_fps: int | None = None
-    # A created picture's "W:H". Empty: the writer picks one for an idea, and a prompt is drawn square.
+    # "W:H". A created picture's: empty, the writer picks one for an idea and a prompt is drawn square. A
+    # take's: the opening photo is centre-cropped to it; empty keeps the photo's own.
     aspect: str = ""
     video: VideoSettings = field(default_factory=VideoSettings)
     edit: EditSettings = field(default_factory=EditSettings)
@@ -69,7 +70,7 @@ class Job:
         problems = []
         if self.mode in ("create", "edit", "video") and bool(self.idea) == bool(self.prompt):
             problems.append("give exactly one of idea / prompt")
-        if self.aspect and not re.fullmatch(r"\d{1,2}:\d{1,2}", self.aspect):
+        if self.aspect and not re.fullmatch(r"[1-9]\d?:[1-9]\d?", self.aspect):
             problems.append(f"aspect={self.aspect!r}: width:height, such as 3:2, or empty")
         if self.mode == "create":
             if self.photos:

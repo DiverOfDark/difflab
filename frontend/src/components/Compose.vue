@@ -92,6 +92,16 @@ const opt = (read: () => number | null, write: (n: number | null) => void) => ({
   type: 'number' as const,
 })
 
+const SHAPES: [string, string][] = [
+  ['1:1', '1:1 · square'],
+  ['3:2', '3:2 · landscape'],
+  ['2:3', '2:3 · portrait'],
+  ['4:3', '4:3'],
+  ['3:4', '3:4'],
+  ['16:9', '16:9 · wide'],
+  ['9:16', '9:16 · phone'],
+]
+
 const groups = computed(() => {
   const j = job.value
   const out: { title: string; meta: string; rows: Knob[] }[] = []
@@ -100,6 +110,13 @@ const groups = computed(() => {
       title: 'Video',
       meta: `${j.video.steps} steps · seed ${j.video.seed}`,
       rows: [
+        {
+          key: 'aspect',
+          hint: 'Width to height. The photo is centre-cropped to it before the writer or the model sees it.',
+          get: () => j.aspect ?? '',
+          set: (v) => (j.aspect = v),
+          options: [['', "the photo's own"], ...SHAPES],
+        },
         {
           key: 'duration',
           hint: 'Seconds of clip. The frame count rounds up to the grid the VAE encodes, so 2 renders as 2.33.',
@@ -164,16 +181,7 @@ const groups = computed(() => {
       hint: 'Width to height. Auto lets the writer pick one for the idea; a prompt is drawn square.',
       get: () => j.aspect ?? '',
       set: (v) => (j.aspect = v),
-      options: [
-        ['', 'auto'],
-        ['1:1', '1:1 · square'],
-        ['3:2', '3:2 · landscape'],
-        ['2:3', '2:3 · portrait'],
-        ['4:3', '4:3'],
-        ['3:4', '3:4'],
-        ['16:9', '16:9 · wide'],
-        ['9:16', '9:16 · phone'],
-      ],
+      options: [['', 'auto'], ...SHAPES],
     }
     out.push({
       title: is21 ? 'Qwen-Image 2.1 · experimental' : 'Qwen Image Edit',
