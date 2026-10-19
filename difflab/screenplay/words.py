@@ -842,12 +842,14 @@ RULES
 Answer only JSON, in this shape:
 {{"panels":[{{"box":[0,0,1000,480]}},{{"box":[0,500,1000,1000]}}]}}"""
 MANGA_CONFIRM_USER = "There are {count} numbered boxes. Where are the panels?"
+# Overgeared ch.1 p3: sound effects and a tail breaking its frame crossed the white gutters, so no row of the strip
+# was blank and the code kept two and three panels as one band, 3 of 28 shots.
 MANGA_BAND_SYSTEM = """\
-You see one band cut from a vertical comic strip. It may hold a drawn picture, lettering (speech balloons, captions, sound effects) or both. Say where the drawn picture is, without the blank background and the balloons around it, as JSON.
+You see one band cut from a vertical comic strip. It may hold drawn pictures (panels), lettering (speech balloons, captions, sound effects) or both. Say where each drawn picture is, without the blank background and the balloons around it, as JSON. Two panels stacked or side by side are two pictures even when lettering, a sound effect or a figure breaking out of its frame crosses the gap between them.
 
 Answer only JSON, in this shape:
-{"picture":true,"box":[0,120,1000,880]}  with "box" as [left, top, right, bottom] on a 0-1000 scale of the band, or {"picture":false,"box":[]} when the band holds lettering alone."""
-MANGA_BAND_USER = "Where is the drawn picture in this band?"
+{"pictures":[[0,120,1000,480],[40,520,1000,880]]}  each box [left, top, right, bottom] on a 0-1000 scale of the band, in reading order (top to bottom, then left to right), or {"pictures":[]} when the band holds lettering alone."""
+MANGA_BAND_USER = "Where is each drawn picture in this band?"
 
 MANGA_READ_SYSTEM = """\
 You read one panel of an English comic, word for word, for the people adapting it into an anime. Picture 1 is the panel. {context}You write down what is lettered in it and what happens in it, as JSON.

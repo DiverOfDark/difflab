@@ -114,42 +114,48 @@ def confirm(page: Image.Image, cut: panels.Page, reading: str) -> panels.Page:
 
 
 def confirm_bands(strip: Image.Image, cut: panels.Page) -> panels.Page:
-    """A strip's loose bands tightened to their pictures; a band with none is lettering read with the one before."""
+    """A strip's bands split into their pictures; a band with none is lettering read with the picture before."""
     out: list[panels.Panel] = []
     pending: list[tuple[int, int, int, int]] = []
     for panel in cut.panels:
-        if panel.framed:
-            out.append(panels.Panel(panel.box, True, (*pending, *panel.lettering)))
-            pending = []
-            continue
         left, top, right, bottom = panel.box
+        w, h = right - left, bottom - top
         band = strip.crop(panel.box)
+        least = 1000 * panels.PANEL_MIN * 4 * w / h  # of the band, as `panels._strip` counts a picture
 
-        def gate(data: Any) -> list[caption.Problem]:
-            if not data["picture"]:
-                return []
-            values = [float(v) for v in data["box"]]
-            if len(values) != 4 or not (0 <= values[0] < values[2] <= 1000 and 0 <= values[1] < values[3] <= 1000):
-                return [direct.problem('"box" is [left, top, right, bottom] within 0-1000')]
-            return []
+        def gate(data: Any, least: float = least) -> list[caption.Problem]:
+            wrong = []
+            for number, values in enumerate(data["pictures"], 1):
+                box = [float(v) for v in values]
+                if len(box) != 4 or not (0 <= box[0] < box[2] <= 1000 and 0 <= box[1] < box[3] <= 1000):
+                    wrong.append(direct.problem(f"picture {number}: a box is [left, top, right, bottom] within 0-1000"))
+                elif box[3] - box[1] < least:
+                    wrong.append(direct.problem(f"picture {number} is too small to be a panel: drop it or join it"))
+            return wrong
 
         data = direct.ask_json(
             words.MANGA_BAND_SYSTEM, words.MANGA_BAND_USER, [_shrunk(band, knobs.DIRECTOR_PHOTO_PIXELS)], gate,
             "band", knobs.MANGA_TOKENS["confirm"],
         )  # fmt: skip
-        if not data["picture"]:
+        boxes = [
+            (left + round(float(x0) * w / 1000), top + round(float(y0) * h / 1000),
+             left + round(float(x1) * w / 1000), top + round(float(y1) * h / 1000))
+            for x0, y0, x1, y1 in data["pictures"]
+        ]  # fmt: skip
+        if not boxes:
             if out:
                 last = out[-1]
                 out[-1] = panels.Panel(last.box, True, (*last.lettering, panel.box, *panel.lettering))
             else:
                 pending += [panel.box, *panel.lettering]
             continue
-        w, h = right - left, bottom - top
-        x0, y0, x1, y1 = (float(v) for v in data["box"])
-        box = (left + round(x0 * w / 1000), top + round(y0 * h / 1000), left + round(x1 * w / 1000),
-               top + round(y1 * h / 1000))  # fmt: skip
-        around = [b for b in ((left, top, right, box[1]), (left, box[3], right, bottom)) if b[3] - b[1] > 8]
-        out.append(panels.Panel(box, True, (*pending, *panel.lettering, *around)))
+        above = min(b[1] for b in boxes)
+        below = max(b[3] for b in boxes)
+        for index, box in enumerate(boxes):
+            lettering = [*pending, *panel.lettering, (left, top, right, above)] if index == 0 else []
+            if index == len(boxes) - 1:
+                lettering.append((left, below, right, bottom))
+            out.append(panels.Panel(box, True, tuple(b for b in lettering if b[3] - b[1] > 8)))
         pending = []
     if pending and out:
         last = out[-1]
