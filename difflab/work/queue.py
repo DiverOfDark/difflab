@@ -116,8 +116,9 @@ def _picture(job: Job) -> list[JobSpec]:
         )
         return jobs
     # ref2va has no opening to bring to an aspect: its canvas is the first reference's.
+    cut: dict[str, Any] = {}
     if job.edit.engine == "minimax-h3" and job.edit.opening_h3 == "free":
-        photo, references, cut = None, [str(p) for p in job.photos], {}
+        photo, references = None, [str(p) for p in job.photos]
     else:
         photo, cut = _fitted(job, photo, jobs)
     if job.edit.engine == "minimax-h3":
