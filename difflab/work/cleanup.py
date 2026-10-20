@@ -242,3 +242,25 @@ def delete_run(run_id: str) -> Deleted:
                 file.unlink()
     shutil.rmtree(config.RUNS_DIR / run_id, ignore_errors=True)
     return deleted
+
+
+def delete_result(artifact_id: int) -> Deleted | None:
+    """A finished image or video and the files beside it that share its name: thumbnail, WebP twin, subtitles.
+    The job that made it still names it; its run shows the gap."""
+    deleted = Deleted()
+    with store.connect() as connection:
+        row = connection.execute(
+            "SELECT path FROM artifacts WHERE id = ? AND (path GLOB 'images/*' OR path GLOB 'videos/*')", (artifact_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        path = store.under_output(row["path"])
+        with store.transaction(connection):
+            connection.execute("DELETE FROM artifacts WHERE id = ?", (artifact_id,))
+    if path.parent.is_dir():
+        for file in path.parent.iterdir():
+            if file.is_file() and (file == path or file.name.startswith(f"{path.stem}.")):
+                deleted.files += 1
+                deleted.bytes += file.stat().st_size
+                file.unlink()
+    return deleted

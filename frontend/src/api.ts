@@ -177,6 +177,24 @@ export async function upload(files: File[]): Promise<Asset[]> {
   return json<Asset[]>('/api/uploads', { method: 'POST', body: form })
 }
 
+export interface GalleryItem {
+  id: number
+  /** Relative to output/, served under `/output/`. */
+  path: string
+  kind: 'image' | 'video'
+  seed: number | null
+  created: number
+  bytes: number
+  run: string | null
+  title: string
+  production: number | null
+  /** A video's own still, when its job saved one. */
+  poster: string | null
+}
+
+export const listGallery = () => json<GalleryItem[]>('/api/gallery')
+export const deleteResult = (id: number) => json<{ files: number; bytes: number }>(`/api/gallery/${id}`, { method: 'DELETE' })
+
 export const thumbUrl = (path: string) => `/api/thumb?path=${encodeURIComponent(path)}`
 
 /** By the path the run's own events name: relative to the run directory, or absolute (`/output/…`)

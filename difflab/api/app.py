@@ -23,7 +23,7 @@ from fastapi.responses import FileResponse, RedirectResponse, Response, Streamin
 from fastapi.staticfiles import StaticFiles
 
 from difflab import config
-from difflab.api import assets, chats, runs
+from difflab.api import assets, chats, gallery, runs
 from difflab.core import hub, profiling
 from difflab.core.settings import Continuity, IngestSettings
 from difflab.models.minimax_h3.settings import VideoSettings
@@ -1085,6 +1085,19 @@ def list_results() -> list[dict[str, Any]]:
                 if file.is_file()
             ]
     return found
+
+
+@app.get("/api/gallery")
+def list_gallery() -> list[dict[str, Any]]:
+    return gallery.listing()
+
+
+@app.delete("/api/gallery/{artifact_id}")
+def delete_result(artifact_id: int) -> dict[str, int]:
+    deleted = cleanup.delete_result(artifact_id)
+    if deleted is None:
+        raise HTTPException(404, "no such result")
+    return {"files": deleted.files, "bytes": deleted.bytes}
 
 
 @app.get("/output/{path:path}")
