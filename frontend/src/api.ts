@@ -190,6 +190,15 @@ export interface GalleryItem {
   production: number | null
   /** A video's own still, when its job saved one. */
   poster: string | null
+  /** What the run made on the way: its earlier files, an H3 edit's clip, the prompts it wrote. */
+  steps: GalleryStep[]
+}
+
+export interface GalleryStep {
+  path: string
+  kind: 'image' | 'video' | 'text'
+  label: string
+  text?: string
 }
 
 export const listGallery = () => json<GalleryItem[]>('/api/gallery')

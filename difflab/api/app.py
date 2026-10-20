@@ -1094,9 +1094,11 @@ def list_gallery() -> list[dict[str, Any]]:
 
 @app.delete("/api/gallery/{artifact_id}")
 def delete_result(artifact_id: int) -> dict[str, int]:
-    deleted = cleanup.delete_result(artifact_id)
-    if deleted is None:
+    """The result, and its finished steps once it is its run's last."""
+    doomed = gallery.doomed(artifact_id)
+    if doomed is None:
         raise HTTPException(404, "no such result")
+    deleted = cleanup.delete_results(doomed)
     return {"files": deleted.files, "bytes": deleted.bytes}
 
 

@@ -244,21 +244,21 @@ def delete_run(run_id: str) -> Deleted:
     return deleted
 
 
-def delete_result(artifact_id: int) -> Deleted | None:
-    """A finished image or video and the files beside it that share its name: thumbnail, WebP twin, subtitles.
-    The job that made it still names it; its run shows the gap."""
+def delete_results(artifact_ids: list[int]) -> Deleted:
+    """Finished images and videos with the files beside them that share their name: thumbnail, WebP twin, subtitles.
+    The jobs that made them still name them; their runs show the gap."""
     deleted = Deleted()
     with store.connect() as connection:
-        row = connection.execute(
-            "SELECT path FROM artifacts WHERE id = ? AND (path GLOB 'images/*' OR path GLOB 'videos/*')", (artifact_id,)
-        ).fetchone()
-        if row is None:
-            return None
-        path = store.under_output(row["path"])
+        rows = connection.execute(
+            f"SELECT path FROM artifacts WHERE id IN ({_marks(artifact_ids)}) "
+            "AND (path GLOB 'images/*' OR path GLOB 'videos/*')",
+            artifact_ids,
+        ).fetchall()
         with store.transaction(connection):
-            connection.execute("DELETE FROM artifacts WHERE id = ?", (artifact_id,))
-    if path.parent.is_dir():
-        for file in path.parent.iterdir():
+            connection.execute(f"DELETE FROM artifacts WHERE id IN ({_marks(artifact_ids)})", artifact_ids)
+    for row in rows:
+        path = store.under_output(row["path"])
+        for file in path.parent.iterdir() if path.parent.is_dir() else ():
             if file.is_file() and (file == path or file.name.startswith(f"{path.stem}.")):
                 deleted.files += 1
                 deleted.bytes += file.stat().st_size

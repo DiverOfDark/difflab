@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
-import { deleteResult, listGallery, thumbUrl, type GalleryItem } from '../api'
+import { deleteResult, listGallery, thumbUrl, type GalleryItem, type GalleryStep } from '../api'
 import { state } from '../store'
 
 const ARMED_MS = 4000
@@ -13,6 +13,8 @@ const loaded = ref(false)
 const problem = ref('')
 const only = ref<'all' | 'image' | 'video'>('all')
 const opened = ref<number | null>(null)
+/** Which of the opened result's steps is on screen; null is the result itself. */
+const viewing = ref<number | null>(null)
 const picked = ref(new Set<number>())
 const anchor = ref<number | null>(null)
 const hovered = ref<number | null>(null)
@@ -51,13 +53,17 @@ const days = computed(() => {
   return out
 })
 
-const url = (item: GalleryItem) => `/output/${item.path}`
-const nameOf = (item: GalleryItem) => item.path.split('/').pop() ?? item.path
+const url = (item: { path: string }) => `/output/${item.path}`
+const nameOf = (item: { path: string }) => item.path.split('/').pop() ?? item.path
 const still = (item: GalleryItem) => (item.kind === 'image' ? item.path : item.poster)
 const size = (bytes: number) => (bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${(bytes / 1e6).toFixed(1)} MB`)
 const when = (t: number) => new Date(t * 1000).toLocaleString()
 
 const current = computed(() => (opened.value === null ? null : (shown.value[opened.value] ?? null)))
+const onScreen = computed<GalleryItem | GalleryStep | null>(() =>
+  current.value && viewing.value !== null ? (current.value.steps[viewing.value] ?? current.value) : current.value,
+)
+const made = (item: GalleryItem) => item.steps.filter((one) => one.kind !== 'text').length
 const selecting = computed(() => picked.value.size > 0)
 const pickedBytes = computed(() => items.value.filter((one) => picked.value.has(one.id)).reduce((sum, one) => sum + one.bytes, 0))
 
@@ -78,7 +84,10 @@ function toggle(index: number, range: boolean) {
 
 function click(index: number, event: MouseEvent) {
   if (selecting.value || event.shiftKey || event.ctrlKey || event.metaKey) toggle(index, event.shiftKey)
-  else opened.value = index
+  else {
+    opened.value = index
+    viewing.value = null
+  }
 }
 
 function pickAll() {
@@ -94,11 +103,13 @@ function clear() {
 function step(by: number) {
   if (opened.value === null || !shown.value.length) return
   opened.value = (opened.value + by + shown.value.length) % shown.value.length
+  viewing.value = null
   disarm()
 }
 
 function close() {
   opened.value = null
+  viewing.value = null
   disarm()
 }
 
@@ -142,6 +153,7 @@ async function remove(list: GalleryItem[]) {
   items.value = items.value.filter((one) => !gone.has(one.id))
   picked.value = new Set([...picked.value].filter((id) => !gone.has(id)))
   if (at !== null) opened.value = shown.value.length ? Math.min(at, shown.value.length - 1) : null
+  viewing.value = null
   problem.value = failed.join(' · ')
   deleting.value = false
 }
@@ -229,7 +241,9 @@ onBeforeUnmount(() => {
             >
               <video v-if="item.kind === 'video' && (hovered === item.id || !still(item))" :src="url(item)" :poster="still(item) ? thumbUrl(still(item)!) : undefined" muted loop playsinline :autoplay="hovered === item.id" preload="metadata" />
               <img v-else :src="thumbUrl(still(item)!)" alt="" loading="lazy" />
-              <span v-if="item.kind === 'video'" class="badge mono">▶</span>
+              <span v-if="item.kind === 'video' || made(item)" class="badge mono">
+                {{ item.kind === 'video' ? '▶' : '' }}{{ made(item) ? ` +${made(item)}` : '' }}
+              </span>
               <button class="pick" :aria-pressed="picked.has(item.id)" title="select" @click.stop="toggle(index, $event.shiftKey)">✓</button>
               <a class="get" :href="url(item)" :download="nameOf(item)" title="download" @click.stop>↓</a>
             </figure>
@@ -247,16 +261,35 @@ onBeforeUnmount(() => {
             {{ when(current.created) }} · {{ size(current.bytes) }}{{ current.seed !== null ? ` · seed ${current.seed}` : '' }} · {{ (opened ?? 0) + 1 }} / {{ shown.length }}
           </span>
         </div>
-        <a class="button" :href="url(current)" :download="nameOf(current)">download</a>
+        <a v-if="onScreen && onScreen.kind !== 'text'" class="button" :href="url(onScreen)" :download="nameOf(onScreen)">
+          download{{ viewing === null ? '' : ' step' }}
+        </a>
         <button class="kill" :class="{ armed: armed === 'one' }" :disabled="deleting" @click="deleteOne" @mouseleave="armed === 'one' && disarm()">
-          {{ deleting ? 'deleting…' : armed === 'one' ? 'confirm deletion' : 'delete' }}
+          {{ deleting ? 'deleting…' : armed === 'one' ? 'confirm deletion' : 'delete result' }}
         </button>
         <button class="quiet" title="close (Esc)" @click="close">✕</button>
       </header>
       <button class="side prev" title="previous (←)" @click="step(-1)">‹</button>
-      <video v-if="current.kind === 'video'" :key="current.id" class="full" :src="url(current)" controls autoplay loop playsinline />
-      <img v-else :key="current.id" class="full" :src="url(current)" alt="" @click="close" />
+      <div v-if="onScreen && onScreen.kind === 'text'" class="full words">
+        <h6 class="label">{{ (onScreen as GalleryStep).label }}</h6>
+        <p>{{ (onScreen as GalleryStep).text }}</p>
+      </div>
+      <video v-else-if="onScreen && onScreen.kind === 'video'" :key="onScreen.path" class="full" :src="url(onScreen)" controls autoplay loop playsinline />
+      <img v-else-if="onScreen" :key="onScreen.path" class="full" :src="url(onScreen)" alt="" @click="close" />
       <button class="side next" title="next (→)" @click="step(1)">›</button>
+      <nav v-if="current.steps.length" class="steps">
+        <button class="shot" :class="{ on: viewing === null }" title="the result" @click="viewing = null">
+          <img v-if="still(current)" :src="thumbUrl(still(current)!)" alt="" />
+          <video v-else :src="`${url(current)}#t=0.1`" muted preload="metadata" />
+          <span class="mono">result</span>
+        </button>
+        <button v-for="(one, i) in current.steps" :key="i" class="shot" :class="{ on: viewing === i, text: one.kind === 'text' }" :title="one.label" @click="viewing = i">
+          <img v-if="one.kind === 'image'" :src="thumbUrl(one.path)" alt="" loading="lazy" />
+          <video v-else-if="one.kind === 'video'" :src="`${url(one)}#t=0.1`" muted preload="metadata" />
+          <span v-else class="words-icon">“ ”</span>
+          <span class="mono">{{ one.kind === 'video' ? '▶ ' : '' }}{{ one.label }}</span>
+        </button>
+      </nav>
     </div>
   </main>
 </template>
@@ -425,7 +458,7 @@ onBeforeUnmount(() => {
   z-index: 20;
   background: oklch(0% 0 0 / 0.94);
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   grid-template-columns: 64px minmax(0, 1fr) 64px;
 }
 
@@ -490,6 +523,77 @@ a.title:hover {
 
 img.full {
   cursor: zoom-out;
+}
+
+.words {
+  max-width: 720px;
+  align-self: center;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  padding: var(--space-2);
+  height: auto;
+  overflow-y: auto;
+}
+
+.words h6 {
+  margin: 0 0 var(--space-1);
+}
+
+.words p {
+  margin: 0;
+  white-space: pre-wrap;
+  font-size: var(--text-sm);
+  line-height: var(--leading-body);
+}
+
+.steps {
+  grid-row: 3;
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: var(--space-1) var(--space-2) var(--space-2);
+}
+
+.shot {
+  flex: 0 0 96px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-input);
+  background: none;
+  overflow: hidden;
+  color: var(--muted);
+}
+
+.shot img,
+.shot video,
+.words-icon {
+  width: 100%;
+  height: 64px;
+  object-fit: cover;
+  display: grid;
+  place-items: center;
+  background: var(--video);
+  font-size: 20px;
+}
+
+.shot .mono {
+  font-size: 10px;
+  padding: 0 4px 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
+}
+
+.shot.on,
+.shot:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .side {
