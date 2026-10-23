@@ -233,7 +233,10 @@ class Exl3VL:
                 chain = kvdisk.anchors(ids, end // PAGE_SIZE)
                 if not chain or chain[-1] in parts["disk"].states.on_disk:
                     continue
-                opening = ids[:, : len(chain) * PAGE_SIZE + 1].clone()
+                # Two past the cut: with an MTP draft, ExLlamaV3 caches only (len - 2) // PAGE_SIZE pages of a
+                # prompt (`job.py`, max_cached_pages). At one past, the cut's own page was never live: five
+                # openings were ever kept, and every clip judge prefilled its ~20k tokens afresh (2026-10-23).
+                opening = ids[:, : len(chain) * PAGE_SIZE + 2].clone()
                 # The MTP draft embeds the last token itself, and a picture's placeholder ids are past its
                 # vocabulary: an opening cut inside a picture failed the judge (IndexError, 2026-10-14). That
                 # token is past the checkpoint, so a text one stands in; the draft's KV at the cut is the only
