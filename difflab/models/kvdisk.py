@@ -227,11 +227,14 @@ class DiskCache:
         self.pagetable.cpu_tier = generator.cpu_page_cache = self.pages
         generator.recurrent_cache = self.states
 
-    def keep(self, chain: list[bytes]) -> None:
-        """Writes the checkpoint at the end of `chain` and every page of it, all still live on the card."""
+    def keep(self, chain: list[bytes]) -> str | None:
+        """Writes the checkpoint at the end of `chain` and every page of it, all still live on the card; or says
+        why it could not."""
         live = [self.pagetable.get_live_page(phash) for phash in chain]
-        if None in live or not self.states.has(chain[-1]):
-            return
+        gone = [index for index, page in enumerate(live) if page is None]
+        held = [index for index, phash in enumerate(chain) if self.states.has(phash)]
+        if gone or not self.states.has(chain[-1]):
+            return f"{len(chain)} pages, not live {gone[:8]}, checkpoints at pages {held[-8:]}"
         for page in live:
             self.pages.keep(page)
         self.states.keep(chain[-1])
@@ -240,3 +243,4 @@ class DiskCache:
             self.states.on_disk.pop(phash, None)
         for phash in pages:
             self.pages.entries.pop(phash, None)
+        return None

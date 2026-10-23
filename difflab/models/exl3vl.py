@@ -244,7 +244,8 @@ class Exl3VL:
                     Job(input_ids=opening, max_new_tokens=1, sampler=ArgmaxSampler(), embeddings=embeddings)
                 )
                 drain(lambda said: None, ())
-                parts["disk"].keep(chain)
+                if missed := parts["disk"].keep(chain):
+                    ui.note(f"VLM opening not kept on disk: {missed}")
 
         ids, ends = tokenizer.encode(prompt, encode_special_tokens=True, embeddings=embeddings), []
         if ids.shape[-1] >= config.VLM_CONTEXT_TOKENS:
