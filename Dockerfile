@@ -98,18 +98,17 @@ COPY --link --from=env /split/triton ./.pixi/envs/prod/lib/python3.13/site-packa
 COPY --link --from=env /app/.pixi/envs/prod ./.pixi/envs/prod
 COPY --link --from=env /app/activate.sh /app/toolchain.sh ./
 
-# Everything that outlives a pod is under output/: Hugging Face weights, Civitai and URL downloads (and
-# triton's compiled kernels) beside the database, blobs and finals.
+# Weights, Civitai and URL downloads and triton's kernels stay off output/: on a RunPod global volume (an
+# object store) a config.json the Hub wrote read back empty after a restart, and a 16.5 GB VLM read in 889 s
+# where the Hub sends it in 39 s. On a machine with a real disk, mount a volume on /models to keep them.
 ENV PYTHONUNBUFFERED=1 \
-    HF_HOME=/app/output/.models \
-    XDG_CACHE_HOME=/app/output/.cache \
+    HF_HOME=/models/hf \
+    XDG_CACHE_HOME=/models/cache \
     DIFFLAB_HOST=0.0.0.0
 
 COPY --link difflab ./difflab
 COPY --link --from=page /app/difflab/api/static ./difflab/api/static
 
-# Weights are fetched on first use; without a volume here the first render downloads ~96 GB again on
-# every new pod.
 VOLUME ["/app/output"]
 
 EXPOSE 8765

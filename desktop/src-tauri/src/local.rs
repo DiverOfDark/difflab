@@ -481,6 +481,9 @@ pub async fn start(token: &str, runtime: &str) -> Result<u16, String> {
     let mut args = vec![
         "run", "-d", "--name", CONTAINER, "-p", &port, "-v", &volume, "-e", &token,
     ];
+    // A local volume is a real disk, so the weights already fetched into it stay there.
+    args.extend_from_slice(&["-e", "HF_HOME=/app/output/.models"]);
+    args.extend_from_slice(&["-e", "XDG_CACHE_HOME=/app/output/.cache"]);
     args.extend_from_slice(gpus);
     args.push(IMAGE);
     let out = command("docker")
