@@ -1,5 +1,5 @@
-"""A plain copy of every fetched checkpoint on the RunPod global volume, copied whole onto the container disk
-when a later pod needs it, so the Hub is asked once per volume rather than once per pod.
+"""A plain copy of every fetched checkpoint and pinned file on the RunPod global volume, copied whole onto
+the container disk when a later pod needs it, so each is downloaded once per volume rather than once per pod.
 
 Nothing loads from the volume itself: it is an object store, and the Hub cache's symlinks and renames and
 the loaders' mmap reads there handed back an empty config.json and read a 16.5 GB VLM in 889 s (2026-10-16).
@@ -30,12 +30,21 @@ def storing() -> bool:
         return bool(_storing)
 
 
-def restore(snapshot: Path, marker: Path, label: str) -> bool:
-    """Fills `snapshot` from the store and writes `marker`, if the store holds every file at its size."""
-    if ROOT is None:
+def snapshot(folder: Path) -> Path | None:
+    """A Hub snapshot's place: `.../models--org--name/snapshots/<commit>` -> `ROOT/models--org--name/<commit>`."""
+    return ROOT / folder.parent.parent.name / folder.name if ROOT else None
+
+
+def pinned(sha256: str) -> Path | None:
+    """A Civitai or URL file's place, by the sha256 it is pinned to."""
+    return ROOT / "files" / sha256 if ROOT else None
+
+
+def restore(folder: Path, stored: Path | None, marker: str, label: str) -> bool:
+    """Fills `folder` from `stored` and writes `marker` in it, if `stored` holds every file at its size."""
+    if stored is None:
         return False
-    stored = _place(snapshot)
-    sizes = _sizes(stored / marker.name)
+    sizes = _sizes(stored / marker)
     if not sizes or any(_size(stored / name) != size for name, size in sizes.items()):
         return False
     from difflab.core import ui  # not at the top: config names checkpoints, and ui imports config
@@ -60,7 +69,7 @@ def restore(snapshot: Path, marker: Path, label: str) -> bool:
         ):
             parts = []
             for name, size in sizes.items():
-                target = snapshot / name
+                target = folder / name
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.unlink(missing_ok=True)  # a Hub symlink would be written through into its blob
                 fds.append(source := os.open(stored / name, os.O_RDONLY))
@@ -75,39 +84,34 @@ def restore(snapshot: Path, marker: Path, label: str) -> bool:
     except OSError as problem:
         # snapshot_download skips any file already in the snapshot, whatever its size.
         for name in sizes:
-            (snapshot / name).unlink(missing_ok=True)
+            (folder / name).unlink(missing_ok=True)
         print(f"difflab: could not copy {label} from the volume ({problem}); fetching it from the Hub", flush=True)
         return False
     finally:
         for fd in fds:
             os.close(fd)
-    marker.write_text(json.dumps(sizes))
+    (folder / marker).write_text(json.dumps(sizes))
     seconds = time.perf_counter() - started
     print(f"difflab: copied {label} from the volume, {done[0] / 1e9:.1f} GB in {seconds:.0f} s", flush=True)
     return True
 
 
-def keep(snapshot: Path, marker: Path, label: str) -> None:
-    """Copies a fetched snapshot to the store in the background, unless the store has it already."""
-    if ROOT is None:
-        return
-    stored = _place(snapshot)
-    key = stored / marker.name
-    sizes = _sizes(marker)
-    if not sizes or key.exists():
+def keep(folder: Path, stored: Path | None, marker: str, sizes: dict[str, int], label: str) -> None:
+    """Copies the fetched files of `folder` to `stored` in the background, unless it has them already."""
+    if stored is None or not sizes or (key := stored / marker).exists():
         return
     with _lock:
         if key in _storing:
             return
         _storing.add(key)
-    threading.Thread(target=_store, args=(snapshot, key, sizes, label), name="difflab-modelstore", daemon=True).start()
+    threading.Thread(target=_store, args=(folder, key, sizes, label), name="difflab-modelstore", daemon=True).start()
 
 
-def _store(snapshot: Path, key: Path, sizes: dict[str, int], label: str) -> None:
+def _store(folder: Path, key: Path, sizes: dict[str, int], label: str) -> None:
     started = time.perf_counter()
     try:
         with ThreadPoolExecutor(WRITERS) as pool:
-            list(pool.map(lambda name: _copy(snapshot / name, key.parent / name), sizes))
+            list(pool.map(lambda name: _copy(folder / name, key.parent / name), sizes))
         # The marker goes last: a pod deleted mid-copy leaves files the next pod will not trust.
         if all(_size(key.parent / name) == size for name, size in sizes.items()):
             key.write_text(json.dumps(sizes))
@@ -130,12 +134,6 @@ def _copy(source: Path, target: Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     with source.open("rb") as read, target.open("wb") as write:
         shutil.copyfileobj(read, write, 16 << 20)
-
-
-def _place(snapshot: Path) -> Path:
-    """`.../models--org--name/snapshots/<commit>` -> `ROOT/models--org--name/<commit>`."""
-    assert ROOT is not None
-    return ROOT / snapshot.parent.parent.name / snapshot.name
 
 
 def _sizes(marker: Path) -> dict[str, int]:

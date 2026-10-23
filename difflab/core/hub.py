@@ -18,6 +18,7 @@ import re
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass
 from fnmatch import fnmatch
 from pathlib import Path
@@ -76,8 +77,9 @@ class Checkpoint:
     def fetch(self) -> Path:
         """The snapshot folder, with every wanted file in it: downloaded now if a fetch never completed."""
         marker = self.path / f".difflab-fetched-{hashlib.sha256(repr(self.files).encode()).hexdigest()[:8]}"
+        stored = modelstore.snapshot(self.path)
         if (not marker.exists() or not _intact(self.path, marker)) and not modelstore.restore(
-            self.path, marker, self.repo
+            self.path, stored, marker.name, self.repo
         ):
             from difflab.core import ui  # not at the top: config names checkpoints, and ui imports config
 
@@ -99,7 +101,7 @@ class Checkpoint:
                     token=token(HUGGINGFACE),
                 )
             marker.write_text(json.dumps({f.rfilename: f.size for f in wanted if f.size is not None}))
-        modelstore.keep(self.path, marker, self.repo)
+        modelstore.keep(self.path, stored, marker.name, _sizes(marker), self.repo)
         return self.path
 
 
@@ -108,10 +110,28 @@ def _intact(folder: Path, marker: Path) -> bool:
     and handed back an empty config.json (a RunPod global volume, 2026-10-16); a marker from before the
     sizes were kept lists nothing and passes."""
     try:
-        sizes: dict[str, int] = json.loads(marker.read_text() or "{}")
-        return all((folder / name).stat().st_size == size for name, size in sizes.items())
-    except (OSError, ValueError):
+        return all((folder / name).stat().st_size == size for name, size in _sizes(marker).items())
+    except OSError:
         return False
+
+
+def _sizes(marker: Path) -> dict[str, int]:
+    try:
+        sizes: dict[str, int] = json.loads(marker.read_text() or "{}")
+        return sizes
+    except (OSError, ValueError):
+        return {}
+
+
+PINNED_MARKER = ".difflab-fetched"
+
+
+def _fetch_pinned(path: Path, sha256: str, download: Callable[[], None]) -> Path:
+    stored = modelstore.pinned(sha256)
+    if not path.exists() and not modelstore.restore(path.parent, stored, PINNED_MARKER, path.name):
+        download()
+    modelstore.keep(path.parent, stored, PINNED_MARKER, {path.name: path.stat().st_size}, path.name)
+    return path
 
 
 @dataclass(frozen=True)
@@ -151,9 +171,7 @@ class UrlFile:
         return URL_CACHE / self.sha256 / self.url.rsplit("/", 1)[-1]
 
     def fetch(self) -> Path:
-        if not self.path.exists():
-            _download(self.url, self.path, self.sha256)
-        return self.path
+        return _fetch_pinned(self.path, self.sha256, lambda: _download(self.url, self.path, self.sha256))
 
 
 # civitai.com and civitai.red answer the same API; mature files download only from .red.
@@ -184,23 +202,24 @@ class CivitaiFile:
         return URL_CACHE / self.sha256 / self.filename
 
     def fetch(self) -> Path:
-        if not self.path.exists():
-            files = _civitai(f"/api/v1/model-versions/{self.version}")["files"]
-            url = next((f["downloadUrl"] for f in files if f["name"] == self.filename), None)
-            if url is None:
-                raise FileNotFoundError(f"Civitai version {self.version} no longer lists {self.filename}")
-            if key := token(CIVITAI):
-                url += ("&" if "?" in url else "?") + urllib.parse.urlencode({"token": key})
-            try:
-                _download(url, self.path, self.sha256)
-            except urllib.error.HTTPError as problem:
-                if problem.code not in (401, 403):
-                    raise
-                raise PermissionError(
-                    f"Civitai refused {self.filename} ({problem.code}): most files need a logged-in download. Save "
-                    "an API key from civitai.com/user/account under Settings → Accounts."
-                ) from None
-        return self.path
+        return _fetch_pinned(self.path, self.sha256, self._download)
+
+    def _download(self) -> None:
+        files = _civitai(f"/api/v1/model-versions/{self.version}")["files"]
+        url = next((f["downloadUrl"] for f in files if f["name"] == self.filename), None)
+        if url is None:
+            raise FileNotFoundError(f"Civitai version {self.version} no longer lists {self.filename}")
+        if key := token(CIVITAI):
+            url += ("&" if "?" in url else "?") + urllib.parse.urlencode({"token": key})
+        try:
+            _download(url, self.path, self.sha256)
+        except urllib.error.HTTPError as problem:
+            if problem.code not in (401, 403):
+                raise
+            raise PermissionError(
+                f"Civitai refused {self.filename} ({problem.code}): most files need a logged-in download. Save "
+                "an API key from civitai.com/user/account under Settings → Accounts."
+            ) from None
 
 
 ModelFile = HubFile | CivitaiFile
