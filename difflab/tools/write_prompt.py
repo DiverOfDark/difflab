@@ -8,6 +8,7 @@ import re
 from collections.abc import Sequence
 from typing import Any
 
+from difflab import config
 from difflab import prompts as edit_prompts
 from difflab.core.settings import VlmSettings
 from difflab.core.types import Frame
@@ -50,6 +51,7 @@ def write_video_prompt(
         idea,
         system=system,
         title="H3 prompt",
+        effort=config.VLM_WRITING_EFFORT,
         **settings.generation(),
     )
     if not written:
@@ -74,6 +76,7 @@ def write_reference_caption(frames: Sequence[Frame], idea: str, settings: VlmSet
         title="H3 caption",
         as_json=True,
         schema=_parts(len(frames)),
+        effort=config.VLM_WRITING_EFFORT,
         **settings.generation(),
     )
     data = json.loads(raw)
@@ -114,6 +117,7 @@ def write_edit_instruction(
         idea,
         system=system,
         title="edit instruction",
+        effort=config.VLM_WRITING_EFFORT,
         **settings.generation(),
     )
     if not written:
@@ -134,6 +138,7 @@ def write_image_prompt(
         title="picture description",
         as_json=True,
         schema=FOLLOWED if references else DESCRIBED,
+        effort=config.VLM_WRITING_EFFORT,
         **settings.generation(),
     )
     data = json.loads(raw)

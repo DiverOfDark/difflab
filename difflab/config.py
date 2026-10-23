@@ -38,10 +38,12 @@ VLM_CONTEXT_TOKENS = 65536
 # asks for, keeps accepting further out; prose stops gaining at 3. Each draft is another
 # linear-attention state held per slot, ~150 MB.
 VLM_DRAFT_TOKENS = 4
-# The template's default is xhigh; low keeps the many one-question rulings cheap. A thought that reaches
-# VLM_THINK_TOKENS is closed there: asked for 60-80 words, it counted its draft word by word past 4,096
-# tokens and never answered (production 16's opening, 2026-10-11).
+# The template's default is xhigh. Chat and free questions think at low; the director's JSON and every
+# ruling do not think at all (`direct.ask`), and the writers of prose a model draws from think at medium.
+# A thought that reaches VLM_THINK_TOKENS is closed there: asked for 60-80 words, it counted its draft
+# word by word past 4,096 tokens and never answered (production 16's opening, 2026-10-11).
 VLM_REASONING_EFFORT = "low"
+VLM_WRITING_EFFORT = "medium"
 VLM_THINK_TOKENS = 4096
 VLM_RECURRENT_CACHE_BYTES = 1024**3  # host RAM, for reusing a prefix's linear-attention state
 # Host RAM for images already embedded. A picture embedded afresh gets new placeholder token ids, so no

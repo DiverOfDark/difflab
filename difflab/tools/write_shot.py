@@ -8,6 +8,7 @@ import re
 from dataclasses import replace
 from typing import Any
 
+from difflab import config
 from difflab.models.exl3vl import ANY_JSON
 from difflab.models.minimax_h3 import caption
 from difflab.screenplay import checks as lint
@@ -160,5 +161,6 @@ def write_one(take: compose.Take, index: int) -> compose.Take:
     data = direct.ask_json(
         words.WRITE_SYSTEM, question, [], gate, f"write · chunk {index + 1}",
         h3.DIRECTOR_WRITE_TOKENS, h3.DIRECTOR_WRITE_TEMPERATURE, schema=shape(written),
+        effort=config.VLM_WRITING_EFFORT,
     )  # fmt: skip
     return _with_prose(take, index, data)

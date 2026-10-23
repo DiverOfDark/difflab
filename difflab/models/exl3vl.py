@@ -115,6 +115,7 @@ class Exl3VL:
         as_json: bool = False,
         schema: dict[str, Any] | None = None,
         steady: int = 0,
+        effort: str | None = config.VLM_REASONING_EFFORT,
     ) -> str:
         """Several images are announced as "Picture 1: ", "Picture 2: " in order; temperature=0 is greedy.
         `schema` narrows `as_json` from any JSON to that shape. The first `steady` images open other prompts
@@ -133,6 +134,7 @@ class Exl3VL:
             as_json=as_json,
             schema=schema,
             steady=steady,
+            effort=effort,
         )
 
     def chat(
@@ -152,10 +154,11 @@ class Exl3VL:
         steady: int = 0,
         heard: Callable[[str, str], None] | None = None,
         numbered: bool | None = None,
+        effort: str | None = config.VLM_REASONING_EFFORT,
     ) -> str:
         """`ask` over a whole conversation; `heard` is handed the thought and the answer so far as they arrive.
         `numbered` announces pictures even when there is one, so a conversation's prompt does not change under
-        the cache once a second arrives; unset, only several are."""
+        the cache once a second arrives; unset, only several are. `effort=None` answers without thinking."""
         parts = self.load()
         shown = [part for turn in turns for part in turn.said if isinstance(part, Image.Image)]
         tokenizer = parts["tokenizer"]
@@ -172,8 +175,8 @@ class Exl3VL:
             messages,
             tokenize=False,
             add_generation_prompt=True,
-            enable_thinking=True,
-            reasoning_effort=config.VLM_REASONING_EFFORT,
+            enable_thinking=effort is not None,
+            **({"reasoning_effort": effort} if effort else {}),
             add_vision_id=len(shown) > 1 if numbered is None else numbered,
         )
         for embedding in embeddings:
@@ -262,13 +265,15 @@ class Exl3VL:
                     heard(said, "")
 
             def answering(said: str) -> None:
-                show(f"{thought}\n\n{said}")
+                show(f"{thought}\n\n{said}" if thought else said)
                 if heard:
                     heard(thought, said)
 
-            thought = run(prompt, config.VLM_THINK_TOKENS, [*parts["stops"], parts["thought"]], None, thinking)
-            # Closed here whether the model closed it or the budget ran out, so the answer always has its own cap.
-            prompt += f"{thought.strip()}\n</think>\n\n"
+            thought = ""
+            if effort:
+                thought = run(prompt, config.VLM_THINK_TOKENS, [*parts["stops"], parts["thought"]], None, thinking)
+                # Closed here whether the model closed it or the budget ran out, so the answer always has its own cap.
+                prompt += f"{thought.strip()}\n</think>\n\n"
             shape = [LLGuidanceFilter(tokenizer, eos_after_completed=True, json_schema=masked)] if as_json else None
             answer = run(prompt, max_new_tokens, parts["stops"], shape, answering)
             show(answer.strip(), **{name: round(value, 2) for name, value in numbers.items()})

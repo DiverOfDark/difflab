@@ -7,6 +7,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from difflab import config
 from difflab.core import ui
 from difflab.core.types import Frame
 from difflab.models.minimax_h3 import caption
@@ -90,7 +91,10 @@ def refine(
     # laptop on a desk that held a mouse pad, and opened a closed window.
     images = [direct.shrink(frame, h3.DIRECTOR_PHOTO_PIXELS if not i else h3.DIRECTOR_SURVEY_PIXELS)
               for i, frame in enumerate(frames)]  # fmt: skip
-    data = direct.ask_json(words.IDEA_SYSTEM, question, images, gate, "idea", h3.IDEA_TOKENS, h3.IDEA_TEMPERATURE)
+    data = direct.ask_json(
+        words.IDEA_SYSTEM, question, images, gate, "idea", h3.IDEA_TOKENS, h3.IDEA_TEMPERATURE,
+        effort=config.VLM_WRITING_EFFORT,
+    )  # fmt: skip
     draft = _draft(data)
     ui.panel("idea · the story", {"place": draft.place, **{f"beat {i}": b for i, b in enumerate(draft.beats, 1)}})
     return draft
