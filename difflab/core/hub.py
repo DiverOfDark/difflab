@@ -28,6 +28,8 @@ from huggingface_hub.constants import HF_HUB_CACHE
 from huggingface_hub.file_download import repo_folder_name
 from huggingface_hub.hf_api import RepoFile
 
+from difflab.core import modelstore
+
 URL_CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "difflab"
 
 
@@ -74,7 +76,9 @@ class Checkpoint:
     def fetch(self) -> Path:
         """The snapshot folder, with every wanted file in it: downloaded now if a fetch never completed."""
         marker = self.path / f".difflab-fetched-{hashlib.sha256(repr(self.files).encode()).hexdigest()[:8]}"
-        if not marker.exists() or not _intact(self.path, marker):
+        if (not marker.exists() or not _intact(self.path, marker)) and not modelstore.restore(
+            self.path, marker, self.repo
+        ):
             from difflab.core import ui  # not at the top: config names checkpoints, and ui imports config
 
             listed = (
@@ -95,6 +99,7 @@ class Checkpoint:
                     token=token(HUGGINGFACE),
                 )
             marker.write_text(json.dumps({f.rfilename: f.size for f in wanted if f.size is not None}))
+        modelstore.keep(self.path, marker, self.repo)
         return self.path
 
 

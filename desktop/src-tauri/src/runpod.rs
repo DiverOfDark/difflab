@@ -17,9 +17,11 @@ pub const GPUS: [&str; 3] = [
     "NVIDIA GeForce RTX 5090",
 ];
 pub const MIN_RAM_GB: u32 = 64;
-// The unpacked image (~10 GB) and every weight (~96 GB), which the image keeps under /models, not on the
+// The unpacked image (~10 GB) and every weight (~96 GB), which the image loads from /models, not from the
 // global volume (see the Dockerfile), with room to spare. The Hub delivered 28.4 GB in 83 s.
 pub const CONTAINER_DISK_GB: u32 = 150;
+// Where `difflab/core/modelstore.py` keeps a plain copy of the weights for the next pod.
+pub const MODEL_STORE: &str = "/app/output/.model-store";
 pub const PORT: u16 = 8765;
 
 #[derive(Deserialize, Default)]

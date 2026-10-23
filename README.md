@@ -70,7 +70,8 @@ make stale before you commit to it.
   doesn't, the app says what is missing.
 - **On a RunPod pod** otherwise: an RTX 3090, 4090 or 5090, billed by the second. The first pod creates
   a global volume named `difflab` that any GPU in any region can mount, for projects and results. The
-  models (~96 GB) download from Hugging Face onto each pod's own disk, a few minutes per start.
+  first pod downloads the models (~96 GB) and keeps a copy on the volume; later pods copy it onto their
+  own disk and load from there.
 
 A setup wizard walks through where to run, the RunPod account, storage and the safety limits. After
 that the app opens the difflab page and shows the GPU, the money spent, your balance, the image pull
@@ -106,8 +107,10 @@ docker run --gpus all -p 8765:8765 -v difflab:/app/output -v difflab-models:/mod
 
 One image covers every card from Ampere to Blackwell. The database and every output live under
 `/app/output`; the weights (~96 GB) under `/models`. Without a volume on `/models`, each new container
-downloads the weights again. On RunPod, leave `/models` on the container disk: a global volume reads
-them about 20 times slower than the Hub sends them.
+downloads the weights again. On RunPod, leave `/models` on the container disk: loaded in place from a
+global volume they read about 20 times slower than the Hub sends them. Set
+`DIFFLAB_MODEL_STORE=/app/output/.model-store` instead, and each pod copies them whole from the volume
+and keeps there whatever it had to download.
 
 **Set `DIFFLAB_TOKEN` on anything public.** Without it there is no login, and a pod's public URL is an
 open GPU and a public gallery. The desktop app makes a token for each pod. On RunPod, the server

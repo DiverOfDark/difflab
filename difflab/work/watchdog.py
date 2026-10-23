@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from difflab import config, store
+from difflab.core import modelstore
 
 TICK = 30.0
 # Container disk: it outlives `/api/restart`'s exec but not the pod.
@@ -97,6 +98,10 @@ class Watchdog(threading.Thread):
                 return f"no progress for {config.POD_STUCK_MINUTES:g} min"
             return ""
         self.busy_since = None
+        if modelstore.storing():
+            # Deleted now, the next pod would fetch from the Hub again what is half copied to the volume.
+            self.busy_at = now
+            return ""
         if _drain or (config.POD_EXIT_WHEN_DONE and self.worked):
             return "queue done"
         if now - max(_heard, self.busy_at) > config.POD_IDLE_MINUTES * 60:

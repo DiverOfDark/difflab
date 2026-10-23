@@ -118,7 +118,7 @@ async function next() {
         <p class="muted">Projects and finished videos live on a RunPod <strong>global volume</strong> named difflab, which the app creates the first time. Any GPU in any region can use it, so a start does not wait for one datacenter to have a free card.</p>
       </div>
       <ul class="how">
-        <li>It grows as you use it, and you pay RunPod for what it holds and for reads and writes. The models are not kept there: each GPU downloads the ones it needs from Hugging Face, a few minutes at most.</li>
+        <li>It grows as you use it, and you pay RunPod for what it holds and for reads and writes. The first GPU also keeps a copy of the models there (about 96 GB); every later one copies it onto its own disk rather than downloading from Hugging Face.</li>
         <li>It stays when no GPU is running. Delete it in RunPod's Storage page if you stop using DiffLab.</li>
         <li>Finished videos download to this PC while a GPU is running.</li>
       </ul>

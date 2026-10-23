@@ -691,6 +691,7 @@ async fn launch(app: &AppHandle, inner: &Inner, kind: Kind) -> Result<Session, S
                     "DIFFLAB_EXIT_WHEN_DONE",
                     if prefs.exit_when_done { "1" } else { "" }.to_string(),
                 ),
+                ("DIFFLAB_MODEL_STORE", runpod::MODEL_STORE.to_string()),
             ];
             let latest = local::latest_image().await;
             let image = match &latest {

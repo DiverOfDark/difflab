@@ -12,6 +12,6 @@ Fedora (Bazzite, Silverblue) build in a toolbox; the binary runs on the host. In
 macOS and Linux come from the `release` workflow, on every push to main.
 
 What a RunPod user needs: an API key. The first pod creates a global volume named `difflab` (no
-datacenter, grows as used, billed for storage and requests) and mounts it at `/app/output`; each pod
-downloads ~96 GB of weights onto its own disk. Results download from the running pod over HTTP, as RunPod's
+datacenter, grows as used, billed for storage and requests) and mounts it at `/app/output`; the first pod
+downloads ~96 GB of weights and keeps a copy in `.model-store` there, which later pods copy onto their own disk. Results download from the running pod over HTTP, as RunPod's
 S3 API reaches only network volumes. Closing the window leaves the app in the tray; Quit is its menu.
