@@ -89,9 +89,11 @@ POD_EXIT_WHEN_DONE = os.environ.get("DIFFLAB_EXIT_WHEN_DONE", "") == "1"
 POD_ENDED = OUTPUT_DIR / "pod-ended.json"  # on the network volume, where the app reads why the last pod went
 RUNS_KEEP = 10  # newest run directories kept whatever their age; final images and videos are kept
 # `work/cleanup.py`, run by the worker between jobs. Blobs on 2026-10-11 were 22 G, 12 G of it handoff
-# tails at ~37 MB a shot; a cache hit refreshes a blob's mtime, so the age is since last use.
+# tails at ~37 MB a shot, and 28 G on 2026-10-23, all of it under a week old; a cache hit, or a job naming
+# a blob, refreshes its mtime, so the age is since last use and the budget evicts least recently used.
 CLEANUP_EVERY_HOURS = 6
 BLOB_KEEP_DAYS = 7
+BLOB_KEEP_GB = float(os.environ.get("DIFFLAB_BLOB_KEEP_GB", "15"))
 BLOB_KEEP_TOOLS = ("given", "director", "ruling")  # uploads, and VLM answers: small and slow to ask again
 RUNS_KEEP_DAYS = 14
 PRODUCTIONS_KEEP = 15  # newest by last edit or run, whatever their age

@@ -1,5 +1,5 @@
-"""What the worker deletes between jobs: idle productions, blobs nobody has used lately, quick runs past their age,
-old backups.
+"""What the worker deletes between jobs: idle productions, blobs nobody has used lately or past the budget,
+quick runs past their age, old backups.
 
 A blob a production's made thing points at goes like any other; the thing drops back to `missing`
 with its seed kept, so rendering it again lands where it was. What a person gave is never a blob
@@ -8,6 +8,8 @@ this deletes: nothing could make it again.
 
 from __future__ import annotations
 
+import json
+import os
 import re
 import shutil
 import sqlite3
@@ -94,7 +96,8 @@ def _given(connection: sqlite3.Connection) -> set[str]:
 
 
 def _blobs(kept: set[str], swept: Swept, dry: bool) -> set[str]:
-    """A token's files go together: a cache entry is its `.png` and `.tail.pt` both, or neither."""
+    """Past their age, then the least recently used until the rest fits the budget. A token's files go
+    together: a cache entry is its `.png` and `.tail.pt` both, or neither."""
     cutoff = time.time() - config.BLOB_KEEP_DAYS * 86400
     groups: dict[tuple[Path, str], list[Path]] = {}
     for folder in BLOBS.iterdir() if BLOBS.exists() else ():
@@ -104,19 +107,34 @@ def _blobs(kept: set[str], swept: Swept, dry: bool) -> set[str]:
             if path.is_file():
                 token = _TOKEN.match(path.name)
                 groups.setdefault((path.parent, token.group() if token else path.name), []).append(path)
-    gone: set[str] = set()
+    entries = []
     for files in groups.values():
         names = [path.relative_to(config.OUTPUT_DIR).as_posix() for path in files]
         stats = [path.stat() for path in files]
-        if any(name in kept for name in names) or any(stat.st_mtime > cutoff for stat in stats):
+        used = max(stat.st_mtime for stat in stats)
+        entries.append((used, sum(stat.st_size for stat in stats), files, names, any(n in kept for n in names)))
+    entries.sort(key=lambda entry: entry[0])
+    held = sum(entry[1] for entry in entries)
+    gone: set[str] = set()
+    for used, size, files, names, pinned in entries:
+        if pinned or (used > cutoff and held <= config.BLOB_KEEP_GB * 1024**3):
             continue
+        held -= size
         swept.files += len(files)
-        swept.bytes += sum(stat.st_size for stat in stats)
+        swept.bytes += size
         gone.update(names)
         if not dry:
             for path in files:
                 path.unlink(missing_ok=True)
     return gone
+
+
+def touch(*named: object) -> None:
+    """A job that found its blobs already made never opened them through the cache, so its use counts here."""
+    for name in set(_BLOB_PATH.findall(json.dumps(named, default=str))):
+        path = config.OUTPUT_DIR / name
+        if path.is_file():
+            os.utime(path)
 
 
 def _amend(connection: sqlite3.Connection, gone: set[str], swept: Swept, dry: bool) -> None:

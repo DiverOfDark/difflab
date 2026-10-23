@@ -135,6 +135,8 @@ class Worker(threading.Thread):
                     _cancel_rest(connection, job.run_id, "cancelled")
                 remaining = [one for one in store.jobs_of(connection, job.run_id) if not one.settled]
                 failed = [one for one in store.jobs_of(connection, job.run_id) if one.state == store.FAILED]
+            if state in (store.DONE, store.SKIPPED):
+                cleanup.touch(job.inputs, outputs)
             delivered = next((str(v) for v in outputs.values() if isinstance(v, str)), "")
             sink.emit(
                 protocol.JobEnd(
