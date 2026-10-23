@@ -374,7 +374,7 @@ def cross_chunk_rules(take: compose.Take, prompts: list[str]) -> list[Problem]:
         lit = f", lit by {compose.join(room.lights)}." if room.lights else "."
         heard = compose.ambience(take, index).strip().rstrip(".")[1:]
         fixed = [
-            (words.MANGA_STYLE if take.drawn else words.STYLE).split("{room}")[0],
+            words.STYLE.split("{room}")[0],
             f"with {room.short()}{lit}",
             heard,
         ]

@@ -62,7 +62,6 @@ from difflab.tools import (
 )
 from difflab.tools import cards as cast_cards
 from difflab.work import Skipped
-from difflab.work.manga_runners import MANGA_RUNNERS, panel_focus, panel_shows, sheet_colours
 from difflab.work.plan_runners import PLAN_RUNNERS
 
 Runner = Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]]
@@ -270,56 +269,6 @@ def run_render_shot(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
     return {**outputs, "cut": made.cut}
 
 
-PANEL_CUT_OFF = 1.15  # off the canvas's shape by more than this, a panel's cut is placed by the VLM
-
-# How far a motion-comic shot moves over its length: a still that drifts this much reads as a camera, not a zoom.
-COMIC_ZOOM = 0.12
-COMIC_PAN = 0.08  # of the canvas width
-
-
-def run_motion_comic(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
-    """A shot H3 could not animate, as its keyframe under a slow camera move, with the sound of its last render
-    when it had one: no DiT. Its outputs stand where a rendered shot's do, with no latents or tail to carry."""
-    still = _frame(inputs["opening"]).pil().convert("RGB")
-    width, height = still.size
-    seconds = float(inputs["seconds"])
-    count = max(1, round(seconds * h3_config.FPS))
-    move = str(inputs.get("move") or "push_in")
-    heard = _path(inputs["audio_from"]) if inputs.get("audio_from") else None
-    made = key(
-        "motion_comic", 1, still=Frame.from_pil(still).pixels, count=count, move=move,
-        heard=str(heard) if heard is not None and heard.is_file() else None,
-    )  # fmt: skip
-    mp4, soundtrack, last = cache.path(made, ".mp4"), cache.path(made, ".audio.pt"), cache.path(made, ".png")
-    outputs = {
-        "key": str(made), "prompt": "", "latents": None, "tail": None, "audio_late": 0.0,
-        "chunk": store.relative(mp4), "audio": store.relative(soundtrack), "frame": store.relative(last),
-        "cut": count - 1,
-    }  # fmt: skip
-    if mp4.is_file() and soundtrack.is_file() and last.is_file():
-        return Skipped(outputs)
-    frames = []
-    for index in range(count):
-        at = index / max(1, count - 1)
-        zoom = 1 + COMIC_ZOOM * (at if move != "pull_out" else 1 - at)
-        shift = (
-            {"pan_left": -1, "truck_left": -1, "pan_right": 1, "truck_right": 1}.get(move, 0) * COMIC_PAN * (at - 0.5)
-        )
-        wide, tall = width / zoom, height / zoom
-        left = min(max((width - wide) / 2 + shift * width, 0), width - wide)
-        top = (height - tall) / 2
-        view = still.resize((width, height), Image.Resampling.BICUBIC, box=(left, top, left + wide, top + tall))
-        frames.append(torch.from_numpy(np.asarray(view, dtype=np.float32) / 255.0))
-    audio = None
-    if heard is not None and heard.is_file():
-        audio = media.clip_from_video(heard, limit=1, with_audio=True).audio
-    clip = Clip(torch.stack(frames), audio)
-    _write_chunk(clip, mp4, soundtrack)
-    clip.last_frame().pil().save(last)
-    record.artifact_made(mp4, store.VIDEO, key=str(made))
-    return outputs
-
-
 def _carry(latents: Any, frames: int, late: float) -> pipeline.Carry | None:
     """The shot before's last `frames` and second of sound, from its cached latents; `late` is how far
     behind them its soundtrack runs."""
@@ -507,8 +456,6 @@ def _sidecars(video: Path, cues: list[master.Cue]) -> tuple[str, str]:
 
 
 def run_compose_keyframe(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
-    if inputs.get("manga"):
-        return _anime_keyframe(inputs, settings)
     production_id = int(inputs["production"])
     with store.connect() as connection:
         cards = {m.slug: compiler.card_of(m) for m in store.members_of(connection, production_id)}
@@ -550,94 +497,6 @@ def run_compose_keyframe(inputs: dict[str, Any], settings: dict[str, Any]) -> di
     frame.pil().save(target)
     record.artifact_made(target, store.IMAGE, chosen.seed, key=str(made))
     return {"frame": store.relative(target), "key": str(made)}
-
-
-def _anime_keyframe(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
-    """A cleaned comic panel, fitted to the canvas, redrawn as an anime frame in its characters' sheet colours."""
-    production_id = int(inputs["production"])
-    with store.connect() as connection:
-        nouns = {m.slug: m.noun for m in store.members_of(connection, production_id)}
-        production = store.production(connection, production_id)
-    chosen = EditSettings(**settings).with_(seed=int(inputs["seed"]))
-    width, height = (int(inputs["size"][0]), int(inputs["size"][1]))
-    if production is not None and production.manifest.get("coloured"):
-        return _panel_keyframe(inputs, chosen, width, height)
-    base = cut_crops.padded(_frame(inputs["base"]), width, height)
-    style = _frame(inputs["style"]) if inputs.get("style") else None
-    donors = [style] if style is not None else []
-    # Told a character's whole colours, the editor drew the whole character over close-ups of his head
-    # (One-Punch Man p3-6, three of five close-ups), so it is told only the parts the panel shows.
-    cast = ""
-    for slug, path in (inputs.get("pictures") or {}).items():
-        noun = nouns.get(slug, slug.replace("_", " "))
-        shown, colours = panel_shows(str(inputs["base"]), noun, sheet_colours(str(path), noun))
-        if shown:
-            cast += words.COMPOSE_MANGA_CAST.format(who=noun, shown=shown, colours=colours)
-    said = words.COMPOSE_MANGA_ANIME.format(
-        cast=cast,
-        style=words.COMPOSE_MANGA_STYLE.format(picture=2) if style is not None else "",
-    ).strip()
-    if str(inputs.get("look") or "").strip():
-        said += " " + words.COMPOSE_LOOK_WORDS.format(look=str(inputs["look"]).strip().rstrip("."))
-    told = " ".join(str(inputs.get("note") or "").replace("Fix:", " ").split()).rstrip(".")
-    if told:
-        said += " " + words.COMPOSE_NOTE.format(note=told)
-    made = key(
-        "anime_keyframe", 2, base=base.pixels, said=said, settings=chosen, size=[width, height],
-        **({"donors": [d.pixels for d in donors]} if donors else {}),
-    )  # fmt: skip
-    target = cache.path(made, ".png")
-    if target.is_file():
-        ui.note(f"keyframe already drawn as {made}")
-        return Skipped({"frame": store.relative(target), "key": str(made)})
-    frame = edit_image.edit(base, said, chosen, size=(width, height), donors=donors)
-    frame.resized(width, height).pil().save(target)
-    record.artifact_made(target, store.IMAGE, chosen.seed, key=str(made))
-    return {"frame": store.relative(target), "key": str(made)}
-
-
-def _panel_keyframe(inputs: dict[str, Any], chosen: EditSettings, width: int, height: int) -> dict[str, Any]:
-    """A coloured panel cut to the canvas as its own keyframe, edited only by a note."""
-    # Nothing is drawn around it. Overgeared ch.1, 2026-10-19: redrawn as anime, a greying man came out white-haired
-    # and old in three shots; padded, the editor stacked wide panels into three or hung them as a picture on a wall,
-    # 6 of 14 with the bands at 60% of a 9:16 canvas and 9 of 28 with them cut to 25%.
-    whole = _frame(inputs["base"])
-    action = str(inputs.get("action") or "")
-    told = " ".join(str(inputs.get("note") or "").replace("Fix:", " ").split()).rstrip(".")
-    said = words.COMPOSE_NOTE.format(note=told) if told else ""
-    made = key(
-        "panel_keyframe", 4, panel=whole.pixels, size=[width, height], said=said,
-        **({"focus": [action, words.COMPOSE_PANEL_FOCUS_SYSTEM]} if _cut_off(whole, width / height) else {}),
-        **({"settings": chosen} if told else {}),
-    )  # fmt: skip
-    target = cache.path(made, ".png")
-    if target.is_file():
-        ui.note(f"keyframe already drawn as {made}")
-        return Skipped({"frame": store.relative(target), "key": str(made)})
-    if _cut_off(whole, width / height):
-        panel = _window(whole, width / height, panel_focus(str(inputs["base"]), action)).resized(width, height)
-    else:
-        panel = whole.crop_to_aspect(width / height).resized(width, height)
-    frame = edit_image.edit(panel, said, chosen, size=(width, height)).resized(width, height) if told else panel
-    frame.pil().save(target)
-    record.artifact_made(target, store.IMAGE, chosen.seed, key=str(made))
-    return {"frame": store.relative(target), "key": str(made)}
-
-
-def _cut_off(frame: Frame, ratio: float) -> bool:
-    own = frame.width / frame.height
-    return max(own, ratio) / min(own, ratio) > PANEL_CUT_OFF
-
-
-def _window(frame: Frame, ratio: float, centre: tuple[float, float]) -> Frame:
-    """The largest `ratio` window of the frame, as near centred on `centre` as its edges allow."""
-    if frame.width / frame.height > ratio:
-        wide = round(frame.height * ratio)
-        left = min(max(round(centre[0] * frame.width - wide / 2), 0), frame.width - wide)
-        return frame.crop((left, 0, left + wide, frame.height))
-    tall = round(frame.width / ratio)
-    top = min(max(round(centre[1] * frame.height - tall / 2), 0), frame.height - tall)
-    return frame.crop((0, top, frame.width, top + tall))
 
 
 def run_draw_look(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
@@ -918,7 +777,5 @@ RUNNERS: dict[str, Runner] = {
     "extend_opening": run_extend_opening,
     "extend_photo": run_extend_photo,
     "judge": run_judge,
-    "motion_comic": run_motion_comic,
     **PLAN_RUNNERS,
-    **MANGA_RUNNERS,
 }

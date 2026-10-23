@@ -16,7 +16,6 @@ import math
 import os
 import re
 import threading
-import zipfile
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -32,18 +31,14 @@ from difflab.core.imaging import load_image, load_video_frames, video_length
 from difflab.core.keys import key
 from difflab.core.settings import Continuity, IngestSettings
 from difflab.models.minimax_h3.settings import VideoSettings
-from difflab.screenplay import captions, manga, production, settings
+from difflab.screenplay import captions, production, settings
 from difflab.screenplay import config as knobs
-from difflab.tools import panels
 from difflab.tools.survey import KINDS_OF
 
 WORDS_PER_CHAPTER = 600  # a text with no headings: about one chapter of five 12 s shots' worth of story
 HEADING = re.compile(r"^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$", re.M)
 REFERENCE_KINDS = (*KINDS_OF, "style", "video")
 VIDEOS = {".mp4", ".mov", ".mkv", ".webm"}
-PAGES = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
-ARCHIVES = {".cbz", ".zip"}
-COLOURED = 12.0  # mean |R-G| + |G-B| in luma levels: a scanned black-and-white page measures 1-3
 FRAMES_AT_MOST = int(next(f for f in dataclasses.fields(IngestSettings) if f.name == "frames").metadata["high"])
 SHARPNESS_WIDTH = 512  # px: frames are measured at one width, so a 4K clip and a 720p one share a threshold
 
@@ -333,99 +328,6 @@ def _begun(production_id: int, kind: str, story: str, manifest: dict[str, Any]) 
         updated = store.production(connection, production_id)
     assert updated is not None
     return updated
-
-
-# --- a production from manga ----------------------------------------------------------------------
-def pages_of(given: list[str]) -> list[str]:
-    """Pages in reading order from pictures, folders of them and comic archives, each archive unpacked
-    once under output/ by its content."""
-    out: list[str] = []
-    for one in given:
-        path = store.under_output(one)
-        if path.is_dir():
-            out += [store.relative(p) for p in sorted(path.iterdir(), key=_natural) if p.suffix.lower() in PAGES]
-        elif path.suffix.lower() in ARCHIVES:
-            out += _unpacked(path)
-        elif path.suffix.lower() in PAGES and path.is_file():
-            out.append(store.relative(path))
-        else:
-            raise ValueError(f"{one}: a page is a picture, a folder of them or a .cbz")
-    if not out:
-        raise ValueError("the pages of a chapter: pictures, a folder of them or a .cbz")
-    return out
-
-
-def _natural(path: Path) -> list[Any]:
-    return [int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", path.name)]
-
-
-def _unpacked(archive: Path) -> list[str]:
-    stat = archive.stat()
-    folder = cache.directory / "manga" / key("pages", 1, archive=str(archive), size=stat.st_size).token
-    if not folder.is_dir():
-        partial = folder.with_name(folder.name + f".{os.getpid()}")
-        partial.mkdir(parents=True, exist_ok=True)
-        with zipfile.ZipFile(archive) as packed:
-            for name in packed.namelist():
-                if Path(name).suffix.lower() in PAGES and not Path(name).name.startswith("."):
-                    target = partial / Path(name).name
-                    target.write_bytes(packed.read(name))
-        partial.replace(folder)
-    return [store.relative(p) for p in sorted(folder.iterdir(), key=_natural)]
-
-
-def coloured(paths: list[str]) -> bool:
-    """Whether the pages are drawn in colour: a webtoon is, a scanned manga chapter is not."""
-    measured = []
-    for path in paths[:8]:
-        image = load_image(store.under_output(path)).convert("RGB")
-        image.thumbnail((256, 256))
-        pixels = np.asarray(image, dtype=np.float32)
-        measured.append(
-            float(np.abs(pixels[..., 0] - pixels[..., 1]).mean() + np.abs(pixels[..., 1] - pixels[..., 2]).mean())
-        )
-    return bool(measured) and float(np.median(measured)) >= COLOURED
-
-
-def from_manga(
-    slug: str,
-    pages: list[str],
-    title: str = "",
-    reading: str = "rtl",
-    style: str | None = None,
-    chapter_pages: list[int] | None = None,
-    aspect: float | None = None,
-    video: VideoSettings | None = None,
-    continuity: Continuity | None = None,
-) -> store.Production:
-    """One shot per panel of `pages`, laid out by the first plan run once the pages are read. `chapter_pages`
-    is how many pages each chapter takes, in order; one chapter by default."""
-    if reading not in panels.READINGS:
-        raise ValueError(f"reading is one of {', '.join(panels.READINGS)}")
-    found = pages_of(pages)
-    counts = list(chapter_pages or [len(found)])
-    if any(c < 1 for c in counts) or sum(counts) != len(found):
-        raise ValueError(f"the chapters' page counts add up to {sum(counts)}; there are {len(found)} pages")
-    groups, at = [], 0
-    for count in counts:
-        groups.append(list(range(at, at + count)))
-        at += count
-    styles = references_of([{"path": style, "kind": "style"}]) if style else []
-    made = production.create(slug, title, video, continuity)
-    with store.connect() as connection, store.transaction(connection):
-        first = store.chapters_of(connection, made.id)[0]
-        for position in range(1, len(groups)):
-            store.add_chapter(connection, made.id, f"chapter {position + 1}", "")
-        connection.execute(
-            "UPDATE chapters SET title = ? WHERE id = ?", ("chapter 1" if len(groups) > 1 else "", first.id)
-        )
-        _styles(connection, made.id, styles)
-    wide = aspect or (9 / 16 if reading == "strip" else 16 / 9)
-    manifest = {
-        "pages": found, "reading": reading, "chapter_pages": groups, "aspect": wide, "coloured": coloured(found),
-        "photos": [], "references": [r.__dict__ for r in styles],
-    }  # fmt: skip
-    return _begun(made.id, manga.KIND, title or slug, manifest)
 
 
 def _dump(value: Any) -> str:

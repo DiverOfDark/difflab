@@ -53,9 +53,9 @@ def _frame(value: Any) -> Frame:
 
 def _fingerprint() -> dict[str, Any]:
     """The model, every prompt's words and every knob: a change to any of them is a different plan."""
-    # The judge's, the composer's, the idea editor's and the manga stages' words are not the planner's: a change
-    # to them re-plans nothing made from a story.
-    others = ("JUDGE_", "COMPOSE_", "IDEA_", "MANGA_")
+    # The judge's, the composer's and the idea editor's words are not the planner's: a change to them re-plans
+    # nothing made from a story.
+    others = ("JUDGE_", "COMPOSE_", "IDEA_")
     prompts = {name: value for name, value in vars(words).items() if name.isupper() and not name.startswith(others)}
     settings = {name: value for name, value in vars(knobs).items() if name.startswith("DIRECTOR_")}
     return {"model": direct.MODEL.get(), "prompts": prompts, "knobs": settings}
@@ -897,9 +897,7 @@ def run_write_shot(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str
         written = write_shot.write_one(take, position)
     chunk = written.chunks[position]
     with store.connect() as connection, store.transaction(connection):
-        # A manga shot's panel, its subtitles and its render mode are not the planner's, and stay.
-        kept = {k: shot.plan[k] for k in ("panel", "captions", "motion_comic") if k in shot.plan}
-        store.update_shot(connection, shot.id, plan={**compiler.plan_of(chunk), **kept})
+        store.update_shot(connection, shot.id, plan=compiler.plan_of(chunk))
     return {"summary": chunk.summary, "sounds": chunk.sounds, "beats": [beat.prose for beat in chunk.beats]}
 
 

@@ -49,7 +49,7 @@ def lines(shot: store.Shot | None) -> list[list[Any]]:
     if shot is None:
         return []
     out = []
-    for said in [*shot.plan.get("dialogue", []), *shot.plan.get("captions", [])]:
+    for said in shot.plan.get("dialogue", []):
         text, start = str(said.get("line", "")).strip(), float(said.get("start") or 0.0)
         if not text or start >= shot.seconds:
             continue

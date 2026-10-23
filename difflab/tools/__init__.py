@@ -89,13 +89,4 @@ TOOLS: tuple[Tool, ...] = (
     Tool("plan_shots", 1, ("load VLM", "plan"), DirectorSettings, "the whole chapter, shot by shot"),
     Tool("write_shot", 1, ("load VLM", "write"), DirectorSettings, "one shot's prose"),
     Tool("compile_shot", 1, ("compile",), None, "the caption H3 is handed, and the pictures with it"),
-    Tool("read_page", 1, ("load VLM", "read"), DirectorSettings, "a comic page into its panels and their script"),
-    Tool("cast_panels", 1, ("load VLM", "name"), DirectorSettings, "the reader's names as the comic's characters"),
-    Tool("lay_panels", 1, ("lay",), None, "one shot per panel, in reading order"),
-    Tool("clean_panel", 1, ("load editor", "clean"), EditSettings, "a panel with its lettering removed"),
-    Tool("judge_clean", 1, ("load VLM", "judge"), DirectorSettings, "whether a cleaned panel kept its figures"),
-    Tool("manga_photos", 1, ("choose",), None, "the cleaned panels the bible is read from"),
-    Tool("colour_sheet", 1, ("load editor", "draw"), EditSettings, "a character drawn once in full colour"),
-    Tool("fill_shots", 1, ("load VLM", "fill"), DirectorSettings, "the comic's shots filled with motion and timing"),
-    Tool("motion_comic", 1, ("pan", "voice"), None, "a still panned and zoomed under its dialogue, no DiT"),
 )

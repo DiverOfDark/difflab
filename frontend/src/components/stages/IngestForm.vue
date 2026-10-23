@@ -3,17 +3,14 @@ import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   guessReferences,
-  ingestManga,
   ingestStory,
   listTools,
   readRun,
-  readStory,
   outputUrl,
   readTimings,
   redoVideo,
   referenceFrames,
   upload,
-  type Reading,
   type ReferenceFrame,
   type RefKind,
   type Timings,
@@ -26,18 +23,14 @@ const props = defineProps<{
 }>()
 const router = useRouter()
 
-type StoryKind = 'file' | 'text' | 'manga' | 'video'
+type StoryKind = 'text' | 'video'
 const KINDS: { id: StoryKind; label: string }[] = [
-  { id: 'file', label: 'UPLOAD' },
   { id: 'text', label: 'STORY' },
-  { id: 'manga', label: 'FROM MANGA' },
   { id: 'video', label: 'REDO VIDEO' },
 ]
-const storyKind = ref<StoryKind>('file')
-const prose = computed(() => storyKind.value === 'file' || storyKind.value === 'text')
+const storyKind = ref<StoryKind>('text')
 const title = ref('')
 const text = ref('')
-const file = ref<{ name: string; text: string; words: number } | null>(null)
 const target = ref('')
 const shot = ref('6–8 s')
 const aspect = ref<number | null>(16 / 9)
@@ -45,7 +38,6 @@ const fit = ref<Fit>('crop')
 const autoPlan = ref(true)
 const knobs = reactive({ heading_level: 1, frames: 12, min_sharpness: 50 })
 const problem = ref('')
-const reading = ref(false)
 
 onMounted(async () => {
   const tools = await listTools().catch(() => [])
@@ -55,23 +47,7 @@ onMounted(async () => {
 })
 
 // --- the story --------------------------------------------------------------------------------
-const storyInput = ref<HTMLInputElement | null>(null)
-async function pickStory(files: File[]) {
-  const one = files[0]
-  if (!one) return
-  reading.value = true
-  problem.value = ''
-  try {
-    file.value = await readStory(one)
-    if (!title.value.trim()) title.value = one.name.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ')
-  } catch (error) {
-    problem.value = String(error)
-  } finally {
-    reading.value = false
-  }
-}
-const storyText = computed(() => (storyKind.value === 'file' ? file.value?.text ?? '' : text.value))
-const chapters = computed(() => (prose.value ? chaptersOf(storyText.value, knobs.heading_level) : []))
+const chapters = computed(() => (storyKind.value === 'text' ? chaptersOf(text.value, knobs.heading_level) : []))
 const totalWords = computed(() => chapters.value.reduce((n, c) => n + c.words, 0))
 const targetDefault = computed(() => (chapters.value.length > 1 ? '2 h' : '60 s'))
 const targetSeconds = computed(() => parseLength(target.value || targetDefault.value))
@@ -228,10 +204,7 @@ const estimate = computed(() => {
   const n = chapters.value.length
   const kinds = (k: RefKind) => rows.value.filter((r) => r.kind === k).length
   return [
-    {
-      k: 'STORY',
-      v: !n ? '—' : storyKind.value === 'file' ? `1 file · ${n} chapter${n === 1 ? '' : 's'}` : `${totalWords.value} words · ${n} chapter${n === 1 ? '' : 's'}`,
-    },
+    { k: 'STORY', v: n ? `${totalWords.value} words · ${n} chapter${n === 1 ? '' : 's'}` : '—' },
     {
       k: 'REFERENCES',
       v: rows.value.length
@@ -260,91 +233,17 @@ async function pickSource(files: File[]) {
   }
 }
 
-// --- a comic ----------------------------------------------------------------------------------
-const READINGS: { id: Reading; label: string }[] = [
-  { id: 'rtl', label: 'Right to left (manga)' },
-  { id: 'ltr', label: 'Left to right' },
-  { id: 'strip', label: 'Vertical strip (webtoon)' },
-]
-const ARCHIVE = /\.(cbz|zip)$/i
-const manga = reactive({
-  pages: [] as { path: string; name: string; thumb: string }[],
-  reading: 'rtl' as Reading,
-  style: null as { path: string; name: string; thumb: string } | null,
-  chapters: '',
-  aspect: null as number | null,
-})
-const pageInput = ref<HTMLInputElement | null>(null)
-const styleInput = ref<HTMLInputElement | null>(null)
-const archive = computed(() => manga.pages.length === 1 && ARCHIVE.test(manga.pages[0].path))
-const mangaAspects = computed(() => [
-  { label: manga.reading === 'strip' ? 'by reading · 9:16' : 'by reading · 16:9', value: null },
-  ...ASPECTS.filter((a) => a.value !== null),
-])
-const chapterPages = computed(() => {
-  const said = manga.chapters.split(',').map((c) => c.trim()).filter(Boolean)
-  const counts = said.map(Number)
-  return counts.every((n) => Number.isInteger(n) && n > 0) ? counts : null
-})
-async function addPages(files: File[]) {
-  if (!files.length) return
-  uploading.value = true
-  problem.value = ''
-  try {
-    const stored = await upload(files)
-    const given = stored.map((a) => ({ path: a.path, name: a.name, thumb: a.thumb ?? '' }))
-    const kept = given.some((a) => ARCHIVE.test(a.path)) || archive.value ? [] : manga.pages
-    const all = [...kept, ...given.filter((a) => !kept.some((k) => k.path === a.path))]
-    manga.pages = all.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
-    if (!title.value.trim() && files[0]) title.value = files[0].name.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ')
-  } catch (error) {
-    problem.value = String(error)
-  } finally {
-    uploading.value = false
-  }
-}
-async function pickStyle(files: File[]) {
-  if (!files[0]) return
-  uploading.value = true
-  try {
-    const [asset] = await upload([files[0]])
-    manga.style = { path: asset.path, name: asset.name, thumb: asset.thumb ?? '' }
-  } catch (error) {
-    problem.value = String(error)
-  } finally {
-    uploading.value = false
-  }
-}
-const dropPage = (path: string) => (manga.pages = manga.pages.filter((p) => p.path !== path))
-const mangaEstimate = computed(() => {
-  const counts = chapterPages.value ?? []
-  return [
-    { k: 'PAGES', v: !manga.pages.length ? '—' : archive.value ? `1 archive · ${manga.pages[0].name}` : `${manga.pages.length} picture${manga.pages.length === 1 ? '' : 's'}` },
-    { k: 'CHAPTERS', v: counts.length > 1 ? `${counts.length} · ${counts.join(' + ')} pages` : 'one' },
-    { k: 'READING', v: READINGS.find((r) => r.id === manga.reading)!.label },
-    { k: 'STYLE', v: manga.style ? manga.style.name : 'the comic’s own, in colour' },
-  ]
-})
-
 // --- begin ------------------------------------------------------------------------------------
 const problems = computed(() => {
   const out: string[] = []
   if (!title.value.trim()) out.push('a title')
-  if (storyKind.value === 'manga') {
-    if (!manga.pages.length) out.push('the pages, or a .cbz')
-    const counts = chapterPages.value
-    if (!counts) out.push('pages per chapter as whole numbers, like 18, 20, 17')
-    else if (counts.length && !archive.value && counts.reduce((n, c) => n + c, 0) !== manga.pages.length)
-      out.push(`pages per chapter adding up to ${manga.pages.length}`)
-    return out
-  }
   if (storyKind.value === 'video') {
     if (!redo.source) out.push('the video to redo')
     if (!redo.instruction.trim()) out.push('what should be different about it')
     if (!range.value) out.push('a shot length like 6–8 s')
     return out
   }
-  if (!chapters.value.length) out.push(storyKind.value === 'file' ? 'a story file' : 'a story')
+  if (!chapters.value.length) out.push('a story')
   if (!(targetSeconds.value >= CLIP_MIN)) out.push(`a target length of at least ${CLIP_MIN} s, like 2 h or 90 min`)
   const r = range.value
   if (!r || r[1] < CLIP_MIN || r[1] > SHOT_MAX || r[0] > r[1]) out.push(`a shot length between ${CLIP_MIN} and ${SHOT_MAX} s, like 6–8 s`)
@@ -356,29 +255,13 @@ const cta = computed(() => (storyKind.value === 'video' ? 'Begin' : autoPlan.val
 const footer = computed(() =>
   storyKind.value === 'video'
     ? 'Cut into shots of the longest length, each re-creating its stretch of the source.'
-    : storyKind.value === 'manga'
-      ? `A shot per panel, ${autoPlan.value ? 'planned, stopping before Render' : 'read, then stopped for review'}. Each character gets a colour sheet drawn from the comic; its keyframes wait until you approve it in the bible.`
-      : autoPlan.value
+    : autoPlan.value
       ? 'Builds the bible, then plans every chapter, and stops before Render.'
       : 'Builds the bible and stops there for review.',
 )
 
 const begin = () =>
   props.act('begin', async () => {
-    if (storyKind.value === 'manga') {
-      const counts = chapterPages.value ?? []
-      const made = await ingestManga({
-        title: title.value,
-        pages: manga.pages.map((p) => p.path),
-        reading: manga.reading,
-        ...(manga.style ? { style: manga.style.path } : {}),
-        ...(counts.length > 1 ? { chapter_pages: counts } : {}),
-        ...(manga.aspect === null ? {} : { aspect: manga.aspect }),
-        plan: autoPlan.value,
-      })
-      router.push(`/productions/${made.id}?stage=ingest&ingesting=1`)
-      return
-    }
     const r = range.value!
     const video = { duration: r[1], megapixels: 0.4, steps: 8 }
     if (storyKind.value === 'video') {
@@ -388,7 +271,7 @@ const begin = () =>
     }
     const made = await ingestStory({
       title: title.value,
-      story: storyText.value,
+      story: text.value,
       references: rows.value.map((row) => ({ path: row.path, kind: row.kind, entity: row.entity, guess: row.kind === 'style' ? row.look || row.about : row.about })),
       target_seconds: targetSeconds.value,
       shortest: Math.max(CLIP_MIN, r[0]),
@@ -424,77 +307,13 @@ const onPick = (event: Event, take: (files: File[]) => void) => {
       <div class="body">
         <label class="field"><span class="eyebrow">TITLE</span><input v-model="title" class="plain" placeholder="Working title" /></label>
 
-        <div
-          v-if="storyKind === 'file'"
-          class="drop"
-          :class="{ over: dragging }"
-          @click="storyInput?.click()"
-          @dragover.prevent="dragging = true"
-          @dragleave="dragging = false"
-          @drop.prevent="onDrop($event, pickStory)"
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /></svg>
-          <span>{{ reading ? 'reading…' : file ? `${file.name} · ${file.words.toLocaleString()} words · replace` : 'Drop the novel here' }}</span>
-          <span class="mono dim">epub · pdf · txt · md · docx</span>
-          <input ref="storyInput" type="file" accept=".epub,.pdf,.txt,.md,.docx" hidden @change="onPick($event, pickStory)" />
-        </div>
         <textarea
-          v-else-if="storyKind === 'text'"
+          v-if="storyKind === 'text'"
           v-model="text"
           rows="10"
           class="prose"
           placeholder="A few sentences of what happens, or the full text. Chapters split on headings, or every ~600 words if there are none."
         />
-        <template v-else-if="storyKind === 'manga'">
-          <div
-            class="drop"
-            :class="{ over: dragging }"
-            @click="pageInput?.click()"
-            @dragover.prevent="dragging = true"
-            @dragleave="dragging = false"
-            @drop.prevent="onDrop($event, addPages)"
-          >
-            <span>{{ uploading ? 'uploading…' : manga.pages.length ? 'Drop more pages, or a .cbz to replace them' : 'Drop the pages, or one .cbz' }}</span>
-            <span class="mono dim">pictures in page order by name · cbz · zip</span>
-            <input ref="pageInput" type="file" accept="image/*,.cbz,.zip" multiple hidden @change="onPick($event, addPages)" />
-          </div>
-          <div v-if="manga.pages.length" class="pages">
-            <span v-for="(p, i) in manga.pages" :key="p.path" class="page" :title="p.name">
-              <span class="thumb" :style="p.thumb ? { backgroundImage: `url(${p.thumb})` } : {}"><span class="badge mono">{{ archive ? 'CBZ' : pad(i + 1, 2) }}</span></span>
-              <button class="x" title="remove" @click="dropPage(p.path)">×</button>
-            </span>
-          </div>
-          <div class="three ruled">
-            <label class="field">
-              <span class="eyebrow">READING</span>
-              <select v-model="manga.reading">
-                <option v-for="r in READINGS" :key="r.id" :value="r.id">{{ r.label }}</option>
-              </select>
-            </label>
-            <label class="field" title="how many pages each chapter takes, in order; empty is one chapter">
-              <span class="eyebrow">PAGES PER CHAPTER</span><input v-model="manga.chapters" class="mono" placeholder="one chapter · or 18, 20, 17" />
-            </label>
-            <label class="field">
-              <span class="eyebrow">ASPECT</span>
-              <select v-model="manga.aspect">
-                <option v-for="a in mangaAspects" :key="a.label" :value="a.value">{{ a.label }}</option>
-              </select>
-            </label>
-          </div>
-          <div
-            class="drop"
-            :class="{ over: dragging }"
-            @click="styleInput?.click()"
-            @dragover.prevent="dragging = true"
-            @dragleave="dragging = false"
-            @drop.prevent="onDrop($event, pickStyle)"
-          >
-            <span>{{ manga.style ? `${manga.style.name} · replace` : 'Drop a style picture · optional' }}</span>
-            <span class="mono dim">the anime look the colour sheets and keyframes are drawn in</span>
-            <input ref="styleInput" type="file" accept="image/*" hidden @change="onPick($event, pickStyle)" />
-          </div>
-          <button v-if="manga.style" class="link self" @click="manga.style = null">no style picture</button>
-        </template>
         <template v-else>
           <div
             class="drop"
@@ -511,7 +330,7 @@ const onPick = (event: Event, take: (files: File[]) => void) => {
           <label class="field"><span class="eyebrow">WHAT CHANGES</span><input v-model="redo.instruction" class="plain" placeholder="make it look like a watercolour painting" /></label>
         </template>
 
-        <div v-if="storyKind !== 'manga'" class="three ruled">
+        <div class="three ruled">
           <label v-if="storyKind !== 'video'" class="field"><span class="eyebrow">TARGET LENGTH</span><input v-model="target" :placeholder="targetDefault" /></label>
           <label class="field" :title="`the director plans shots inside this range; ${CLIP_MIN} s is the shortest it can hold`">
             <span class="eyebrow">{{ storyKind === 'video' ? 'LONGEST SHOT' : 'SHOT LENGTH' }}</span><input v-model="shot" placeholder="6–8 s" />
@@ -531,7 +350,7 @@ const onPick = (event: Event, take: (files: File[]) => void) => {
           <label v-else class="field"><span class="eyebrow">CLIP SCALE</span><input v-model.number="redo.clip_scale" type="number" min="0.1" max="1" step="0.1" /></label>
         </div>
 
-        <div v-if="prose" class="split ruled">
+        <div v-if="storyKind === 'text'" class="split ruled">
           <span class="row mono"><span class="eyebrow">SPLIT PREVIEW</span><span class="muted">{{ chapters.length ? `${chapters.length} chapters · ~${totalShots} shots` : '—' }}</span></span>
           <div class="bars">
             <span
@@ -546,7 +365,7 @@ const onPick = (event: Event, take: (files: File[]) => void) => {
           <span class="note">{{ splitNote }}</span>
         </div>
 
-        <div v-if="prose" class="knobs ruled">
+        <div v-if="storyKind === 'text'" class="knobs ruled">
           <label class="field" title="a heading of this level or above starts a chapter">
             <span class="eyebrow">CHAPTER SPLIT</span>
             <select v-model.number="knobs.heading_level">
@@ -563,7 +382,7 @@ const onPick = (event: Event, take: (files: File[]) => void) => {
       </div>
     </section>
 
-    <section v-if="prose" class="card">
+    <section v-if="storyKind === 'text'" class="card">
       <div class="head">
         <h5>References</h5>
         <span class="note">a photograph or a video at least · they override the story</span>
@@ -615,7 +434,7 @@ const onPick = (event: Event, take: (files: File[]) => void) => {
 
     <section class="card go">
       <div class="estimate mono">
-        <span v-for="e in storyKind === 'manga' ? mangaEstimate : estimate" :key="e.k"><span class="eyebrow">{{ e.k }}</span>{{ e.v }}</span>
+        <span v-for="e in estimate" :key="e.k"><span class="eyebrow">{{ e.k }}</span>{{ e.v }}</span>
       </div>
       <div class="buttons">
         <label v-if="storyKind !== 'video'" class="check"><input v-model="autoPlan" type="checkbox" />run all plan stages, stop before render</label>
@@ -865,24 +684,5 @@ const onPick = (event: Event, take: (files: File[]) => void) => {
 
 .full {
   flex-basis: 100%;
-}
-
-.pages {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-1);
-}
-
-.page {
-  display: flex;
-  align-items: flex-start;
-}
-
-.page .thumb {
-  height: 56px;
-}
-
-.self {
-  align-self: flex-start;
 }
 </style>

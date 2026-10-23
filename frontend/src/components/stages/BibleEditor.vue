@@ -2,7 +2,6 @@
 import { computed, ref, watch } from 'vue'
 import {
   addMember,
-  approveMade,
   deleteMember,
   describeMember,
   detachRef,
@@ -20,7 +19,7 @@ import {
   type Production,
   type Stale,
 } from '../../api'
-import { SHEET, approvable, done, filmOf, hours, impact, linesOf, photographs, shotLabel, shotsOf, shownAs, states } from '../../bible'
+import { done, filmOf, hours, impact, linesOf, photographs, shotLabel, shotsOf, shownAs, states } from '../../bible'
 import { GENERATED, drawingRun, pad, type StageId } from '../../production'
 
 const props = defineProps<{
@@ -180,8 +179,7 @@ const refs = computed(() => (props.member?.references ?? []).filter((r) => r.art
 const provided = computed(() => refs.value.filter((r) => r.role !== GENERATED).length)
 const generated = computed(() => refs.value.filter((r) => r.role === GENERATED).length)
 const refName = (r: Ref) =>
-  r.role === SHEET ? `colour sheet · ${r.state.replace('_', ' ')}` : r.role === GENERATED ? `drawn · seed ${r.seed ?? '—'}` : `${r.role} · ${audioName(r.photo || r.artifact!)}`
-const approveSheet = (r: Ref) => props.act(`sheet ${r.id}`, () => approveMade('reference', r.id))
+  r.role === GENERATED ? `drawn · seed ${r.seed ?? '—'}` : `${r.role} · ${audioName(r.photo || r.artifact!)}`
 const drawing = computed(() => drawingRun(props.production))
 const garment = ref('')
 const garmentInput = ref<HTMLInputElement | null>(null)
@@ -462,11 +460,10 @@ const remove = () => {
               <div v-for="r in refs" :key="r.id" class="ref">
                 <a class="pic" :href="outputUrl(shownAs(member, r))" target="_blank">
                   <img class="frame" :class="{ lead: r === refs[0] }" :src="outputUrl(shownAs(member, r))" :alt="r.role" />
-                  <span class="tag mono" :class="{ on: r.role === SHEET || (r.role !== 'generated' && r === refs[0]) }">{{ r.role === SHEET ? 'SHEET' : r.role === GENERATED ? 'GEN' : member.plate && r.plate ? 'PLATE' : 'PHOTO' }}</span>
+                  <span class="tag mono" :class="{ on: r.role !== 'generated' && r === refs[0] }">{{ r.role === GENERATED ? 'GEN' : member.plate && r.plate ? 'PLATE' : 'PHOTO' }}</span>
                   <button class="x" title="it does not show this member: let go of it, for good" @click.prevent="detach(r)">×</button>
                 </a>
                 <span class="mono name">{{ refName(r) }}</span>
-                <button v-if="r.role === SHEET && approvable(r)" class="link" :disabled="!!busy" @click="approveSheet(r)">approve</button>
               </div>
             </div>
             <div

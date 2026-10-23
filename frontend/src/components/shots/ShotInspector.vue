@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, reactive, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import {
   addCasting,
   approveMade,
@@ -9,17 +9,12 @@ import {
   drawLook,
   drawShotLooks,
   outputUrl,
-  panelOf,
   patchCasting,
-  patchPanel,
   patchShot,
   redoKeyframe,
   rewriteShot,
-  setMotionComic,
   upload,
   uploadLook,
-  type Balloon,
-  type BalloonKind,
   type CastingInfo,
   type LookRef,
   type MemberInfo,
@@ -29,7 +24,7 @@ import {
 import { useRowDrafts } from '../../draft'
 import { shotId } from '../../production'
 
-export type Tab = 'panel' | 'refs' | 'shot' | 'prompt' | 'changes'
+export type Tab = 'refs' | 'shot' | 'prompt' | 'changes'
 
 const props = defineProps<{
   production: Production
@@ -255,55 +250,6 @@ const ownFrame = (event: Event) => {
 }
 const setLanded = (on: boolean) => props.act(`keyframe ${props.shot.id}`, () => patchShot(props.shot.id, { landed: on }))
 
-// --- panel --------------------------------------------------------------------------------------
-const panel = computed(() => panelOf(props.shot))
-const view = computed<Tab>(() => (props.tab === 'panel' && !panel.value ? 'refs' : props.tab))
-const BALLOONS: BalloonKind[] = ['speech', 'thought', 'shout', 'narration']
-const living = computed(() => props.production.members.filter((m) => m.kind === 'person' || m.kind === 'animal'))
-const held = computed(() => {
-  const s = panel.value?.script
-  return { balloons: s?.balloons ?? [], who: s?.who ?? [], action: s?.action ?? '' }
-})
-const script = reactive({ balloons: [] as Balloon[], who: [] as string[], action: '' })
-const resetScript = () => {
-  script.balloons = held.value.balloons.map((b) => ({ ...b }))
-  script.who = [...held.value.who]
-  script.action = held.value.action
-}
-watch(() => [props.shot.id, JSON.stringify(held.value)], resetScript, { immediate: true })
-const dirty = computed(() => JSON.stringify(script) !== JSON.stringify(held.value))
-const unspoken = computed(() => script.balloons.findIndex((b) => b.kind !== 'narration' && b.text.trim() && !b.speaker))
-const moveBalloon = (i: number, by: number) => {
-  const [b] = script.balloons.splice(i, 1)
-  script.balloons.splice(i + by, 0, b)
-}
-const addBalloon = () => script.balloons.push({ kind: 'speech', speaker: script.who[0] ?? living.value[0]?.slug ?? '', text: '' })
-const setKind = (b: Balloon, kind: BalloonKind) => {
-  b.kind = kind
-  if (kind === 'narration') b.speaker = ''
-  else if (!b.speaker) b.speaker = script.who[0] ?? living.value[0]?.slug ?? ''
-}
-const toggleWho = (slug: string) => (script.who = script.who.includes(slug) ? script.who.filter((w) => w !== slug) : [...script.who, slug])
-const savePanel = () =>
-  props.act(`panel ${props.shot.id}`, () =>
-    patchPanel(props.shot.id, {
-      balloons: script.balloons.map((b) => ({ ...b, speaker: b.kind === 'narration' ? '' : b.speaker })),
-      who: script.who,
-      action: script.action.trim(),
-    }),
-  )
-const readerNote = computed(() => {
-  const p = panel.value
-  if (!p || !before.value) return ''
-  const why = panelOf(before.value)?.script.why
-  const mine = p.landed_by_reader === props.shot.keyframe.landed ? '' : ' You changed it.'
-  return `The reader ${p.landed_by_reader ? 'landed' : 'cut'} here${why ? `: ${why}` : ''}.${mine}`
-})
-const motion = computed(() => !!props.shot.plan.motion_comic)
-const setMotion = (on: boolean) => {
-  if (on !== motion.value) props.act(`motion ${props.shot.id}`, () => setMotionComic(props.shot.id, on))
-}
-
 // --- prompt -------------------------------------------------------------------------------------
 const promptKey = computed(() => `prompt ${props.shot.id}`)
 const setPrompt = (value: string) => {
@@ -341,7 +287,6 @@ const changes = computed(() =>
 )
 
 const tabs = computed(() => [
-  ...(panel.value ? [{ id: 'panel' as const, label: 'PANEL', n: String(panel.value.script.balloons.length) }] : []),
   { id: 'refs' as const, label: 'REFERENCES', n: String(props.shot.castings.length) },
   { id: 'shot' as const, label: 'SHOT', n: '' },
   { id: 'prompt' as const, label: 'PROMPT', n: '' },
@@ -382,7 +327,7 @@ const approve = () =>
   <section class="inspector">
     <div class="topbar">
       <div class="seg">
-        <button v-for="x in tabs" :key="x.id" :class="{ on: view === x.id }" @click="emit('tab', x.id)">
+        <button v-for="x in tabs" :key="x.id" :class="{ on: tab === x.id }" @click="emit('tab', x.id)">
           {{ x.label }} <span class="n">{{ x.n }}</span>
         </button>
       </div>
@@ -390,93 +335,7 @@ const approve = () =>
     </div>
 
     <div class="body">
-      <div v-if="view === 'panel' && panel" class="form">
-        <div class="sides">
-          <a class="side" :href="outputUrl(panel.read || panel.picture)" target="_blank">
-            <img class="side-pic" :src="outputUrl(panel.read || panel.picture)" alt="" />
-            <span class="where">PANEL · PAGE {{ panel.page_index + 1 }}</span>
-          </a>
-          <span class="arrow">→</span>
-          <a v-if="shot.keyframe.artifact" class="side" :href="outputUrl(shot.keyframe.artifact)" target="_blank">
-            <img class="side-pic" :src="outputUrl(shot.keyframe.artifact)" alt="" />
-            <span class="where">KEYFRAME · {{ shot.keyframe.state.toUpperCase() }}</span>
-          </a>
-          <span v-else class="side">
-            <span class="side-pic none" />
-            <span class="where">{{ waiting ? 'KEYFRAME · WAITS FOR THE SHEETS' : 'KEYFRAME · NOT DRAWN' }}</span>
-          </span>
-        </div>
-        <div v-if="panel.clean" class="row">
-          <a :href="outputUrl(panel.clean)" target="_blank"><img class="pic" :src="outputUrl(panel.clean)" alt="" /></a>
-          <span class="effect">cleaned · the lettering painted out</span>
-        </div>
-        <span v-if="panel.clean_review" class="effect warn">The cleaned panel was flagged: {{ panel.clean_review }}</span>
-        <span v-if="panel.too_long" class="effect warn">Its balloons do not fit the longest shot: cut a line, or allow longer shots.</span>
-
-        <div v-if="before" class="f">
-          <span class="eyebrow">FROM {{ named(before.id) }}</span>
-          <div class="seg small">
-            <button :class="{ on: shot.keyframe.landed }" :disabled="!!busy" @click="!shot.keyframe.landed && setLanded(true)">LANDS ON THIS PANEL</button>
-            <button :class="{ on: !shot.keyframe.landed }" :disabled="!!busy" @click="shot.keyframe.landed && setLanded(false)">CUT</button>
-          </div>
-          <span class="effect">{{ readerNote }}</span>
-        </div>
-
-        <div class="f">
-          <span class="eyebrow">MADE AS</span>
-          <div class="seg small">
-            <button :class="{ on: !motion }" :disabled="!!busy" @click="setMotion(false)">H3 CLIP</button>
-            <button :class="{ on: motion }" :disabled="!!busy" @click="setMotion(true)">MOTION COMIC</button>
-          </div>
-          <span class="effect">{{ motion ? 'The keyframe under a slow camera move, keeping the sound of the clip it has.' : 'Rendered by H3 from the keyframe.' }}</span>
-        </div>
-
-        <div class="f">
-          <span class="between">
-            <span class="eyebrow">BALLOONS</span>
-            <span v-if="panel.edited" class="marker" :style="{ color: 'var(--accent)' }">edited by hand</span>
-          </span>
-          <div v-for="(b, i) in script.balloons" :key="i" class="balloon">
-            <select class="mono" :value="b.kind" @change="setKind(b, ($event.target as HTMLSelectElement).value as BalloonKind)">
-              <option v-for="k in BALLOONS" :key="k" :value="k">{{ k }}</option>
-            </select>
-            <select v-model="b.speaker" class="mono" :disabled="b.kind === 'narration'">
-              <option v-if="b.kind === 'narration'" value="">narrator</option>
-              <option v-for="m in living" :key="m.slug" :value="m.slug">{{ m.slug }}</option>
-            </select>
-            <input v-model="b.text" placeholder="what the balloon says" />
-            <span class="moves">
-              <button class="link" :disabled="i === 0" title="earlier" @click="moveBalloon(i, -1)">↑</button>
-              <button class="link" :disabled="i === script.balloons.length - 1" title="later" @click="moveBalloon(i, 1)">↓</button>
-              <button class="link" title="remove" @click="script.balloons.splice(i, 1)">×</button>
-            </span>
-          </div>
-          <button class="link self" @click="addBalloon">+ balloon</button>
-          <span v-if="panel.script.sfx.length" class="fine">sfx · {{ panel.script.sfx.join(' · ') }}</span>
-        </div>
-
-        <div class="f">
-          <span class="eyebrow">WHO IS DRAWN</span>
-          <div class="handed">
-            <label v-for="m in living" :key="m.slug"><input type="checkbox" :checked="script.who.includes(m.slug)" @change="toggleWho(m.slug)" />{{ m.slug }}</label>
-          </div>
-        </div>
-        <label class="f">
-          <span class="eyebrow">ACTION</span>
-          <textarea v-model="script.action" rows="2" />
-        </label>
-        <div class="between wrap">
-          <span class="fine" :class="{ warn: unspoken >= 0 }">{{
-            unspoken >= 0 ? `Balloon ${unspoken + 1} needs a speaker.` : 'Kept through re-plans. The prompt and the clip go stale; the picture does not.'
-          }}</span>
-          <span class="row">
-            <button v-if="dirty" class="link" :disabled="!!busy" @click="resetScript">revert</button>
-            <button class="link on" :disabled="!!busy || !dirty || unspoken >= 0" @click="savePanel">{{ busy === `panel ${shot.id}` ? 'saving…' : 'save the script' }}</button>
-          </span>
-        </div>
-      </div>
-
-      <template v-else-if="view === 'refs'">
+      <template v-if="tab === 'refs'">
         <div v-for="r in refs" :key="r.c.id" class="ref" :class="{ focus: focus === r.c.member }">
           <div class="ref-top">
             <span class="who">
@@ -558,7 +417,7 @@ const approve = () =>
         </div>
       </template>
 
-      <div v-else-if="view === 'shot'" class="form">
+      <div v-else-if="tab === 'shot'" class="form">
         <label class="f">
           <span class="eyebrow">ACTION</span>
           <textarea
@@ -643,7 +502,7 @@ const approve = () =>
         </div>
       </div>
 
-      <div v-else-if="view === 'prompt'" class="form tight">
+      <div v-else-if="tab === 'prompt'" class="form tight">
         <span class="between">
           <span class="eyebrow">H3 PROMPT</span>
           <span v-if="shot.prompt.marker" class="marker" :style="{ color: MARKER_COLOR[shot.prompt.marker.kind] }">{{ shot.prompt.marker.label }}</span>
@@ -1123,66 +982,6 @@ textarea.prompt {
   font-size: 11px;
   font-weight: var(--weight-light);
   color: var(--text-secondary);
-}
-
-.fine.warn {
-  color: var(--status-degraded);
-}
-
-.sides {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-  gap: var(--space-1);
-  align-items: start;
-}
-
-.side {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-}
-
-.side-pic {
-  width: 100%;
-  max-height: 240px;
-  object-fit: contain;
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-input);
-  display: block;
-}
-
-.side-pic.none {
-  aspect-ratio: 16 / 9;
-  background: var(--bg-base);
-  border-style: dashed;
-}
-
-.sides .arrow {
-  padding-top: 64px;
-}
-
-.balloon {
-  display: grid;
-  grid-template-columns: 96px 112px minmax(0, 1fr) auto;
-  gap: 4px;
-  align-items: center;
-}
-
-.balloon select,
-.balloon input {
-  padding: 4px 8px;
-  font-size: var(--text-xs);
-}
-
-.moves {
-  display: flex;
-  gap: 6px;
-}
-
-.self {
-  align-self: flex-start;
 }
 
 .change {

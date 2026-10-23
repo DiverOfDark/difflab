@@ -69,7 +69,7 @@ watch(
 const startOf = (id: number) => starts.value[Math.max(0, shots.value.findIndex((s) => s.id === id))] ?? 0
 
 const memberFocus = ref<string | null>(props.member ?? null)
-const tab = ref<Tab>(props.production.story_kind === 'manga' ? 'panel' : 'refs')
+const tab = ref<Tab>('refs')
 const zoom = ref<Zoom>('fit')
 const said = ref('')
 

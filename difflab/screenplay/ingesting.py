@@ -12,12 +12,9 @@ from difflab.core.settings import DirectorSettings, IngestSettings
 from difflab.screenplay import ingest, planner, settings, timings
 from difflab.work.plan_runners import SKIPS
 
-ORDER = ("split", "pages", "describe", "read", "reconcile")
-NAMES = {
-    "split": "Split", "pages": "Read pages", "describe": "Describe references", "read": "Read chapters",
-    "reconcile": "Reconcile",
-}  # fmt: skip
-TAGS = {"pages": "PAGES", "describe": "DESCRIBE", "read": "READ", "reconcile": "RECONCILE"}
+ORDER = ("split", "describe", "read", "reconcile")
+NAMES = {"split": "Split", "describe": "Describe references", "read": "Read chapters", "reconcile": "Reconcile"}
+TAGS = {"describe": "DESCRIBE", "read": "READ", "reconcile": "RECONCILE"}
 BATCH = 10.0  # s: the plan runs of one "plan every chapter" are queued in one transaction, well inside this
 KIND = {"person": "CHARACTER", "animal": "CHARACTER", "environment": "LOCATION", "object": "PROP", "style": "STYLE"}
 
@@ -97,7 +94,6 @@ def status(production_id: int) -> dict[str, Any] | None:
     split = _split(production, chapters)
     rows = {
         "split": split,
-        "pages": _pages(steps["pages"]),
         "describe": [described(r) for r in production.manifest.get("references", [])],
         "read": [
             (
@@ -120,8 +116,6 @@ def status(production_id: int) -> dict[str, Any] | None:
     }  # fmt: skip
     listed_steps = []
     for step in ORDER:
-        if step == "pages" and production.story_kind != "manga":
-            continue
         own = steps.get(step, [])
         skippable = any(j.tool in SKIPS and j.state == store.QUEUED for j in own)
         listed_steps.append(
@@ -159,30 +153,6 @@ def status(production_id: int) -> dict[str, Any] | None:
         "found": _found(events, members, production.manifest),
         "log": _log(events, by_job, names),
     }
-
-
-def _pages(jobs: list[store.Job]) -> list[tuple[str, str]]:
-    """Per page read: its panels, and the balloons in each; then how many panels were cleaned."""
-    read = [j for j in jobs if j.tool == "read_page" and j.settled and j.outputs]
-    out = []
-    for job in read:
-        found = job.outputs.get("panels", [])
-        balloons = " · ".join(str(len(p["script"]["balloons"])) for p in found)
-        unsure = "" if job.outputs.get("settled", True) else ", boxes confirmed by the reader"
-        out.append(
-            (f"page {int(job.inputs.get('index') or 0) + 1}", f"{len(found)} panels{unsure}; balloons {balloons}")
-        )
-    cleaned = [j for j in jobs if j.tool == "clean_panel"]
-    if cleaned:
-        out.append(("cleaned", f"{sum(j.settled for j in cleaned)} / {len(cleaned)} panels"))
-    flagged = sum(
-        1
-        for j in jobs
-        if j.tool == "judge_clean" and j.settled and (j.outputs.get("lettering") or j.outputs.get("changed"))
-    )
-    if flagged:
-        out.append(("to review", f"{flagged} cleaned panel(s) still lettered or changed"))
-    return out
 
 
 def _skipping(runs: list[store.Run], job: store.Job) -> bool:

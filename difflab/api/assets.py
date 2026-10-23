@@ -35,8 +35,6 @@ KINDS = {
     ".m4a",
     ".flac",
     ".ogg",
-    ".cbz",  # a comic's pages, for a production from manga
-    ".zip",
 }
 
 

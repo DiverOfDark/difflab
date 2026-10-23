@@ -51,7 +51,6 @@ PROVIDED = "provided"  # a keyframe someone gave: a file under output/
 CHAINED = "chained"  # a keyframe that is the previous shot's handoff frame
 COMPOSED = "composed"  # a keyframe the editor makes from the plan's words over a reference of the room
 GENERATED = "generated"  # a reference's role when the editor drew it from its member's words
-SHEET = "sheet"  # a reference's role for a comic character's colour sheet, drawn over one of its crops
 REFS = "refs"  # a keyframe that is no picture: the clip opens wherever its references take it
 BASE = "base"  # a casting's parent when it starts from the bible's look, whatever came since
 
