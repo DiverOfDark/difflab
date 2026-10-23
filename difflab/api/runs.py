@@ -108,8 +108,8 @@ def control(run_id: str, command: dict[str, Any]) -> str:
 # --- the card ------------------------------------------------------------------------------------
 # What the header says the card is doing, by the tool of the job in flight; a tool not named is "working".
 DOING = {
-    "render_shot": "rendering", "render_clip": "rendering", "enlarge_shot": "rendering", "finish": "rendering",
-    "enlarge_pixels": "rendering",
+    "render_shot": "rendering", "render_clip": "rendering", "render_ltx": "rendering", "enlarge_shot": "rendering",
+    "finish": "rendering", "enlarge_pixels": "rendering",
     "draw_reference": "drawing", "draw_look": "drawing", "compose_keyframe": "drawing", "edit_image": "drawing",
     "create_image": "drawing", "plate_ref": "drawing", "cut_crops": "drawing", "extend_opening": "drawing",
     "extend_photo": "drawing",

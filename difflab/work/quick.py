@@ -14,6 +14,8 @@ from typing import Any, Literal, get_args
 
 from difflab import config
 from difflab.core.settings import EditSettings, VlmSettings
+from difflab.models.ltx25 import config as ltx_config
+from difflab.models.ltx25.settings import LtxSettings
 from difflab.models.minimax_h3 import config as h3_config
 from difflab.models.minimax_h3.settings import ReferenceSize, VideoPromptSettings, VideoSettings
 
@@ -22,6 +24,7 @@ from difflab.models.minimax_h3.settings import ReferenceSize, VideoPromptSetting
 Mode = Literal["picture", "video", "upscale"]
 # Mirrors `screenplay.production.FITS`: the photo centre-cropped to `aspect`, or kept whole and drawn out to it.
 Fit = Literal["crop", "extend"]
+VideoEngine = Literal["minimax-h3", "ltx-2.5"]
 RETIRED = ("chain",)  # the chained, judged edit, removed 2026-10-17
 # "create" and "edit" became one "picture" on 2026-10-17; every run before it recorded one of them.
 MERGED = {"create": False, "edit": True}
@@ -51,7 +54,9 @@ class Job:
     # edit's or a take's: the photo is brought to it by `fit`; empty keeps the photo's own.
     aspect: str = ""
     fit: Fit = "crop"
+    video_engine: VideoEngine = "minimax-h3"
     video: VideoSettings = field(default_factory=VideoSettings)
+    ltx: LtxSettings = field(default_factory=LtxSettings)
     edit: EditSettings = field(default_factory=EditSettings)
     vlm: VlmSettings = field(default_factory=VlmSettings)  # writes the edit instruction
     video_vlm: VideoPromptSettings = field(default_factory=VideoPromptSettings)  # writes the H3 caption
@@ -67,6 +72,7 @@ class Job:
         chosen = (
             ("mode", self.mode, get_args(Mode)),
             ("fit", self.fit, get_args(Fit)),
+            ("video_engine", self.video_engine, get_args(VideoEngine)),
             ("video.reference_size", self.video.reference_size, get_args(ReferenceSize)),
         )
         unknown = [
@@ -98,6 +104,10 @@ class Job:
                 problems.append("upscale needs finish_megapixels: the size to deliver at")
         elif not self.photos:
             problems.append("no photos: the first one is what the result opens on")
+        elif self.video_engine == "ltx-2.5" and len(self.photos) - 1 > ltx_config.MSR_MAX_REFERENCES:
+            problems.append(
+                f"ltx-2.5 places at most {ltx_config.MSR_MAX_REFERENCES} references after the opening photo"
+            )
         problems += [f"no such photo: {photo}" for photo in self.photos if not photo.is_file()]
         if self.finish_megapixels is not None and self.finish_megapixels <= 0:
             problems.append(f"finish_megapixels={self.finish_megapixels:g}: leave it unset to deliver as sampled")
@@ -154,6 +164,7 @@ class Job:
             fields["clip"] = _under_output(fields["clip"]) if fields["clip"] else None
         for name, kind in (
             ("video", VideoSettings),
+            ("ltx", LtxSettings),
             ("edit", EditSettings),
             ("vlm", VlmSettings),
             ("video_vlm", VideoPromptSettings),

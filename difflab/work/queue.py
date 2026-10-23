@@ -35,11 +35,14 @@ def plan(job: Job) -> list[JobSpec]:
     jobs: list[JobSpec] = []
     photo, cut = _fitted(job, str(job.photos[0]) if job.photos else None, jobs)
     if job.mode == "video":
+        ltx = job.video_engine == "ltx-2.5"
+        references = [str(p) for p in job.photos[1:]]
         if job.idea:
+            writing = {"photo": photo, "idea": job.idea, **({"references": references} if ltx else {}), **cut}
             jobs.append(
                 JobSpec(
-                    "write_video_prompt",
-                    {"photo": photo, "idea": job.idea, **cut},
+                    "write_ltx_prompt" if ltx else "write_video_prompt",
+                    writing,
                     "write the prompt",
                     job.video_vlm.data(),
                 )
@@ -47,13 +50,12 @@ def plan(job: Job) -> list[JobSpec]:
             prompt: Any = output_of(len(jobs) - 1, "text")
         else:
             prompt = job.prompt
-        references = [str(p) for p in job.photos[1:]]
         jobs.append(
             JobSpec(
-                "render_clip",
+                "render_ltx" if ltx else "render_clip",
                 {"photo": photo, "prompt": prompt, "references": references, **cut},
                 "render the clip",
-                job.video.data(),
+                job.ltx.data() if ltx else job.video.data(),
             )
         )
     elif job.mode == "upscale":

@@ -121,6 +121,7 @@ extend-immutable-calls = ["difflab.core.settings.setting", "setting"]
 # Verbatim prompt assets: long lines are part of the data.
 "difflab/prompts.py" = ["E501"]
 "difflab/models/minimax_h3/prompts.py" = ["E501"]
+"difflab/models/ltx25/prompts.py" = ["E501"]
 "difflab/screenplay/words.py" = ["E501"]
 
 [tool.mypy]

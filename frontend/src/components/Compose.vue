@@ -29,6 +29,11 @@ const ENGINES = [
   { id: 'minimax-h3', name: 'MiniMax H3', give: 'plays the edit out as a clip from the start', get: 'last frame · ~2 min' },
 ] as const
 
+const VIDEO_ENGINES = [
+  { id: 'minimax-h3', name: 'MiniMax H3', give: 'photos after the first steer it as references', get: 'its own caption format' },
+  { id: 'ltx-2.5', name: 'LTX-2.5', give: 'up to 5 photos after the first, as Image 1, Image 2…', get: '8 steps · MSR references' },
+] as const
+
 const USES: Record<string, string[]> = {
   picture: ['words', 'photos', 'edit', 'vlm'],
   video: ['words', 'photos', 'video', 'delivery', 'vlm'],
@@ -39,9 +44,20 @@ const drawing = (j: Job) => j.mode === 'picture' && !j.start
 /** An H3 edit is sampled on the video model, on knobs of its own. */
 const h3Edit = computed(() => job.value.mode === 'picture' && job.value.start && job.value.edit.engine === 'minimax-h3')
 
+const ltx = computed(() => job.value.mode === 'video' && job.value.video_engine === 'ltx-2.5')
+const engines = computed(() => (job.value.mode === 'video' ? VIDEO_ENGINES : ENGINES))
+const engine = computed({
+  get: () => (job.value.mode === 'video' ? (job.value.video_engine ?? 'minimax-h3') : (job.value.edit.engine ?? 'qwen-image-edit')),
+  set: (id: string) => {
+    if (job.value.mode === 'video') job.value.video_engine = id as Job['video_engine']
+    else job.value.edit.engine = id
+  },
+})
+
 /** What a prompt calls each photo, in the words the engine that reads it was trained on. */
 const tags = computed(() => {
   const j = job.value
+  if (ltx.value) return j.photos.length > 1 ? j.photos.map((_, i) => (i ? `Image ${i}` : 'first frame')) : undefined
   if (h3Edit.value && j.edit.opening_h3 === 'free') return j.photos.map((_, i) => `<Picture ${i + 1}>`)
   if (j.mode !== 'picture' || j.photos.length < 2 || h3Edit.value) return undefined
   const aio = !drawing(j) && (j.edit.engine ?? 'qwen-image-edit') === 'qwen-image-edit'
@@ -165,7 +181,47 @@ const reshape = (j: Job): Knob[] => [
 const groups = computed(() => {
   const j = job.value
   const out: { title: string; meta: string; rows: Knob[] }[] = []
-  if (shows('video'))
+  if (shows('video') && ltx.value)
+    out.push({
+      title: 'Video',
+      meta: `8 steps · seed ${j.ltx.seed}`,
+      rows: [
+        ...reshape(j),
+        {
+          key: 'duration',
+          hint: 'Seconds of clip. The frame count rounds up to 8k+1, so 5 renders as 5.04.',
+          ...num(
+            () => j.ltx.duration,
+            (n) => (j.ltx.duration = n),
+          ),
+        },
+        {
+          key: 'megapixels',
+          hint: "The canvas. 0.86 is LTX's own 1280x704.",
+          ...num(
+            () => j.ltx.megapixels,
+            (n) => (j.ltx.megapixels = n),
+          ),
+        },
+        {
+          key: 'seed',
+          hint: 'The only thing that changes between two renders of the same words.',
+          ...num(
+            () => j.ltx.seed,
+            (n) => (j.ltx.seed = n),
+          ),
+        },
+        {
+          key: 'reference_strength',
+          hint: 'How clean the Image photos stay while the clip samples. 1 is what MSR was trained at.',
+          ...num(
+            () => j.ltx.reference_strength,
+            (n) => (j.ltx.reference_strength = n),
+          ),
+        },
+      ],
+    })
+  else if (shows('video'))
     out.push({
       title: 'Video',
       meta: `${j.video.steps} steps · seed ${j.video.seed}`,
@@ -446,8 +502,9 @@ const toggle = (title: string) => (open.value[title] = !open.value[title])
 const estimate = computed(() => {
   const j = job.value
   const rows: [string, string][] = []
-  const seconds = h3Edit.value ? (j.edit.seconds_h3 ?? 3) : j.video.duration
-  if (shows('video')) rows.push(['LENGTH', `${seconds.toFixed(1)}s`], ['CANVAS', `${h3Edit.value ? (j.edit.megapixels_h3 ?? 0.98) : j.video.megapixels} MP`])
+  const seconds = h3Edit.value ? (j.edit.seconds_h3 ?? 3) : ltx.value ? j.ltx.duration : j.video.duration
+  const canvas = h3Edit.value ? (j.edit.megapixels_h3 ?? 0.98) : ltx.value ? j.ltx.megapixels : j.video.megapixels
+  if (shows('video')) rows.push(['LENGTH', `${seconds.toFixed(1)}s`], ['CANVAS', `${canvas} MP`])
   if (shows('edit') && !h3Edit.value) rows.push(['SIZE', `${j.edit.megapixels} MP`], ['STEPS', String(editSteps(j))])
   if (shows('finish')) rows.push(['DELIVER', j.finish_megapixels ? `${j.finish_megapixels} MP` : '—'])
   return rows
@@ -529,7 +586,7 @@ const label = computed(() => {
                 : 'Optional. Mark one the start to edit it; the rest are references. With no start the picture is drawn fresh.'
             "
           />
-          <PhotoPicker v-else-if="shows('photos')" v-model:photos="job.photos" />
+          <PhotoPicker v-else-if="shows('photos')" v-model:photos="job.photos" :labels="tags" />
         </div>
       </section>
 
@@ -555,19 +612,15 @@ const label = computed(() => {
     </div>
 
     <aside class="aside">
-      <section v-if="job.mode === 'picture'" class="card">
+      <section v-if="job.mode !== 'upscale'" class="card">
         <div class="head">
           <h5>Model</h5>
-          <span class="label">{{ needsStart ? 'needs a start photo' : 'start optional' }}</span>
+          <span class="label">{{
+            job.mode === 'video' ? 'the first photo opens the clip' : needsStart ? 'needs a start photo' : 'start optional'
+          }}</span>
         </div>
         <div class="modes models">
-          <button
-            v-for="e in ENGINES"
-            :key="e.id"
-            class="mode"
-            :class="{ on: (job.edit.engine ?? 'qwen-image-edit') === e.id }"
-            @click="job.edit.engine = e.id"
-          >
+          <button v-for="e in engines" :key="e.id" class="mode" :class="{ on: engine === e.id }" @click="engine = e.id">
             <span class="id">{{ e.name }}</span>
             <span class="give">{{ e.give }}</span>
             <span class="get">{{ e.get }}</span>

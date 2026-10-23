@@ -34,6 +34,7 @@ from difflab.core.settings import (
     VlmSettings,
 )
 from difflab.core.types import Clip, Frame
+from difflab.models.ltx25.settings import LtxSettings
 from difflab.models.minimax_h3 import config as h3_config
 from difflab.models.minimax_h3 import pipeline, vae
 from difflab.models.minimax_h3 import prompts as video_prompts
@@ -56,6 +57,7 @@ from difflab.tools import (
     master,
     previews,
     render_chunk,
+    render_ltx,
     restore,
     retime,
     write_prompt,
@@ -148,6 +150,20 @@ def run_render_clip(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
         return {"video": store.relative(path)}
     png = media.save(clip.last_frame(), stem, chosen.seed, announce=False)
     return {"image": store.relative(png), "video": store.relative(path)}
+
+
+def run_write_ltx_prompt(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
+    text = write_prompt.write_ltx_prompt(
+        _opening(inputs), str(inputs["idea"]), _references(inputs), VideoPromptSettings(**settings)
+    )
+    return {"text": text}
+
+
+def run_render_ltx(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
+    chosen = LtxSettings(**settings)
+    clip = render_ltx.render(_opening(inputs), str(inputs["prompt"]), chosen, references=_references(inputs))
+    path = media.save(clip, HubFile.parse(chosen.checkpoint).path.stem, chosen.seed, announce=False)
+    return {"video": store.relative(path)}
 
 
 def run_enlarge_pixels(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
@@ -761,6 +777,8 @@ RUNNERS: dict[str, Runner] = {
     "chat": run_chat,
     "edit_image": run_edit_image,
     "render_clip": run_render_clip,
+    "write_ltx_prompt": run_write_ltx_prompt,
+    "render_ltx": run_render_ltx,
     "enlarge_pixels": run_enlarge_pixels,
     "grade": run_grade,
     "retime": run_retime,

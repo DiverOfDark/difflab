@@ -24,13 +24,21 @@ async function blank(): Promise<{ made: Job; models: (job: Job) => Job }> {
     aspect: '',
     fit: 'crop',
     video: effective('render_chunk') as Job['video'],
+    video_engine: 'minimax-h3',
+    ltx: effective('render_ltx') as Job['ltx'],
     edit: effective('edit_image') as Job['edit'],
     vlm: effective('write_instruction') as Job['vlm'],
     video_vlm: effective('write_video_prompt') as Job['video_vlm'],
   }
   // A kept job brings its knobs along but never its models: those are what Settings says now, or a
   // model picked there after the form was filled is silently not the one that runs.
-  const parts = { video: 'render_chunk', edit: 'edit_image', vlm: 'write_instruction', video_vlm: 'write_video_prompt' } as const
+  const parts = {
+    video: 'render_chunk',
+    ltx: 'render_ltx',
+    edit: 'edit_image',
+    vlm: 'write_instruction',
+    video_vlm: 'write_video_prompt',
+  } as const
   const models = (job: Job): Job => {
     const out = { ...job }
     for (const [part, tool] of Object.entries(parts) as [keyof typeof parts, string][]) {

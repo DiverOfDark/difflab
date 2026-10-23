@@ -1,5 +1,5 @@
-"""A rough idea and a frame into the finished words a model is handed: an H3 caption or an edit
-instruction."""
+"""A rough idea and a frame into the finished words a model is handed: an H3 caption, an LTX prompt or an
+edit instruction."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from difflab import prompts as edit_prompts
 from difflab.core.settings import VlmSettings
 from difflab.core.types import Frame
 from difflab.models.exl3vl import ANY_JSON
+from difflab.models.ltx25 import prompts as ltx_prompts
 from difflab.models.minimax_h3 import caption
 from difflab.models.minimax_h3 import prompts as video_prompts
 from difflab.models.minimax_h3.settings import VideoPromptSettings
@@ -51,6 +52,24 @@ def write_video_prompt(
         idea,
         system=system,
         title="H3 prompt",
+        effort=config.VLM_WRITING_EFFORT,
+        **settings.generation(),
+    )
+    if not written:
+        raise RuntimeError("the VLM returned an empty prompt")
+    return written
+
+
+def write_ltx_prompt(
+    frame: Frame, idea: str, references: Sequence[Frame] = (), settings: VlmSettings | None = None
+) -> str:
+    """A rough idea, the opening frame and any MSR references -> one finished LTX-2.5 prompt."""
+    settings = settings or VIDEO_VLM
+    written = _vlm(settings).ask(
+        [frame.pil(), *(reference.pil() for reference in references)],
+        idea,
+        system=ltx_prompts.VLM_SYSTEM_PROMPT_REFERENCES if references else ltx_prompts.VLM_SYSTEM_PROMPT,
+        title="LTX prompt",
         effort=config.VLM_WRITING_EFFORT,
         **settings.generation(),
     )

@@ -24,6 +24,7 @@ from difflab.core.settings import (
     Settings,
     VlmSettings,
 )
+from difflab.models.ltx25.settings import LtxSettings
 from difflab.models.minimax_h3.settings import VideoPromptSettings, VideoSettings
 
 
@@ -53,7 +54,9 @@ TOOLS: tuple[Tool, ...] = (
     Tool("chat", 1, ("load VLM", "answer"), ChatSettings, "the next reply in a chat"),
     Tool("write_instruction", 1, ("load VLM", "write"), VlmSettings, "an idea into an edit instruction"),
     Tool("write_video_prompt", 1, ("load VLM", "write"), VideoPromptSettings, "an idea into an H3 caption"),
+    Tool("write_ltx_prompt", 1, ("load VLM", "write"), VideoPromptSettings, "an idea into an LTX-2.5 prompt"),
     Tool("render_chunk", 1, ("load", "condition", "encode", "sample", "decode"), VideoSettings, "MiniMax H3"),
+    Tool("render_ltx", 1, ("load", "condition", "encode", "sample", "decode"), LtxSettings, "LTX-2.5, MSR references"),
     Tool("enlarge_pixels", 1, ("load", "upscale"), EnlargePixelsSettings, "an ESRGAN over finished frames"),
     Tool("restore", 1, ("encode", "restore", "decode"), RestoreSettings, "SeedVR2 7B, then a 2x ESRGAN"),
     Tool("retime", 1, ("load", "interpolate"), RetimeSettings, "RIFE draws the frames between"),

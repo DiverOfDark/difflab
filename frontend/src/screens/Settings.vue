@@ -35,6 +35,11 @@ const ROLES: Record<string, string> = {
   'video-vae': 'Video VAE',
   'audio-vae': 'Audio VAE',
   'preview-decoder': 'Preview decoder',
+  'ltx-model': 'LTX-2.5 model',
+  'ltx-loras': 'LTX-2.5 LoRAs',
+  'ltx-text-encoder': 'LTX-2.5 text encoder',
+  'ltx-video-vae': 'LTX-2.5 video VAE',
+  'ltx-audio-vae': 'LTX-2.5 audio VAE',
   'pixel-upscaler': 'Pixel upscaler',
   restorer: 'Restorer',
   'restorer-vae': 'Restorer VAE',
@@ -53,6 +58,11 @@ const ROLE_NOTES: Record<string, string> = {
   'video-vae': 'turns sampled latents into frames',
   'audio-vae': 'turns sampled latents into sound',
   'preview-decoder': 'the quick picture of each step while a clip samples',
+  'ltx-model': 'samples a take when its video model is LTX-2.5',
+  'ltx-loras': 'stacked on LTX-2.5 when a take has references; the first carrying slot embeddings (MSR) places them',
+  'ltx-text-encoder': 'reads the prompt for LTX-2.5: its own Gemma 4 with the projections',
+  'ltx-video-vae': 'takes frames into and out of LTX-2.5',
+  'ltx-audio-vae': 'turns LTX-2.5 latents into sound, with its vocoder',
   'pixel-upscaler': 'enlarges finished frames',
   restorer: 'restores a finished chapter at half its 4K size, before the upscaler doubles it',
   'restorer-vae': 'takes frames into and out of the restorer',
@@ -62,12 +72,12 @@ const GROUPS: { title: string; tools: [string, string][] }[] = [
   { title: 'Pictures', tools: [['edit_image', 'Editing a photo'], ['compose_keyframe', 'Drawing a keyframe']] },
   {
     title: 'Video',
-    tools: [['render_chunk', 'Rendering'], ['handoff', 'Joining shots'], ['restore', 'Finishing at 4K'], ['retime', 'Retiming to 60 fps']],
+    tools: [['render_chunk', 'Rendering'], ['render_ltx', 'Rendering with LTX-2.5'], ['handoff', 'Joining shots'], ['restore', 'Finishing at 4K'], ['retime', 'Retiming to 60 fps']],
   },
   { title: 'Checking', tools: [['judge', 'Judge']] },
   {
     title: 'Writing',
-    tools: [['ask_vlm', 'Questions'], ['write_instruction', 'Edit instructions'], ['write_video_prompt', 'Video captions']],
+    tools: [['ask_vlm', 'Questions'], ['write_instruction', 'Edit instructions'], ['write_video_prompt', 'Video captions'], ['write_ltx_prompt', 'LTX-2.5 prompts']],
   },
 ]
 

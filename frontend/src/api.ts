@@ -21,6 +21,9 @@ export interface Job {
   /** Each is a tool's whole effective settings, advanced fields the form does not draw included, so a
    *  machine's overrides reach a quick job; a field absent falls back to the code default. */
   video: VideoKnobs & Record<string, unknown>
+  /** Which model renders a video job; a picture's is `edit.engine`. */
+  video_engine?: 'minimax-h3' | 'ltx-2.5'
+  ltx: LtxKnobs & Record<string, unknown>
   edit: {
     steps: number
     cfg: number
@@ -47,6 +50,13 @@ interface VideoKnobs {
   seed: number
   steps: number
   reference_size: 'match' | 'max'
+}
+
+interface LtxKnobs {
+  duration: number
+  megapixels: number
+  seed: number
+  reference_strength: number
 }
 
 interface VlmKnobs {
