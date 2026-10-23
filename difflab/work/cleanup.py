@@ -263,7 +263,7 @@ def delete_run(run_id: str) -> Deleted:
 
 
 def delete_results(artifact_ids: list[int]) -> Deleted:
-    """Finished images and videos with the files beside them that share their name: thumbnail, WebP twin, subtitles.
+    """Finished images and videos with the files beside them that share their name: thumbnail, subtitles.
     The jobs that made them still name them; their runs show the gap."""
     deleted = Deleted()
     with store.connect() as connection:

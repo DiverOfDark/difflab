@@ -72,15 +72,14 @@ def save_result(
     name: str,
     seed: int | None = None,
     out_dir: str | Path = config.OUT_DIR,
-) -> tuple[Path, Path]:
+) -> Path:
     now = datetime.now()
     folder = Path(out_dir) / now.strftime("%Y-%m-%d")
     folder.mkdir(parents=True, exist_ok=True)
     stamp = now.strftime("%Y-%m-%d-%H%M%S")
     stem = f"{stamp}_{name}_{seed}" if seed is not None else f"{stamp}_{name}"
-    png, webp = folder / f"{stem}.png", folder / f"{stem}.webp"
-    with ui.step("Saving PNG + WebP") as detail:
+    png = folder / f"{stem}.png"
+    with ui.step("Saving PNG") as detail:
         img.save(png, optimize=True)
-        img.save(webp, lossless=True, quality=100)
         detail(f"{img.width}×{img.height}")
-    return png, webp
+    return png

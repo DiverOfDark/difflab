@@ -187,15 +187,14 @@ def save(item: Clip | Frame, name: str = "clip", seed: int | None = None, announ
     """Write a clip or a still where its kind belongs, say where it went, and return the path.
 
     A clip is written at *its own* fps and sample rate rather than H3's, so a 30 fps clip read back
-    from disk and upscaled is not quietly re-timed to 24. A still is a PNG plus the lossless WebP copy
-    beside it.
+    from disk and upscaled is not quietly re-timed to 24.
 
     `seed` only names the file. Leave it out when nothing was sampled - a borrowed seed is a filename
     that lies about where its contents came from. `announce=False` for a caller that shows the path in
     a panel of its own.
     """
     if isinstance(item, Frame):
-        path, _ = save_result(item.pil(), name, seed)
+        path = save_result(item.pil(), name, seed)
     else:
         path = video_io.save_video(
             item.frames,
