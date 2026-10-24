@@ -864,6 +864,19 @@ export type ModelChoice = { value: string; name: string; size: number }
 /** `value` when the link means one file; `choices` when a repo or a Civitai version holds several and the role takes one. */
 export const resolveModel = (text: string, role: string) =>
   json<{ value?: string; choices?: ModelChoice[] }>('/api/models/resolve', post({ text, role }))
+export type ModelFit = { level: 'ok' | 'warn' | 'bad' | 'unknown'; summary: string; notes: string[]; like: string }
+const fits = new Map<string, Promise<ModelFit>>()
+/** Whether a model field of `role` can load `value`, read from the file's header; asked once per pair. */
+export const checkModel = (role: string, value: string) => {
+  const key = `${role}\n${value}`
+  let found = fits.get(key)
+  if (!found) {
+    found = json<ModelFit>('/api/models/check', post({ role, value }))
+    found.catch(() => fits.delete(key))
+    fits.set(key, found)
+  }
+  return found
+}
 export const forgetModel = (role: string, value: string) =>
   json<Record<string, string[]>>('/api/models', send('DELETE', { role, value }))
 export type Account = { source: string; account: string; tail: string }

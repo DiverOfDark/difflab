@@ -11,6 +11,7 @@ HF's own progress bars stay off (`difflab/__init__.py`): a download reports its 
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import os
@@ -24,7 +25,7 @@ from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any
 
-from huggingface_hub import HfApi, snapshot_download
+from huggingface_hub import HfApi, hf_hub_url, snapshot_download
 from huggingface_hub.constants import HF_HUB_CACHE
 from huggingface_hub.file_download import repo_folder_name
 from huggingface_hub.hf_api import RepoFile
@@ -204,15 +205,18 @@ class CivitaiFile:
     def fetch(self) -> Path:
         return _fetch_pinned(self.path, self.sha256, self._download)
 
-    def _download(self) -> None:
+    def url(self) -> str:
         files = _civitai(f"/api/v1/model-versions/{self.version}")["files"]
-        url = next((f["downloadUrl"] for f in files if f["name"] == self.filename), None)
+        url: str | None = next((f["downloadUrl"] for f in files if f["name"] == self.filename), None)
         if url is None:
             raise FileNotFoundError(f"Civitai version {self.version} no longer lists {self.filename}")
         if key := token(CIVITAI):
             url += ("&" if "?" in url else "?") + urllib.parse.urlencode({"token": key})
+        return url
+
+    def _download(self) -> None:
         try:
-            _download(url, self.path, self.sha256)
+            _download(self.url(), self.path, self.sha256)
         except urllib.error.HTTPError as problem:
             if problem.code not in (401, 403):
                 raise
@@ -369,3 +373,104 @@ def _download(url: str, path: Path, sha256: str) -> None:
         partial.unlink()
         raise RuntimeError(f"{path.name} has sha256 {digest.hexdigest()}, not the pinned {sha256}")
     partial.rename(path)
+
+
+@dataclass(frozen=True)
+class Header:
+    """A safetensors file's table of contents, with every `comfy_quant` blob decoded: what a loader would
+    find in it, read without downloading the weights."""
+
+    tensors: dict[str, tuple[str, tuple[int, ...]]]  # name -> (dtype, shape)
+    metadata: dict[str, str]
+    quant: dict[str, dict[str, Any]]  # layer -> its comfy_quant JSON
+
+
+HEADERS = URL_CACHE / "headers"
+_GAP = 1 << 20  # blobs closer than this are read in one request; a ConvRot pack keeps them all together
+
+
+def header(file: ModelFile) -> Header | None:
+    """None for a file that is not safetensors. A pinned file never changes, so a header read once is kept."""
+    return _header(file, remote=True)
+
+
+def cached_header(file: ModelFile) -> Header | None:
+    """The header when it can be had without the network."""
+    return _header(file, remote=False)
+
+
+def _header(file: ModelFile, remote: bool) -> Header | None:
+    if not file.filename.endswith(".safetensors"):
+        return None
+    kept = HEADERS / f"{hashlib.sha256(str(file).encode()).hexdigest()}.json"
+    if kept.exists():
+        saved = json.loads(kept.read_text())
+        tensors = {k: (dtype, tuple(shape)) for k, (dtype, shape) in saved["tensors"].items()}
+        return Header(tensors, saved["metadata"], saved["quant"])
+    if file.path.exists():
+        with file.path.open("rb") as f:
+
+            def read(start: int, end: int) -> bytes:
+                f.seek(start)
+                return f.read(end - start)
+
+            found = _parse_header(read)
+    elif not remote:
+        return None
+    else:
+        found = _parse_header(_ranged(file))
+    HEADERS.mkdir(parents=True, exist_ok=True)
+    kept.write_text(json.dumps(dataclasses.asdict(found)))
+    return found
+
+
+def _ranged(file: ModelFile) -> Callable[[int, int], bytes]:
+    if isinstance(file, CivitaiFile):
+        url, headers = file.url(), {}
+    else:
+        url = hf_hub_url(file.repo, file.filename, revision=file.revision)
+        headers = {"Authorization": f"Bearer {key}"} if (key := token(HUGGINGFACE)) else {}
+
+    def read(start: int, end: int) -> bytes:
+        ranged = urllib.request.Request(
+            url, headers=headers | {"Range": f"bytes={start}-{end - 1}", "User-Agent": "difflab"}
+        )
+        with urllib.request.urlopen(ranged, timeout=60) as response:
+            if response.status != 206:
+                raise OSError(f"{file.filename}: the server ignored a byte range ({response.status})")
+            body: bytes = response.read()
+        return body
+
+    return read
+
+
+def _parse_header(read: Callable[[int, int], bytes]) -> Header:
+    size = int.from_bytes(read(0, 8), "little")
+    table: dict[str, Any] = json.loads(read(8, 8 + size))
+    metadata = table.pop("__metadata__", None) or {}
+    base = 8 + size
+    blobs = sorted((entry["data_offsets"], name) for name, entry in table.items() if name.endswith(".comfy_quant"))
+    quant: dict[str, dict[str, Any]] = {}
+    while blobs:
+        group = [blobs.pop(0)]
+        while blobs and blobs[0][0][0] - group[-1][0][1] < _GAP:
+            group.append(blobs.pop(0))
+        start = group[0][0][0]
+        chunk = read(base + start, base + group[-1][0][1])
+        for (begin, end), name in group:
+            quant[name.removesuffix(".comfy_quant")] = json.loads(chunk[begin - start : end - start])
+    tensors = {name: (entry["dtype"], tuple(entry["shape"])) for name, entry in table.items()}
+    return Header(tensors, metadata, quant)
+
+
+def config_json(checkpoint: Checkpoint) -> dict[str, Any]:
+    """A repo's config.json, read without fetching the snapshot."""
+    local = checkpoint.path / "config.json"
+    if local.exists():
+        kept: dict[str, Any] = json.loads(local.read_text())
+        return kept
+    url = hf_hub_url(checkpoint.repo, "config.json", revision=checkpoint.revision)
+    headers = {"Authorization": f"Bearer {key}"} if (key := token(HUGGINGFACE)) else {}
+    with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=30) as response:
+        fetched: dict[str, Any] = json.load(response)
+    return fetched

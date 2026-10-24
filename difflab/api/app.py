@@ -29,6 +29,7 @@ from difflab.core.settings import Continuity, IngestSettings
 from difflab.models.minimax_h3.settings import VideoSettings
 from difflab.screenplay import (
     assembling,
+    compat,
     drawn,
     ideas,
     ingest,
@@ -721,6 +722,14 @@ async def resolve_model(request: Request) -> dict[str, Any]:
     if len(found) == 1:
         return {"value": found[0].value}
     return {"choices": [dataclasses.asdict(choice) for choice in found]}
+
+
+@app.post("/api/models/check")
+async def check_model(request: Request) -> dict[str, Any]:
+    """`{"role": ..., "value": ...}`: whether that role's loader can take the file, from its header alone."""
+    body = await request.json()
+    found = await asyncio.to_thread(compat.fit, str(body.get("role", "")), str(body.get("value", "")))
+    return dataclasses.asdict(found)
 
 
 @app.delete("/api/models")

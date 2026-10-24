@@ -20,31 +20,9 @@ import {
   type SettingField,
   type ToolInfo,
 } from '../api'
+import { ROLES } from '../roles'
 import { state } from '../store'
 
-const ROLES: Record<string, string> = {
-  vlm: 'VLM',
-  editor: 'Image editor',
-  'editor-21': 'Qwen-Image 2.1',
-  'editor-21-loras': 'Qwen-Image 2.1 LoRAs',
-  'editor-21-text-encoder': 'Qwen-Image 2.1 text encoder',
-  'editor-21-vae': 'Qwen-Image 2.1 VAE',
-  'video-model': 'Video model',
-  'video-loras': 'LoRAs',
-  'video-text-encoder': 'Video text encoder',
-  'video-vae': 'Video VAE',
-  'audio-vae': 'Audio VAE',
-  'preview-decoder': 'Preview decoder',
-  'ltx-model': 'LTX-2.5 model',
-  'ltx-loras': 'LTX-2.5 LoRAs',
-  'ltx-text-encoder': 'LTX-2.5 text encoder',
-  'ltx-video-vae': 'LTX-2.5 video VAE',
-  'ltx-audio-vae': 'LTX-2.5 audio VAE',
-  'pixel-upscaler': 'Pixel upscaler',
-  restorer: 'Restorer',
-  'restorer-vae': 'Restorer VAE',
-  'frame-interpolation': 'Frame interpolation',
-}
 const ROLE_NOTES: Record<string, string> = {
   vlm: 'every question, prompt and plan, and the judge; loaded as published if it is already 4-bit, quantized to 4-bit as it loads if it is not quantized',
   editor: 'edits photos and draws keyframes',

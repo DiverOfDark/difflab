@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
-import { resolveModel, type ModelChoice } from '../api'
+import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { checkModel, resolveModel, type ModelChoice, type ModelFit } from '../api'
+import { ROLES } from '../roles'
 
 const props = defineProps<{
   value: string | null
@@ -41,6 +42,23 @@ const options = computed(() => {
   return all
 })
 
+const fit = reactive<Record<string, ModelFit>>({})
+function ask(value: string) {
+  if (!value || value in fit) return
+  checkModel(props.role, value).then(
+    (found) => (fit[value] = found),
+    (error) => (fit[value] = { level: 'unknown', summary: `not checked: ${String(error).replace(/^Error: /, '')}`, notes: [], like: '' }),
+  )
+}
+watch(current, ask, { immediate: true })
+watch(open, (now) => now && options.value.forEach(ask))
+const MARK = { ok: '✓', warn: '⚠', bad: '✗', unknown: '?' }
+const said = (found: ModelFit) => (found.like ? `looks like a file for ${ROLES[found.like] ?? found.like}` : found.summary)
+const told = (value: string) => {
+  const found = fit[value]
+  return found ? [said(found), ...found.notes].join('\n') : 'checking…'
+}
+
 function choose(value: string) {
   emit('pick', value)
   open.value = false
@@ -58,7 +76,10 @@ async function useCustom() {
   resolving.value = true
   try {
     const found = await resolveModel(value, props.role)
-    if (found.choices?.length) files.value = found.choices
+    if (found.choices?.length) {
+      files.value = found.choices
+      found.choices.forEach((c) => ask(c.value))
+    }
     else if (found.value) take(found.value)
   } catch (error) {
     problem.value = `${String(error).replace(/^Error: /, '')} — paste a Hugging Face or Civitai link, or org/repo@<commit>[:file]`
@@ -98,6 +119,9 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', outside))
       <span class="where">{{ shown.where }}</span>
       <span class="caret">▾</span>
     </button>
+    <p v-if="fit[current] && fit[current].level !== 'ok'" class="fit" :class="fit[current].level" :title="told(current)">
+      {{ MARK[fit[current].level] }} {{ said(fit[current]) }}
+    </p>
     <div v-if="open" class="panel">
       <div
         v-for="option in options"
@@ -111,6 +135,7 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', outside))
           <span class="name">{{ parts(option).name }}</span>
           <span class="where">{{ parts(option).where }}</span>
         </div>
+        <span v-if="option && fit[option]" class="mark" :class="fit[option].level" :title="told(option)">{{ MARK[fit[option].level] }}</span>
         <span v-if="option === codeDefault" class="tag">default</span>
         <button v-else-if="option && remembered.includes(option)" class="link" title="forget this model" @click.stop="emit('forget', option)">
           ✕
@@ -127,7 +152,10 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', outside))
             <span class="name">{{ f.name.split('/').pop() }}</span>
             <span class="where">{{ f.name.includes('/') ? f.name.slice(0, f.name.lastIndexOf('/')) : parts(f.value).where }}</span>
           </div>
-          <span class="tag">{{ size(f.size) }}</span>
+          <span class="tag">
+            <span v-if="fit[f.value]" class="mark" :class="fit[f.value].level" :title="told(f.value)">{{ MARK[fit[f.value].level] }}</span>
+            {{ size(f.size) }}
+          </span>
         </div>
       </div>
       <p v-if="problem" class="problem">{{ problem }}</p>
@@ -209,7 +237,7 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', outside))
 
 .option {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 1fr auto auto;
   align-items: center;
   gap: var(--space-1);
   padding: 6px 8px;
@@ -262,6 +290,33 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', outside))
   margin: 6px 8px 2px;
   font-size: 11px;
   color: var(--dim);
+}
+
+.fit {
+  margin: 4px 2px 0;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: help;
+}
+
+.mark {
+  font-size: 12px;
+  cursor: help;
+}
+
+.ok {
+  color: var(--done);
+}
+
+.warn,
+.unknown {
+  color: var(--warn);
+}
+
+.bad {
+  color: var(--status-error);
 }
 
 .problem {
