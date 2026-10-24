@@ -46,10 +46,11 @@ _QUANT_PARTS = (".comfy_quant", ".weight_scale", ".weight_s_rel", ".weight_s_cha
 _W4 = "asym_w4a8_int8"
 # 2.3's DiT is 2.5's without the keyframe marker, so the 2.5 default stands in as its base.
 _LORA_BASE = {
-    "ltx-loras": "ltx-model", "ltx23-loras": "ltx-model", "video-loras": "video-model", "editor-21-loras": "editor-21"
+    "ltx-loras": "ltx-model", "ltx23-loras": "ltx-model", "ltx23-msr": "ltx-model", "video-loras": "video-model",
+    "editor-21-loras": "editor-21",
 }  # fmt: skip
 # LTX's loader looks every target up and raises on one it lacks; H3's and Qwen's skip it.
-_LORA_STRICT = {"ltx-loras", "ltx23-loras"}
+_LTX_LORAS = _LORA_STRICT = {"ltx-loras", "ltx23-loras", "ltx23-msr"}
 _LTX_DIT = "model.diffusion_model."
 _KEYFRAMES = _LTX_DIT + "keyframes_abs_pos_embedding"
 _FF_BIAS = re.compile(r"transformer_blocks\.\d+\.ff\.net\.(0\.proj|2)\.bias$")  # 2.3's, which 2.5 dropped
@@ -150,13 +151,12 @@ def _against(role: str, found: hub.Header, reference: hub.Header) -> Fit:
     if role == "ltx-model":
         # A ComfyUI checkpoint carries its VAEs and text projection beside the DiT, and only the DiT is compared.
         v23 = _KEYFRAMES not in found.tensors and any(name.startswith(_LTX_DIT) for name in found.tensors)
-        kept = lambda name: (
-            name.startswith(_LTX_DIT)
-            and not (  # noqa: E731
-                v23 and (name == _KEYFRAMES or _FF_BIAS.search(name))
-            )
-        )
-        notes = ["LTX-2.3: read through Gemma 3, with the 2.3 LoRAs, and no MSR references"] if v23 else []
+
+        def dit_only(name: str) -> bool:
+            return name.startswith(_LTX_DIT) and not (v23 and (name == _KEYFRAMES or bool(_FF_BIAS.search(name))))
+
+        kept = dit_only
+        notes = ["LTX-2.3: read through Gemma 3, with the 2.3 LoRAs and the 2.3 MSR"] if v23 else []
     quant, reference_quant = _quant(found), _quant(reference)
     shapes = {k: v for k, v in _shapes(found, quant).items() if kept(k)}
     wanted = {k: v for k, v in _shapes(reference, reference_quant).items() if kept(k)}
@@ -270,9 +270,12 @@ def _lora(role: str, found: hub.Header) -> Fit:
     modules = _base_modules(role, base)
     matched = {t for t in targets if _lora_key(role, t) in modules}
     notes = [f"made for {who}"] if (who := _trained_on(found)) else []
-    if role == "ltx-loras":
+    if role in _LTX_LORAS:
         slots = any(name.startswith("diffusion_model.reference_slot_embedding.") for name in found.tensors)
-        notes.append("carries MSR slot embeddings: it places references" if slots else "no MSR slot embeddings")
+        if role == "ltx-loras":
+            notes.append("carries MSR slot embeddings: it places references" if slots else "no MSR slot embeddings")
+        elif slots:
+            return Fit(BAD, "LTX-2.5's MSR, with slot embeddings: 2.3 takes Licon's 2.3 MSR", notes)
         targets -= {t for t in targets if "reference_slot_embedding" in t}
     if not matched:
         return Fit(BAD, "matches no layer of this model: a LoRA for another one?", [_some(sorted(targets)), *notes])
@@ -290,7 +293,7 @@ def _lora(role: str, found: hub.Header) -> Fit:
 
 def _base_modules(role: str, base: hub.Header) -> set[str]:
     names = {n.rsplit(".", 1)[0] for n in base.tensors if not n.endswith(_QUANT_PARTS)}
-    if role == "ltx-loras":
+    if role in _LTX_LORAS:
         from difflab.models.ltx25 import weights  # not at the top: it imports diffusers
 
         names = {weights._dit_name(n + ".x").removesuffix(".x") for n in names if n.startswith(weights.DIT_PREFIX)}
@@ -316,6 +319,10 @@ def _lora_key(role: str, module: str) -> str | None:
 
         target = transformer._lora_target(transformer._module_name(module))
         return target[0] if target is not None else None
+    if role in _LTX_LORAS:
+        from difflab.models.ltx25 import weights  # not at the top: it imports diffusers
+
+        return _underscored(weights.lora_name(module))
     return _underscored(module)
 
 

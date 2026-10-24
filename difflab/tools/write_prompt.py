@@ -71,7 +71,7 @@ def write_ltx_prompt(
     """A rough idea, the opening frame and any MSR references -> one finished LTX prompt, in its version's style."""
     settings = settings or VIDEO_VLM
     if version == ltx_config.V23:
-        system = ltx_prompts.VLM_SYSTEM_PROMPT_23
+        system = ltx_prompts.VLM_SYSTEM_PROMPT_23_REFERENCES if references else ltx_prompts.VLM_SYSTEM_PROMPT_23
     else:
         system = ltx_prompts.VLM_SYSTEM_PROMPT_REFERENCES if references else ltx_prompts.VLM_SYSTEM_PROMPT
     written = _vlm(settings).ask(

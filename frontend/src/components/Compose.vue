@@ -31,7 +31,7 @@ const ENGINES = [
 
 const VIDEO_ENGINES = [
   { id: 'minimax-h3', name: 'MiniMax H3', give: 'photos after the first steer it as references', get: 'its own caption format' },
-  { id: 'ltx-2.5', name: 'LTX', give: 'on 2.5, up to 5 photos after the first, as Image 1, Image 2…', get: '2.5 or 2.3 · MSR references on 2.5' },
+  { id: 'ltx-2.5', name: 'LTX', give: 'up to 5 photos after the first on 2.5 (Image 1…), 4 on 2.3 (Figure 1…)', get: '2.5 or 2.3 · MSR references' },
 ] as const
 
 const USES: Record<string, string[]> = {

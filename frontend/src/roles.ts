@@ -14,6 +14,7 @@ export const ROLES: Record<string, string> = {
   'ltx-model': 'LTX model',
   'ltx-loras': 'LTX-2.5 LoRAs',
   'ltx23-loras': 'LTX-2.3 LoRAs',
+  'ltx23-msr': 'LTX-2.3 MSR',
   'ltx-text-encoder': 'LTX-2.5 text encoder',
   'ltx23-text-encoder': 'LTX-2.3 text encoder',
   'ltx-video-vae': 'LTX video VAE',

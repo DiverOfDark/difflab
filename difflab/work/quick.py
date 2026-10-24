@@ -104,12 +104,13 @@ class Job:
                 problems.append("upscale needs finish_megapixels: the size to deliver at")
         elif not self.photos:
             problems.append("no photos: the first one is what the result opens on")
-        elif self.video_engine == "ltx-2.5" and len(self.photos) - 1 > ltx_config.MSR_MAX_REFERENCES:
-            problems.append(
-                f"ltx-2.5 places at most {ltx_config.MSR_MAX_REFERENCES} references after the opening photo"
-            )
-        elif self.video_engine == "ltx-2.5" and len(self.photos) > 1 and self.ltx.version() == ltx_config.V23:
-            problems.append("the LTX model is 2.3, which has no MSR: references need a 2.5 model")
+        elif self.video_engine == "ltx-2.5" and len(self.photos) > 1:
+            v23 = self.ltx.version() == ltx_config.V23
+            most = ltx_config.MSR23_MAX_SUBJECTS if v23 else ltx_config.MSR_MAX_REFERENCES
+            if len(self.photos) - 1 > most:
+                problems.append(
+                    f"LTX-{'2.3' if v23 else '2.5'} places at most {most} references after the opening photo"
+                )
         problems += [f"no such photo: {photo}" for photo in self.photos if not photo.is_file()]
         if self.finish_megapixels is not None and self.finish_megapixels <= 0:
             problems.append(f"finish_megapixels={self.finish_megapixels:g}: leave it unset to deliver as sampled")

@@ -20,11 +20,12 @@ ROLE_ORDER = {"body": 1, "view": 1, "object": 1, "environment": 1, "face": 2}
 
 
 def pictures(take: Take, index: int) -> tuple[str, ...]:
-    """One of the crops `compiler.references` would hold per member, at most five; none on a 2.3 model."""
-    if not take.msr:
-        return ()
+    """One of the crops `compiler.references` would hold per member, at most five; on 2.3 at most four, and no
+    place, since the opening frame is its scene."""
     held = compiler.references(take, index)
     cast = take.chunks[index].cast
+    if take.ltx == ltx.V23:
+        cast = tuple(m for m in cast if take.cards[m].kind != "environment")
     order = sorted(cast, key=lambda m: (SLOT_ORDER[take.cards[m].kind], take.members.index(m)))
     chosen: list[str] = []
     for member in order:
@@ -32,7 +33,7 @@ def pictures(take: Take, index: int) -> tuple[str, ...]:
         own.sort(key=lambda key: (not take.refs[key].look, ROLE_ORDER[take.refs[key].role], -take.refs[key].quality))
         if own:
             chosen.append(own[0])
-    return tuple(chosen[: ltx.MSR_MAX_REFERENCES])
+    return tuple(chosen[: ltx.MSR23_MAX_SUBJECTS if take.ltx == ltx.V23 else ltx.MSR_MAX_REFERENCES])
 
 
 def _plain(text: str, bible: dict[str, Card]) -> str:
@@ -52,8 +53,9 @@ def compile_chunk(take: Take, index: int) -> Compiled:
     take = dataclasses.replace(take, cards=compiler.cards_at(take, index))
     chunk = take.chunks[index]
     keys = pictures(take, index)
-    image = {take.refs[key].member: f"Image {n + 1}" for n, key in reversed(list(enumerate(keys)))}
-    lines = [f"Image {n + 1}: {_described(take.cards[take.refs[key].member], bible)}" for n, key in enumerate(keys)]
+    word = "Figure" if take.ltx == ltx.V23 else "Image"
+    image = {take.refs[key].member: f"{word} {n + 1}" for n, key in reversed(list(enumerate(keys)))}
+    lines = [f"{word} {n + 1}: {_described(take.cards[take.refs[key].member], bible)}" for n, key in enumerate(keys)]
     seen: set[str] = set()
 
     def named(text: str, introduce: bool = True) -> str:

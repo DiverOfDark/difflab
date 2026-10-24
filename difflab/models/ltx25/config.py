@@ -38,6 +38,10 @@ PROMPT_TOKENS = 1024
 # latent frames, and the slots sit at pixel frames -N..-1 in reference order.
 MSR_FRAMES = 33
 MSR_MAX_REFERENCES = 5
+# Licon MSR for 2.3 has no slot embeddings: its references are one pseudo-video, up to four subjects then a
+# background, guiding from frame 0 (ComfyUI-Licon-MSR and Lightricks' LTXAddVideoICLoRAGuide at 593b0b7).
+MSR23_MAX_SUBJECTS = 4
+MSR23_FRAME_COUNTS = (17, 25, 33, 41, 49, 57, 65)
 
 # What sampling keeps free beside the DiT blocks it holds resident. Measured 2026-10-24: a 4.60 GB peak over
 # the held weights at 13,260 rows (960x544, 121 frames, two references), with 32 of 48 blocks resident.

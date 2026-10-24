@@ -13,7 +13,7 @@ from difflab.models.ltx25 import config
 # Every file below matches Lightricks/LTX-2.5@49b093a by sha256, with no licence click to fetch it.
 PACK = "deAPI-ai/ltx2-5-22b-dist-int8@a4d65f15437f75c2ccbba4ff42932d0386fcdfe2"
 # Fields a 2.5 model never reads: left at their defaults they stay out of the key, so a 2.5 clip keeps its key.
-_V23_ONLY = ("text_encoder_23", "loras_23", "sigmas")
+_V23_ONLY = ("text_encoder_23", "loras_23", "msr_23", "sigmas")
 
 
 @dataclass(frozen=True)
@@ -60,6 +60,15 @@ class LtxSettings(Settings):
         role="ltx23-loras",
         multiple=True,
     )
+    # Applied with references only: its pseudo-video is what places them.
+    msr_23: str = setting(
+        "LiconStudio/LTX-2.3-Multiple-Subject-Reference@593b0b7d2b912e8ecdb2825a34732cee36e720ba"
+        ":LTX-2.3-Licon-MSR-V2.safetensors",
+        "2.3 MSR",
+        "the LoRA that places up to four references on an LTX-2.3 model: repo@commit:path",
+        advanced=True,
+        role="ltx23-msr",
+    )
     sigmas: str = setting(
         "",
         "schedule",
@@ -98,9 +107,10 @@ class LtxSettings(Settings):
     )
 
     def stack(self, references: bool) -> list[tuple[str, float]]:
-        """What sampling stacks on the DiT: 2.5's only for references, whose slot embeddings place them."""
+        """What sampling stacks on the DiT: 2.5's only for references, whose slot embeddings place them; 2.3's
+        always, and its MSR for references."""
         if self.version() == config.V23:
-            return lora_stack(self.loras_23)
+            return lora_stack(self.loras_23) + ([(self.msr_23, 1.0)] if references and self.msr_23 else [])
         return lora_stack(self.loras) if references else []
 
     def version(self) -> str:

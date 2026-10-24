@@ -190,7 +190,7 @@ class Take:
     voices: dict[str, str] = dataclasses.field(default_factory=dict)  # member -> how it sounds, from the bible
     look: str = ""  # the style members' words: the grade and lens every shot keeps
     engine: str = ""  # the video model the production renders on; "" is MiniMax H3
-    msr: bool = True  # on LTX, whether the model places references: 2.3 has no MSR
+    ltx: str = "2.5"  # on LTX, the model's version: 2.3's MSR takes four subjects and the opening as the scene
 
 
 @dataclass(frozen=True)
@@ -1027,7 +1027,7 @@ def take_of(connection: sqlite3.Connection, production: store.Production, chapte
         voices={member.slug: said for member in members if (said := voice_of(member))},
         look=look_of(connection, production.id),
         engine=engine,
-        msr=engine != ltx_config.ENGINE or _ltx_version(production.id) == ltx_config.V25,
+        ltx=_ltx_version(production.id) if engine == ltx_config.ENGINE else ltx_config.V25,
     )
 
 

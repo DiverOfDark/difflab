@@ -740,6 +740,27 @@ async def forget_model(request: Request) -> dict[str, list[str]]:
     return settings.models()
 
 
+@app.get("/api/downloads")
+async def list_downloads() -> list[dict[str, Any]]:
+    """Every model on this disk, biggest first, each file with the settings that name it."""
+    return await asyncio.to_thread(downloads.listing)
+
+
+@app.delete("/api/downloads")
+async def delete_download(request: Request) -> list[dict[str, Any]]:
+    """`{"id": ..., "files": [...]}`: the entry, or only those files of a Hub snapshot. Refused for a file in
+    use while a job runs, since that job may be about to load it."""
+    body = await request.json()
+    entry, names = str(body.get("id", "")), [str(n) for n in body.get("files") or []]
+    try:
+        if runs.gpu()["tool"] and await asyncio.to_thread(downloads.in_use, entry, names):
+            raise HTTPException(409, "a job is running and a setting names this; delete it once the queue is idle")
+        await asyncio.to_thread(downloads.delete, entry, names)
+    except KeyError as problem:
+        raise HTTPException(404, f"nothing downloaded as {problem}") from problem
+    return await asyncio.to_thread(downloads.listing)
+
+
 @app.get("/api/accounts")
 def list_accounts() -> dict[str, dict[str, str]]:
     return settings.accounts()

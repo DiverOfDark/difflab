@@ -194,6 +194,12 @@ def _dit_name(key: str) -> str:
     return key
 
 
+def lora_name(key: str) -> str:
+    """A LoRA's module as the DiT names it: LTX-2.3's DMD LoRAs name `patchify_proj` and the AdaLN tables as
+    ComfyUI does, the blocks as both do."""
+    return _dit_name("model." + key if key.startswith("diffusion_model.") else key)
+
+
 def load_dit(path: Path, loras: Sequence[tuple[Path, float]], version: str) -> LTX2VideoTransformer3DModel:
     """On the CPU; the caller decides what streams. 2.3 is 2.5 with feed-forward biases and no keyframe marker."""
     v25 = version == config.V25
@@ -203,7 +209,7 @@ def load_dit(path: Path, loras: Sequence[tuple[Path, float]], version: str) -> L
         )
     place(model, read(path, lambda k: k.startswith(DIT_PREFIX) and "_embeddings_connector." not in k), _dit_name)
     for lora_path, strength in loras:
-        adapter = lora.read(lora_path, lambda k: k.removeprefix("diffusion_model."))
+        adapter = lora.read(lora_path, lora_name)
         if not adapter.pairs:
             raise ValueError(f"{lora_path.name} holds no LoRA pairs")
         for module, (a, b) in adapter.pairs.items():

@@ -98,19 +98,27 @@ def condition(
     slots: weights.SlotEmbedding | None,
     closing: Frame | None = None,
     version: str = config.V25,
-) -> tuple[torch.Tensor | None, list[torch.Tensor], torch.Tensor | None]:
-    """The opening frame's latent, each reference's with its slot identity added, and the landing's."""
+) -> tuple[torch.Tensor | None, list[tuple[torch.Tensor, float]], torch.Tensor | None]:
+    """The opening frame's latent, the references' with where each starts, and the landing's. 2.5's are one
+    still apiece, a frame apart before the clip, each with its slot identity added; 2.3's are Licon's one
+    pseudo-video from frame 0, its background the opening frame."""
     vae = models.registry.acquire(video_vae_spec(settings))
     crf = config.IMAGE_CRF[version]
     with ui.step("Encoding frames and references") as detail:
         opening = pipeline.encode_opening(vae, frame, geometry, crf) if frame is not None else None
-        guides = [
-            pipeline.encode_reference(vae, reference, geometry, slots, slot)
-            for slot, reference in enumerate(references, start=1)
-            if slots is not None
-        ]
+        guides: list[tuple[torch.Tensor, float]] = []
+        if references and version == config.V23:
+            guides = [(pipeline.encode_msr23(vae, references, frame, geometry), 0.0)]
+        elif slots is not None:
+            guides = [
+                (
+                    pipeline.encode_reference(vae, reference, geometry, slots, slot),
+                    -(len(references) - slot + 1) / config.FPS,
+                )
+                for slot, reference in enumerate(references, start=1)
+            ]
         landing = pipeline.encode_opening(vae, closing, geometry, crf) if closing is not None else None
-        detail(f"{(opening is not None) + len(guides) + (landing is not None)} encoded")
+        detail(f"{(opening is not None) + len(references) + (landing is not None)} encoded")
     return opening, guides, landing
 
 
@@ -133,7 +141,7 @@ def sample(
     settings: LtxSettings,
     loras: Sequence[tuple[str, float]],
     opening: torch.Tensor | None,
-    guides: Sequence[torch.Tensor],
+    guides: Sequence[tuple[torch.Tensor, float]],
     landing: torch.Tensor | None = None,
     version: str = config.V25,
 ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -141,7 +149,7 @@ def sample(
     dit = models.registry.acquire(_dit_spec(settings, loras, version))
     sigmas = settings.schedule()
     blocks = dit.transformer_blocks
-    rows = geometry.latent_frames * geometry.tokens_per_frame + sum(guide[0, 0].numel() for guide in guides)
+    rows = geometry.latent_frames * geometry.tokens_per_frame + sum(guide[0, 0].numel() for guide, _ in guides)
     settled = offload.fit(blocks, config.SAMPLE_RESERVE + rows * config.SAMPLE_RESERVE_PER_ROW)
     ui.line(f"{settled}/{len(blocks)} DiT blocks resident for {rows} rows")
     previewer = previews.for_ltx(settings)
@@ -183,16 +191,16 @@ def latents(
     size: tuple[int, int] | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Sampled video and audio latents. The clip opens on `frame`, ends on `closing`, and `references` are MSR's
-    Image 1, Image 2... in order; `size` is the canvas when it is not the frame's at `settings.megapixels`."""
+    Image 1, Image 2... (Figure 1... on 2.3) in order; `size` is the canvas when it is not the frame's at
+    `settings.megapixels`."""
     settings = settings or LtxSettings()
-    if len(references) > config.MSR_MAX_REFERENCES:
-        raise ValueError(f"MSR places at most {config.MSR_MAX_REFERENCES} references, got {len(references)}")
     version = settings.version()
-    if references and version == config.V23:
-        raise ValueError("references are placed by MSR, which is LTX-2.5's: pick a 2.5 model, or drop them")
+    most = config.MSR23_MAX_SUBJECTS if version == config.V23 else config.MSR_MAX_REFERENCES
+    if len(references) > most:
+        raise ValueError(f"MSR on LTX-{version} places at most {most} references, got {len(references)}")
     loras = settings.stack(bool(references))
     slots = None
-    if references:
+    if references and version == config.V25:
         slots = next(
             (found for ref, _ in loras if (found := weights.read_slots(parse_file(ref).fetch())) is not None), None
         )

@@ -130,14 +130,7 @@ def _msr_canvas(frame: Frame, width: int, height: int) -> Frame:
         frame.width <= width and frame.height <= height
     ):
         return frame.crop_to_aspect(width / height).resized(width, height)
-    scale = min(width / frame.width, height / frame.height)
-    fitted = frame.resized(
-        max(1, min(width, round(frame.width * scale))), max(1, min(height, round(frame.height * scale)))
-    )
-    canvas = torch.ones(height, width, 3)
-    top, left = (height - fitted.height) // 2, (width - fitted.width) // 2
-    canvas[top : top + fitted.height, left : left + fitted.width] = fitted.pixels
-    return Frame(canvas)
+    return Frame(_msr_on_white(frame, width, height))
 
 
 def encode_reference(
@@ -148,6 +141,85 @@ def encode_reference(
     still = (fitted.pixels.permute(2, 0, 1) * 2 - 1)[None, :, None]
     latents = _encode(vae, still.expand(-1, -1, config.MSR_FRAMES, -1, -1))
     return latents + slots(slot).view(1, -1, 1, 1, 1).to(latents)
+
+
+def msr23_video(subjects: Sequence[Frame], background: Frame | None, geometry: Geometry) -> torch.Tensor:
+    """Licon's pseudo-video: each subject whole on white for whole latent frames, the background covering
+    the rest, as `[1, 3, F, H, W]` in [-1, 1]. Its length is the longest Licon trained that the clip holds."""
+    width, height = geometry.width, geometry.height
+    frames = max(
+        (n for n in config.MSR23_FRAME_COUNTS if n <= geometry.frame_count), default=config.MSR23_FRAME_COUNTS[0]
+    )
+    scene = _covered(background, width, height) if background is not None else torch.ones(height, width, 3)
+    sequence = [scene] * frames
+    latent_frames = (frames - 1) // config.FRAME_CYCLE + 1
+    budget = latent_frames - 1
+    shown = [_msr_on_white(subject, width, height) for subject in subjects]
+    if shown and budget >= len(shown):
+        cursor = 0
+        for image, count in zip(shown, _latent_counts(len(shown), budget), strict=True):
+            start, end = _latent_frames(cursor, cursor + count - 1)
+            cursor += count
+            for index in range(start, min(frames - 1, end) + 1):
+                sequence[index] = image
+    elif shown:
+        span = _latent_frames(0, max(0, latent_frames - 2))[1] + 1
+        for n, image in enumerate(shown):
+            start = n * span // len(shown)
+            end = span - 1 if n == len(shown) - 1 else (n + 1) * span // len(shown) - 1
+            for index in range(start, min(frames - 1, max(start, end)) + 1):
+                sequence[index] = image
+    return (torch.stack(sequence).permute(3, 0, 1, 2) * 2 - 1)[None]
+
+
+def _latent_frames(first: int, last: int) -> tuple[int, int]:
+    """The pixel frames latent frames `first..last` stand for: the first latent is one pixel frame."""
+    return (0 if first <= 0 else 1 + (first - 1) * config.FRAME_CYCLE), (0 if last <= 0 else last * config.FRAME_CYCLE)
+
+
+def _latent_counts(subjects: int, budget: int) -> list[int]:
+    """Licon's split of the latent frames: the first subject two, then each two, the first up to three, then round."""
+    counts = [1] * subjects
+    extra = budget - subjects
+    if extra > 0:
+        counts[0] += 1
+        extra -= 1
+    index = 1
+    while extra > 0 and subjects > 1 and any(count < 2 for count in counts[1:]):
+        if counts[index] < 2:
+            counts[index] += 1
+            extra -= 1
+        index = index + 1 if index + 1 < subjects else 1
+    if extra > 0 and counts[0] < 3:
+        counts[0] += 1
+        extra -= 1
+    index = 0
+    while extra > 0:
+        counts[index] += 1
+        extra -= 1
+        index = (index + 1) % subjects
+    return counts
+
+
+def _msr_on_white(frame: Frame, width: int, height: int) -> torch.Tensor:
+    scale = min(width / frame.width, height / frame.height)
+    fitted = frame.resized(
+        max(1, min(width, round(frame.width * scale))), max(1, min(height, round(frame.height * scale)))
+    )
+    canvas = torch.ones(height, width, 3)
+    top, left = (height - fitted.height) // 2, (width - fitted.width) // 2
+    canvas[top : top + fitted.height, left : left + fitted.width] = fitted.pixels
+    return canvas
+
+
+def _covered(frame: Frame, width: int, height: int) -> torch.Tensor:
+    return frame.crop_to_aspect(width / height).resized(width, height).pixels
+
+
+def encode_msr23(
+    vae: AutoencoderKLLTX2Video, subjects: Sequence[Frame], background: Frame | None, geometry: Geometry
+) -> torch.Tensor:
+    return _encode(vae, msr23_video(subjects, background, geometry))
 
 
 def _pack(latents: torch.Tensor) -> torch.Tensor:
@@ -162,13 +234,14 @@ def sample(
     seed: int,
     sigmas: Sequence[float],
     opening: torch.Tensor | None = None,
-    references: Sequence[torch.Tensor] = (),
+    references: Sequence[tuple[torch.Tensor, float]] = (),
     reference_strength: float = 1.0,
     on_step: Callable[[int, torch.Tensor, torch.Tensor], None] | None = None,
     landing: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Video latents `[1, 128, F, h, w]` and packed audio latents `[1, L, 128]`, both normalized. `on_step` is
-    handed each step's estimate of the finished clip, in the same shapes."""
+    """Video latents `[1, 128, F, h, w]` and packed audio latents `[1, L, 128]`, both normalized. Each reference
+    is a latent and the second its first frame sits at; `on_step` is handed each step's estimate of the
+    finished clip, in the same shapes."""
     device = conditioning.video.device
     generator = torch.Generator(device).manual_seed(seed)
     frames, height, width = geometry.latent_frames, geometry.latent_height, geometry.latent_width
@@ -185,14 +258,14 @@ def sample(
         video[:, : packed.shape[1]] = packed
         clean[:, : packed.shape[1]] = packed
         strength[:, : packed.shape[1]] = 1.0
-    for index, reference in enumerate(references):
+    for reference, start in references:
         packed = _pack(reference.to(device))
         video = torch.cat([video, packed], dim=1)
         clean = torch.cat([clean, packed], dim=1)
         strength = torch.cat([strength, strength.new_full((1, packed.shape[1], 1), reference_strength)], dim=1)
         keyframes = torch.cat([keyframes, keyframes.new_zeros((1, packed.shape[1], 1))], dim=1)
         placed = dit.rope.prepare_video_coords(1, reference.shape[2], height, width, device, fps=config.FPS)
-        placed[:, 0] += -(len(references) - index) / config.FPS
+        placed[:, 0] += start
         coords.append(placed)
     if landing is not None:
         # A keyframe the clip ends on, as diffusers appends one: one pixel frame wide, at the last frame, clean.

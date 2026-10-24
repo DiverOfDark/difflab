@@ -40,7 +40,8 @@ const ROLE_NOTES: Record<string, string> = {
   'ltx-loras': 'stacked on LTX-2.5 when a take has references; the first carrying slot embeddings (MSR) places them',
   'ltx-text-encoder': 'reads the prompt for LTX-2.5: its own Gemma 4 with the projections',
   'ltx23-text-encoder': 'reads the prompt for LTX-2.3: Gemma 3 12B; the projections come with the model',
-  'ltx23-loras': 'stacked on an LTX-2.3 model for every clip: a DMD LoRA, a style; 2.3 places no references',
+  'ltx23-loras': 'stacked on an LTX-2.3 model for every clip: a DMD LoRA, a style',
+  'ltx23-msr': 'places up to four references on LTX-2.3, the opening frame as their scene; added only when a take has references',
   'ltx-video-vae': 'takes frames into and out of LTX, unless the model file carries its own',
   'ltx-audio-vae': 'turns LTX latents into sound, with its vocoder, unless the model file carries its own',
   'pixel-upscaler': 'enlarges finished frames',
@@ -367,7 +368,7 @@ const describe = (f: SettingField) =>
           <section class="card">
             <div class="head"><h5>Settings</h5><span v-if="!advanced && current.hidden" class="note">{{ current.hidden }} more under Advanced</span></div>
             <p v-if="!current.blocks.length" class="empty note">nothing to tune here{{ advanced || !current.hidden ? '' : ' without Advanced' }}</p>
-            <div v-for="b in current.blocks" :key="b.columns[0].tool.name" class="tool" :style="{ '--columns': b.columns.length }">
+            <div v-for="b in current.blocks" :key="b.columns[0].tool.name" class="tool" :class="{ matrix: b.columns.length > 1 }" :style="{ '--columns': b.columns.length }">
               <div class="grid tool-head">
                 <span v-if="b.columns.length === 1" class="title">{{ b.columns[0].title }} <span class="note">{{ b.columns[0].tool.hint }}</span></span>
                 <template v-else>
@@ -440,6 +441,8 @@ const describe = (f: SettingField) =>
   grid-template-columns: 220px minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
   gap: var(--space-3);
+  flex: none;
+  max-width: 1440px;
   height: calc(100vh - 56px);
   overflow: hidden;
 }
@@ -588,9 +591,13 @@ const describe = (f: SettingField) =>
 
 .grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) repeat(var(--columns), 120px);
+  grid-template-columns: minmax(0, 1fr) repeat(var(--columns), 140px);
   gap: var(--space-2);
   align-items: center;
+}
+
+.matrix .grid {
+  grid-template-columns: minmax(0, 1fr) repeat(var(--columns), 104px);
 }
 
 .tool-head {
@@ -680,7 +687,8 @@ const describe = (f: SettingField) =>
   -webkit-line-clamp: 1;
 }
 
-.row.model .hint {
+.row.model .hint,
+.matrix .hint {
   -webkit-line-clamp: 2;
 }
 
