@@ -153,6 +153,9 @@ def _against(role: str, found: hub.Header, reference: hub.Header) -> Fit:
         summary = "made for another field" if guess else "another architecture: its tensors don't match"
         if not missing and not extra and len(resized) <= 2:
             summary = "same layout, different size"
+        mine = found.metadata.get("model_version")
+        if mine and mine != reference.metadata.get("model_version", mine):
+            summary = f"version {mine}: this field runs {reference.metadata['model_version']}"
         return Fit(BAD, summary, problems + notes, like=guess or "")
     refused = sorted(layer for layer, meta in quant.items() if not _runs(role, meta))
     if refused:

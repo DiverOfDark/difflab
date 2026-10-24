@@ -176,6 +176,7 @@ def latents(
     settings = settings or LtxSettings()
     if len(references) > config.MSR_MAX_REFERENCES:
         raise ValueError(f"MSR places at most {config.MSR_MAX_REFERENCES} references, got {len(references)}")
+    weights.require_version(parse_file(settings.checkpoint).fetch())
     loras = settings.stack() if references else []
     slots = None
     if references:

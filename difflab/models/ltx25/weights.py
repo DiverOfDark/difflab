@@ -179,6 +179,14 @@ def _dit_name(key: str) -> str:
     return key
 
 
+def require_version(path: Path) -> None:
+    """An LTX-2.3 file loads nearly whole here and fails deep in, and its prompts come from Gemma 3, not 4."""
+    with safe_open(str(path), framework="pt", device="cpu") as f:
+        version = (f.metadata() or {}).get("model_version", "")
+    if version and not version.startswith("2.5"):
+        raise ValueError(f"{path.name} is LTX-{version}; this pipeline runs LTX-2.5 models only")
+
+
 def load_dit(path: Path, loras: Sequence[tuple[Path, float]]) -> LTX2VideoTransformer3DModel:
     """On the CPU; the caller decides what streams."""
     with init_empty_weights():
