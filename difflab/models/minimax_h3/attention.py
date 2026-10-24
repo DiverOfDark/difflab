@@ -54,7 +54,7 @@ class Int8AttnProcessor:
         # rest start there rather than provoking the same failure again. A rescue path, not a knob.
         self.head_chunks = 1
 
-    def _attend(self, query: torch.Tensor, key: torch.Tensor, value: torch.Tensor) -> torch.Tensor:
+    def attend(self, query: torch.Tensor, key: torch.Tensor, value: torch.Tensor) -> torch.Tensor:
         heads = query.shape[2]
         while True:
             try:
@@ -97,7 +97,7 @@ class Int8AttnProcessor:
             query = _apply_rotary_emb(query, *rotary_emb)
             key = _apply_rotary_emb(key, *rotary_emb)
 
-        hidden_states = self._attend(query, key, value).flatten(2, 3).type_as(query)
+        hidden_states = self.attend(query, key, value).flatten(2, 3).type_as(query)
         out: torch.Tensor = attn.to_out[1](attn.to_out[0](hidden_states))
         return out
 
