@@ -20,7 +20,7 @@ from difflab import config, store
 from difflab.core import audio as audio_
 from difflab.core import context, events, media, models, protocol, record, ui, video_io
 from difflab.core.cache import cache
-from difflab.core.hub import HubFile
+from difflab.core.hub import HubFile, parse_file
 from difflab.core.imaging import megapixel_size, video_length
 from difflab.core.keys import Key, key
 from difflab.core.settings import (
@@ -165,7 +165,7 @@ def run_write_ltx_prompt(inputs: dict[str, Any], settings: dict[str, Any]) -> di
 def run_render_ltx(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
     chosen = LtxSettings(**settings)
     clip = render_ltx.render(_opening(inputs), str(inputs["prompt"]), chosen, references=_references(inputs))
-    path = media.save(clip, HubFile.parse(chosen.checkpoint).path.stem, chosen.seed, announce=False)
+    path = media.save(clip, parse_file(chosen.checkpoint).path.stem, chosen.seed, announce=False)
     return {"video": store.relative(path)}
 
 
