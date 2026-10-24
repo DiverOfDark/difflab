@@ -49,6 +49,17 @@ def load_audio(path: str | Path, rate: int = SAMPLE_RATE) -> torch.Tensor | None
     return waveform[:CHANNELS].clamp(-1.0, 1.0)
 
 
+def resampled(waveform: torch.Tensor, rate: int, to: int = SAMPLE_RATE) -> torch.Tensor:
+    """`[2, samples]` at `rate` -> the same sound at `to`, through the resampler `load_audio` reads files with."""
+    if rate == to:
+        return waveform
+    frame = av.AudioFrame.from_ndarray(waveform.float().contiguous().numpy(), format="fltp", layout="stereo")
+    frame.sample_rate = rate
+    resampler = av.audio.resampler.AudioResampler(format="fltp", layout="stereo", rate=to)
+    chunks = [out.to_ndarray() for out in (*resampler.resample(frame), *resampler.resample(None))]
+    return torch.from_numpy(np.concatenate(chunks, axis=1)).float()
+
+
 def trim_to_frames(waveform: torch.Tensor, frames: int, fps: int, rate: int = SAMPLE_RATE) -> torch.Tensor:
     """A reference clip's frame count is trimmed to the grid the VAE encodes in, so its soundtrack has
     to follow, or the two would describe different spans of the same moment."""

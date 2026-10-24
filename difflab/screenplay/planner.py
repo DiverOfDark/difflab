@@ -17,6 +17,7 @@ from typing import Any
 
 from difflab import store
 from difflab.core.settings import Continuity, JudgeSettings
+from difflab.models.ltx25 import config as ltx_config
 from difflab.models.minimax_h3.settings import VideoSettings
 from difflab.screenplay import assembling, compiler, looks, settings, words
 from difflab.screenplay import config as knobs
@@ -36,7 +37,9 @@ def check(
     if not shots:
         problems.append("the chapter has no shots")
     _, lands = compiler.joins([store.keyframe_of(connection, shot.id) for shot in shots], shots, True)
-    for shot, landing in [] if keyframes_only else zip(shots, lands, strict=True):
+    # An LTX prompt names its landing in its own words; the H3 caption's sentence is what is checked here.
+    captioned = not keyframes_only and not (production is not None and _ltx(production))
+    for shot, landing in zip(shots, lands, strict=True) if captioned else []:
         text = store.prompt_of(connection, shot.id).text
         if text.strip() and landing != (_LAST_FRAME in text):
             problems.append(
@@ -165,6 +168,9 @@ def _queue_chapter(connection: Any, chapter_id: int, asked_by: str, keyframes_on
     take = compiler.take_of(connection, production, chapter)
     for shot, landing in zip(shots, lands, strict=True):
         prompt = store.prompt_of(connection, shot.id)
+        if _ltx(production) and shot.plan.get("beats") and not prompt.pinned:
+            productions.recompile(connection, production, chapter, shot.id)
+            continue
         scene = compiler.scened(take, shot.position)
         moved = landing != (_LAST_FRAME in prompt.text) or scene != (_SCENE in prompt.text)
         # A tail shown as a reference is <Audio 1>; one carried in latents is named nowhere.
@@ -184,7 +190,8 @@ def _queue_chapter(connection: Any, chapter_id: int, asked_by: str, keyframes_on
     assert isinstance(continuity_chosen, Continuity)
     continuity = continuity_chosen
     continuity_data = continuity.data()
-    carries = continuity.tail_frames > 0
+    carries = continuity.tail_frames > 0 and not _ltx(production)
+    engine = {"engine": ltx_config.ENGINE, "ltx": settings.effective("render_ltx", production.id)[0].data()}
 
     run_id = store.next_run_id(connection, datetime.now().strftime("%Y-%m-%d-%H%M%S"))
     chapters = store.chapters_of(connection, production.id)
@@ -318,7 +325,7 @@ def _queue_chapter(connection: Any, chapter_id: int, asked_by: str, keyframes_on
             "count": len(shots),
             # The opening still rides ahead of the crops, where the compiler numbered it.
             "references": [
-                *([openings[0]] if _SCENE in prompt.text and openings[0] is not None else []),
+                *([openings[0]] if _SCENE in prompt.text and openings[0] is not None and not _ltx(production) else []),
                 *prompt.pictures,
             ],
             "source": shot.plan.get("source"),
@@ -329,7 +336,7 @@ def _queue_chapter(connection: Any, chapter_id: int, asked_by: str, keyframes_on
             "render_shot",
             inputs,
             label=f"shot {shot.position + 1}: {shot.action or prompt.text[:48]}",
-            settings={"video": video, "continuity": continuity_data},
+            settings={"video": video, "continuity": continuity_data, **(engine if _ltx(production) else {})},
             for_kind="clip",
             for_id=clip.id,
         )
@@ -369,6 +376,10 @@ def _queue_chapter(connection: Any, chapter_id: int, asked_by: str, keyframes_on
     said = [assembling.lines(shot) for shot in shots]
     assembling.add_master(connection, run_id, production, chapter, _output(joined.id, "video"), parts, said, False)
     return run_id
+
+
+def _ltx(production: store.Production) -> bool:
+    return production.manifest.get("engine") == ltx_config.ENGINE
 
 
 def base(

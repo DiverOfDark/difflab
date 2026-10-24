@@ -17,6 +17,7 @@ import torch
 from PIL import Image
 
 from difflab import config, store
+from difflab.core import audio as audio_
 from difflab.core import context, events, media, models, protocol, record, ui, video_io
 from difflab.core.cache import cache
 from difflab.core.hub import HubFile
@@ -34,6 +35,8 @@ from difflab.core.settings import (
     VlmSettings,
 )
 from difflab.core.types import Clip, Frame
+from difflab.models.ltx25 import config as ltx_config
+from difflab.models.ltx25 import pipeline as ltx_pipeline
 from difflab.models.ltx25.settings import LtxSettings
 from difflab.models.minimax_h3 import config as h3_config
 from difflab.models.minimax_h3 import pipeline, vae
@@ -189,6 +192,8 @@ def run_render_shot(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
     """One shot of a chain: its chunk, then what the next shot opens on. Both are keyed by everything
     they were made of, so a shot already on disk is skipped and a re-rolled one moves its own key and
     the key of every shot chained after it."""
+    if settings.get("engine") == ltx_config.ENGINE:
+        return _render_shot_ltx(inputs, settings)
     continuity, _ = Continuity.resolve(settings["continuity"])
     carry = _carry(inputs.get("carry"), continuity.tail_frames, float(inputs.get("carry_late") or 0.0))
     # The carried steps are redrawn under the shot before's last frames and cut away at the join, so the
@@ -285,6 +290,98 @@ def run_render_shot(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
     return {**outputs, "cut": made.cut}
 
 
+def _render_shot_ltx(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
+    """`run_render_shot` on LTX-2.5: no tail or latents cross the join, the shot before's frame alone opens it."""
+    continuity, _ = Continuity.resolve(settings["continuity"])
+    chosen = LtxSettings(**settings["ltx"]).with_(seed=int(inputs["seed"]), duration=float(inputs["seconds"]))
+    prompt = str(inputs["prompt"])
+    opening = _frame(inputs["opening"]) if inputs.get("opening") else None
+    closing = _frame(inputs["closing"]) if inputs.get("closing") else None
+    references = [_frame(p) for p in inputs.get("references", [])]
+    size = (int(inputs["canvas"][0]), int(inputs["canvas"][1])) if inputs.get("canvas") else None
+    if size is None and opening is not None:
+        size = (opening.width, opening.height)
+    strength = continuity.color_anchor
+    anchor = _frame(inputs["anchor"]) if inputs.get("anchor") and strength else None
+    position = int(inputs.get("position", 0))
+    chunk = key(
+        "render_ltx_shot", 1, prompt=prompt, settings=chosen, size=list(size) if size else None,
+        opening=opening.pixels if opening is not None else None,
+        closing=closing.pixels if closing is not None else None,
+        references=[frame.pixels for frame in references],
+    )  # fmt: skip
+    window = 1 if closing is not None else continuity.handoff_window
+    hold = continuity.color_hold if opening is not None else 0.0
+    at = handoff.handoff_key(chunk, window, 0, anchor, strength, hold, 0)
+    finished = key("held", 1, chunk=str(chunk), hold=hold) if hold else chunk
+    latents_file, mp4, soundtrack = (
+        cache.path(chunk, ".pt"),
+        cache.path(finished, ".mp4"),
+        cache.path(chunk, ".audio.pt"),
+    )
+    frame_file, _, _ = handoff.files(at)
+    outputs: dict[str, Any] = {
+        "key": str(chunk),
+        "prompt": prompt,
+        "latents": store.relative(latents_file),
+        "chunk": store.relative(mp4),
+        "audio": store.relative(soundtrack),
+        "frame": store.relative(frame_file),
+        "tail": None,
+        "audio_late": 0.0,
+    }
+    events.emit(
+        protocol.ItemInfo(
+            index=position,
+            version=1,
+            prompt=prompt,
+            seed=chosen.seed,
+            opening=_thumbnail(opening, f"thumbs/shot{position + 1}_opening.jpg") if opening is not None else "",
+            references=[_thumbnail(ref, f"thumbs/shot{position + 1}_ref{n}.jpg") for n, ref in enumerate(references)],
+        )
+    )
+    shown = protocol.ItemVideo(index=position, version=1, video=f"/output/{outputs['chunk']}", seed=chosen.seed)
+    if latents_file.is_file() and mp4.is_file() and soundtrack.is_file() and handoff.present(at):
+        ui.note(f"shot {position + 1}: already made as {chunk}")
+        events.emit(shown)
+        return Skipped({**outputs, "cut": handoff.cut_of(at)})
+
+    started = time.perf_counter()
+    events.emit(protocol.ItemBegin(index=position))
+    previews.target(position, f"shot{position + 1}")
+    try:
+        if latents_file.is_file():
+            sampled = torch.load(latents_file, map_location="cpu", weights_only=True)
+            video_latents, audio_latents = sampled["video"], sampled["audio"]
+        else:
+            video_latents, audio_latents = render_ltx.latents(opening, prompt, chosen, references, closing, size)
+            torch.save({"video": video_latents.cpu(), "audio": audio_latents.cpu()}, latents_file)
+    finally:
+        previews.target(None, "clip")
+    clip = render_ltx.decode(video_latents, audio_latents, chosen, prompt)
+    # The rest of a production joins, masters and finishes H3's 32 kHz.
+    assert clip.audio is not None
+    clip = dataclasses.replace(
+        clip, audio=audio_.resampled(clip.audio, clip.sample_rate), sample_rate=audio_.SAMPLE_RATE
+    )
+    if hold and opening is not None:
+        with ui.step("Holding colour"):
+            clip = media.hold_colour(clip, opening, hold)
+    with ui.step("Handoff") as detail:
+        made = handoff.handoff(clip, window, 0, anchor, strength, 0)
+        handoff.save(made, at)
+        detail(f"frame {made.cut + 1} of {len(clip)}")
+    if not (mp4.is_file() and soundtrack.is_file()):
+        with ui.step("Writing chunk") as detail:
+            _write_chunk(clip, mp4, soundtrack)
+            detail(f"{len(clip)} frames · {clip.duration:.2f}s")
+    record.artifact_made(mp4, store.VIDEO, chosen.seed, key=str(chunk))
+    record.artifact_made(frame_file, store.IMAGE, key=str(at))
+    events.emit(shown)
+    events.emit(protocol.ItemEnd(index=position, seconds=round(time.perf_counter() - started, 1), activity="done"))
+    return {**outputs, "cut": made.cut}
+
+
 def _carry(latents: Any, frames: int, late: float) -> pipeline.Carry | None:
     """The shot before's last `frames` and second of sound, from its cached latents; `late` is how far
     behind them its soundtrack runs."""
@@ -350,7 +447,11 @@ def run_enlarge_shot(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[s
         return Skipped(outputs)
     sampled = torch.load(_path(inputs["latents"]), map_location="cpu", weights_only=True)["video"]
     with ui.step("Decoding the shot") as detail:
-        frames = vae.decode_video(models.registry.acquire(render_chunk.video_vae_spec(video)), sampled)
+        if settings.get("engine") == ltx_config.ENGINE:
+            ltx_vae = models.registry.acquire(render_ltx.video_vae_spec(LtxSettings(**settings["ltx"])))
+            frames = ltx_pipeline.decode_video(ltx_vae, sampled)
+        else:
+            frames = vae.decode_video(models.registry.acquire(render_chunk.video_vae_spec(video)), sampled)
         detail(f"{len(frames)} frames · {frames.shape[2]}×{frames.shape[1]}")
     if hold:
         frames = media.held(frames, media.colour_hold(frames, h3_config.FPS, _frame(inputs["opening"]), hold))
@@ -728,7 +829,8 @@ def run_judge(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any
     passed = verdict.score >= chosen.gate
     out = {**verdict.data(), "gate": chosen.gate, "retries": chosen.retries, "passed": passed}
     prompt = str(inputs.get("prompt") or "")
-    if kind != "clip" or passed or not prompt:
+    # The rewrite edits an H3 caption's sections; an LTX prompt is retaken on a new seed as it stands.
+    if kind != "clip" or passed or not prompt or "subject_definitions:" not in prompt:
         return out
     with store.connect() as connection:
         if not made.retrying(connection, production_id):

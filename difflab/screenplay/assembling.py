@@ -298,7 +298,8 @@ def finish(production_id: int, chapter_position: int | None = None) -> list[str]
                      "opening": job.inputs.get("opening"), "megapixels": config.FINISH_MEGAPIXELS},
                     label=f"{marker(chapter).lower()}, shot {shot.position + 1}: enlarge",
                     settings={"video": job.settings["video"], "continuity": job.settings["continuity"],
-                              "enlarge": enlarging.data()},
+                              "enlarge": enlarging.data(),
+                              **{k: job.settings[k] for k in ("engine", "ltx") if k in job.settings}},
                 ).id
                 for shot, job in zip(shots, jobs, strict=True)
             ]  # fmt: skip

@@ -18,6 +18,7 @@ from difflab import config, store
 from difflab.core import media
 from difflab.core.keys import key
 from difflab.core.settings import Continuity, EditSettings, IngestSettings, Settings
+from difflab.models.ltx25 import config as ltx_config
 from difflab.models.minimax_h3 import pipeline
 from difflab.models.minimax_h3.settings import VideoSettings
 from difflab.screenplay import assembling, checks, compiler, crops, drawn, looks, settings, timings, words
@@ -31,6 +32,7 @@ CUT_NOTE = "the plan's cut"  # on a keyframe the planner composes for a "new" cu
 LAND_NOTE = "the plan's landing"  # on a keyframe the plan asks for where its story needs one
 ASPECTS = (0.25, 4.0)  # width over height a canvas may be given
 FITS = ("crop", "extend")  # the first photo cut to the canvas, or kept whole and drawn out to it by the editor
+ENGINES = ("", ltx_config.ENGINE)  # what a production's shots render on: "" is MiniMax H3
 
 
 def take_seconds(manifest: dict[str, Any], longest: float, stories: list[str] | None = None, index: int = 0) -> float:
@@ -320,7 +322,7 @@ def recompile(
         return
     try:
         take = compiler.take_of(connection, production, chapter)
-        compiled = compiler.compile_chunk(take, position)
+        compiled = compiler.compile_shot(take, position)
     except (KeyError, StopIteration, ValueError):
         _stale(connection, [shots[position]])
         return
@@ -638,7 +640,7 @@ def _revoice(connection: Any, production: store.Production, slug: str) -> int:
             if prompt.pinned or not shot.plan.get("beats"):
                 continue  # a prompt written by hand says the voice in its own words
             take = compiler.take_of(connection, production, chapter)
-            compiled = compiler.compile_chunk(take, shot.position)
+            compiled = compiler.compile_shot(take, shot.position)
             if compiled.prompt == prompt.text:
                 continue
             made = key(

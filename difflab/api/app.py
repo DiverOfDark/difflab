@@ -528,6 +528,7 @@ async def ingest_story(request: Request) -> dict[str, Any]:
             video=video,
             continuity=continuity,
             ingesting=chosen,
+            engine="" if body.get("engine") in (None, "", "minimax-h3") else str(body["engine"]),
         )
     except (TypeError, ValueError, OSError) as problem:
         raise HTTPException(400, str(problem)) from problem

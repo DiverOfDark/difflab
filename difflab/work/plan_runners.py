@@ -908,7 +908,7 @@ def run_compile_shot(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[s
     with store.connect() as connection:
         take = compiler.take_of(connection, production, chapter)
         pictures = compiler.pictures_of(connection, production)
-    compiled = compiler.compile_chunk(take, position)
+    compiled = compiler.compile_shot(take, position)
     problems = write_shot.chunk_problems(take, position)
     if position == len(shots) - 1:
         everything = [compiler.compile_chunk(take, index).prompt for index in range(len(shots))]

@@ -186,9 +186,10 @@ def from_story(
     video: VideoSettings | None = None,
     continuity: Continuity | None = None,
     ingesting: IngestSettings | None = None,
+    engine: str = "",
 ) -> store.Production:
     """The story split by `ingesting.heading_level`. The first location photograph, or the first
-    photograph, is where chapter 1 opens."""
+    photograph, is where chapter 1 opens. `engine` is the video model its shots render on, "" for H3."""
     chosen = ingesting or IngestSettings()
     parts = chapters_of(story, chosen.heading_level)
     if not parts:
@@ -207,6 +208,8 @@ def from_story(
         raise ValueError("at least one photograph, or a video with a sharp frame: chapter 1 opens on one")
     if fit not in production.FITS:
         raise ValueError(f"a fit of {' or '.join(production.FITS)}")
+    if engine not in production.ENGINES:
+        raise ValueError(f"an engine of {' or '.join(e or 'minimax-h3' for e in production.ENGINES)}")
     made = production.create(slug, title, video, continuity)
     if ingesting is not None:
         overrides = {k: v for k, v in ingesting.data().items() if v != IngestSettings().data()[k]}
@@ -225,6 +228,7 @@ def from_story(
     manifest = {
         "photos": photos, "labels": labels, "references": rows, "target_seconds": target_seconds,
         "shortest": shortest, "aspect": aspect, **({"fit": fit} if fit != "crop" else {}),
+        **({"engine": engine} if engine else {}),
     }  # fmt: skip
     return _begun(made.id, "text", production.lines(story), manifest)
 

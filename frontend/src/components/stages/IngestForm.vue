@@ -35,6 +35,8 @@ const target = ref('')
 const shot = ref('6–8 s')
 const aspect = ref<number | null>(16 / 9)
 const fit = ref<Fit>('crop')
+/** The video model every shot renders on; the rest of the pipeline is the same for both. */
+const engine = ref<'minimax-h3' | 'ltx-2.5'>('minimax-h3')
 const autoPlan = ref(true)
 const knobs = reactive({ heading_level: 1, frames: 12, min_sharpness: 50 })
 const problem = ref('')
@@ -277,6 +279,7 @@ const begin = () =>
       shortest: Math.max(CLIP_MIN, r[0]),
       aspect: aspect.value,
       fit: fit.value,
+      engine: engine.value,
       video,
       ingest: { ...knobs },
       plan: autoPlan.value,
@@ -345,6 +348,13 @@ const onPick = (event: Event, take: (files: File[]) => void) => {
             <span class="eyebrow">FIT</span>
             <select v-model="fit">
               <option v-for="f in FITS" :key="f.value" :value="f.value">{{ f.label }}</option>
+            </select>
+          </label>
+          <label v-if="storyKind !== 'video'" class="field" title="the model every shot renders on: LTX-2.5 takes up to five reference pictures a shot, and no latents cross a join">
+            <span class="eyebrow">VIDEO MODEL</span>
+            <select v-model="engine">
+              <option value="minimax-h3">MiniMax H3</option>
+              <option value="ltx-2.5">LTX-2.5</option>
             </select>
           </label>
           <label v-else class="field"><span class="eyebrow">CLIP SCALE</span><input v-model.number="redo.clip_scale" type="number" min="0.1" max="1" step="0.1" /></label>

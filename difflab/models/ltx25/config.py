@@ -10,6 +10,7 @@ LAYOUT = Checkpoint(
     ("*/config.json", "tokenizer/*"),
 )
 
+ENGINE = "ltx-2.5"  # what a quick job or a production names this model by
 FPS = 24
 # Frame counts are 8k+1; the VAE turns them into k+1 latent frames, the first a single pixel frame.
 FRAME_CYCLE = 8

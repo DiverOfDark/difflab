@@ -24,6 +24,7 @@ from typing import Any
 
 from difflab import store
 from difflab.core.settings import Continuity
+from difflab.models.ltx25 import config as ltx_config
 from difflab.models.minimax_h3 import caption
 from difflab.screenplay import config, looks, words
 
@@ -188,6 +189,7 @@ class Take:
     scene_rows: int = 0  # reference rows the opening still costs, at the canvas size
     voices: dict[str, str] = dataclasses.field(default_factory=dict)  # member -> how it sounds, from the bible
     look: str = ""  # the style members' words: the grade and lens every shot keeps
+    engine: str = ""  # the video model the production renders on; "" is MiniMax H3
 
 
 @dataclass(frozen=True)
@@ -761,6 +763,15 @@ def compile_chunk(take: Take, index: int) -> Compiled:
     return Compiled(prompt, shown, refs, subject)
 
 
+def compile_shot(take: Take, index: int) -> Compiled:
+    """The prompt a shot is rendered from, in its engine's words; `compile_chunk` stays the writer's gate."""
+    if take.engine == ltx_config.ENGINE:
+        from difflab.screenplay import ltx  # here: it builds on this module
+
+        return ltx.compile_chunk(take, index)
+    return compile_chunk(take, index)
+
+
 def voice(take: Take, member: str) -> str:
     """How a member sounds in its lines: the bible's voice and delivery, or its noun's when none is set."""
     return take.voices.get(member) or f"a natural {take.cards[member].noun}'s voice"
@@ -971,7 +982,9 @@ def take_of(connection: sqlite3.Connection, production: store.Production, chapte
     manifest = production.manifest
     planned = {**manifest, **manifest.get("chapter_plans", {}).get(str(chapter.id), {})}
     shots = store.shots_of(connection, chapter.id)
-    tail = bool(manifest.get("tail", True))
+    engine = str(manifest.get("engine") or "")
+    # LTX-2.5 carries nothing across a join: each shot opens on the one before's last frame alone.
+    tail = bool(manifest.get("tail", True)) and engine != ltx_config.ENGINE
     from difflab.screenplay import settings  # here: it imports the tools, which import this module
 
     continuity, _ = settings.effective("handoff", production.id)
@@ -1005,13 +1018,14 @@ def take_of(connection: sqlite3.Connection, production: store.Production, chapte
         chunks=tuple(chunks),
         story=tuple((str(event), int(clip)) for event, clip in planned.get("story", [])),
         tails=tails,
-        latent=isinstance(continuity, Continuity) and continuity.latent_carry,
+        latent=isinstance(continuity, Continuity) and continuity.latent_carry and engine != ltx_config.ENGINE,
         lands=landed,
         unframed=tuple(keyframe.source == store.REFS for keyframe in keyframes),
         scenes=scenes(keyframes, shots),
         scene_rows=(int(canvas.get("width", 0)) // 32) * (int(canvas.get("height", 0)) // 32),
         voices={member.slug: said for member in members if (said := voice_of(member))},
         look=look_of(connection, production.id),
+        engine=engine,
     )
 
 

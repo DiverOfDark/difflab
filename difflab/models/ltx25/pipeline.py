@@ -58,12 +58,17 @@ class Conditioning:
 def plan(width: int, height: int, duration: float, megapixels: float) -> Geometry:
     scale = math.sqrt(megapixels * 1024 * 1024 / (width * height))
     align = config.SPATIAL_COMPRESSION
-    frames = max(config.FRAME_CYCLE + 1, round(duration * config.FPS))
     return Geometry(
         max(align, round(width * scale / align) * align),
         max(align, round(height * scale / align) * align),
-        (frames - 1 + config.FRAME_CYCLE - 1) // config.FRAME_CYCLE * config.FRAME_CYCLE + 1,
+        frame_count(duration),
     )
+
+
+def frame_count(duration: float) -> int:
+    """The shortest 8k+1 frames that last `duration`."""
+    frames = max(config.FRAME_CYCLE + 1, round(duration * config.FPS))
+    return (frames - 1 + config.FRAME_CYCLE - 1) // config.FRAME_CYCLE * config.FRAME_CYCLE + 1
 
 
 def encode_prompt(
@@ -158,6 +163,7 @@ def sample(
     references: Sequence[torch.Tensor] = (),
     reference_strength: float = 1.0,
     on_step: Callable[[int, torch.Tensor, torch.Tensor], None] | None = None,
+    landing: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Video latents `[1, 128, F, h, w]` and packed audio latents `[1, L, 128]`, both normalized. `on_step` is
     handed each step's estimate of the finished clip, in the same shapes."""
@@ -185,6 +191,16 @@ def sample(
         keyframes = torch.cat([keyframes, keyframes.new_zeros((1, packed.shape[1], 1))], dim=1)
         placed = dit.rope.prepare_video_coords(1, reference.shape[2], height, width, device, fps=config.FPS)
         placed[:, 0] += -(len(references) - index) / config.FPS
+        coords.append(placed)
+    if landing is not None:
+        # A keyframe the clip ends on, as diffusers appends one: one pixel frame wide, at the last frame, clean.
+        packed = _pack(landing.to(device))
+        video = torch.cat([video, packed], dim=1)
+        clean = torch.cat([clean, packed], dim=1)
+        strength = torch.cat([strength, strength.new_ones((1, packed.shape[1], 1))], dim=1)
+        keyframes = torch.cat([keyframes, keyframes.new_zeros((1, packed.shape[1], 1))], dim=1)
+        placed = dit.rope.prepare_video_coords(1, 1, height, width, device, fps=config.FPS)
+        placed[:, 0] += (geometry.frame_count - 1) / config.FPS
         coords.append(placed)
     video_coords = torch.cat(coords, dim=2)
     audio_coords = dit.audio_rope.prepare_audio_coords(1, geometry.audio_latents, device)

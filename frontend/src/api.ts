@@ -533,6 +533,8 @@ export interface IngestStory {
   aspect: number | null
   /** How the first photo meets the canvas: cut to it, or kept whole with the sides drawn by the editor. */
   fit: 'crop' | 'extend'
+  /** The video model the shots render on. */
+  engine: 'minimax-h3' | 'ltx-2.5'
   video: { duration: number; megapixels: number; steps: number }
   ingest: { heading_level: number; frames: number; min_sharpness: number }
   /** Queue every chapter's plan run, stopping before render. */
