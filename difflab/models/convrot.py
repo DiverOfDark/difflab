@@ -83,6 +83,61 @@ class ConvRotLinear(nn.Module):
         return out
 
 
+class W4A8Linear(nn.Module):
+    """ComfyUI's `asym_w4a8_int8`: 4-bit Lloyd-Max codes in the same ConvRot basis, run by kitchen's int8 GEMM."""
+
+    weight: torch.Tensor
+    s_rel: torch.Tensor
+    s_channel: torch.Tensor
+    codebook: torch.Tensor | None
+    bias: torch.Tensor | None
+    lora_a: torch.Tensor | None
+    lora_b: torch.Tensor | None
+
+    def __init__(
+        self,
+        qdata: torch.Tensor,
+        s_rel: torch.Tensor,
+        s_channel: torch.Tensor,
+        codebook: torch.Tensor | None,
+        bias: torch.Tensor | None,
+        group_size: int,
+    ) -> None:
+        super().__init__()
+        self.group_size = group_size
+        self.register_buffer("weight", qdata, persistent=False)  # int8 [N, K/2], two codes a byte
+        self.register_buffer("s_rel", s_rel, persistent=False)  # fp8 [N, K/group_size]
+        self.register_buffer("s_channel", s_channel, persistent=False)  # fp32 [N]
+        self.register_buffer("codebook", codebook, persistent=False)  # fp32 [16]
+        self.register_buffer("bias", bias, persistent=False)
+        self.register_buffer("lora_a", None, persistent=False)
+        self.register_buffer("lora_b", None, persistent=False)
+
+    @property
+    def out_features(self) -> int:
+        return int(self.weight.shape[0])
+
+    def add_lora(self, a: torch.Tensor, b: torch.Tensor) -> None:
+        stack_lora(self, a.to(torch.bfloat16), b.to(torch.bfloat16))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        out: torch.Tensor = comfy_kitchen.w4a8_int8_linear(
+            x,
+            self.weight,
+            self.s_rel,
+            self.s_channel,
+            codebook=self.codebook,
+            bias=self.bias,
+            group_size=self.group_size,
+            convrot_groupsize=GROUP,
+            out_dtype=x.dtype,
+        )
+        lora_a, lora_b = self.lora_a, self.lora_b
+        if lora_a is not None and lora_b is not None:
+            out += (x @ lora_a.t()) @ lora_b.t()
+        return out
+
+
 def stack_lora(module: nn.Module, a: torch.Tensor, b: torch.Tensor) -> None:
     """Concatenated along the rank, `B @ A` is the sum of the LoRAs at one pair of matmuls; `b` carries its strength."""
     held_a = cast("torch.Tensor | None", module.lora_a)

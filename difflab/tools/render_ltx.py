@@ -54,7 +54,7 @@ def _text_encoder_spec(settings: LtxSettings) -> models.ModelSpec:
 
 
 def _connectors_spec(settings: LtxSettings) -> models.ModelSpec:
-    dit, encoder = HubFile.parse(settings.checkpoint), HubFile.parse(settings.text_encoder)
+    dit, encoder = parse_file(settings.checkpoint), HubFile.parse(settings.text_encoder)
     return models.ModelSpec(
         name=f"ltx_connectors:{dit.filename}:{encoder.filename}",
         build=lambda: weights.load_connectors(dit.fetch(), encoder.fetch()).to(app_config.DEVICE),
@@ -63,7 +63,7 @@ def _connectors_spec(settings: LtxSettings) -> models.ModelSpec:
 
 
 def _dit_spec(settings: LtxSettings, loras: Sequence[tuple[str, float]]) -> models.ModelSpec:
-    file = HubFile.parse(settings.checkpoint)
+    file = parse_file(settings.checkpoint)
     stack = [(parse_file(reference), strength) for reference, strength in loras]
 
     def build() -> nn.Module:

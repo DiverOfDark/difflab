@@ -18,7 +18,7 @@ class LtxSettings(Settings):
     checkpoint: str = setting(
         f"{PACK}:diffusion_models/ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
         "model",
-        "the int8 DiT: repo@commit:path",
+        "the int8 or w4a8 ConvRot DiT: repo@commit:path or civitai:…",
         role="ltx-model",
     )
     # Applied only when a clip has references: the slot embeddings it carries are what places them.

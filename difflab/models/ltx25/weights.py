@@ -5,9 +5,9 @@
 
 import json
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import torch
 from accelerate import init_empty_weights
@@ -19,7 +19,7 @@ from torch import nn
 from transformers import AutoConfig, Gemma4UnifiedForConditionalGeneration
 
 from difflab.models import lora
-from difflab.models.convrot import ConvRotLinear, read_quant_meta
+from difflab.models.convrot import GROUP, ConvRotLinear, W4A8Linear, read_quant_meta
 from difflab.models.ltx25 import config
 
 DIT_PREFIX = "model.diffusion_model."
@@ -88,6 +88,7 @@ SLOT_PREFIX = "diffusion_model.reference_slot_embedding."
 class Split:
     dense: dict[str, torch.Tensor]
     quant: dict[str, tuple[torch.Tensor, torch.Tensor]]  # layer -> (int8 weight, fp32 per-row scale)
+    w4: dict[str, tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, int]] = field(default_factory=dict)
 
 
 @dataclass
@@ -116,17 +117,26 @@ def layout(component: str) -> dict[str, Any]:
 def read(path: str | Path, keep: Callable[[str], bool] = lambda _: True) -> Split:
     with safe_open(str(path), framework="pt", device="cpu") as f:
         keys = [k for k in list(f.keys()) if keep(k)]  # safe_open is not a mapping
-        layers = {k.removesuffix(".comfy_quant") for k in keys if k.endswith(".comfy_quant")}
-        for layer in layers:
-            if not read_quant_meta(f.get_tensor(f"{layer}.comfy_quant")).get("convrot"):
-                raise ValueError(f"{Path(path).name}: {layer} is int8 without ConvRot, which no kernel here runs")
-        quant = {layer: (f.get_tensor(f"{layer}.weight"), f.get_tensor(f"{layer}.weight_scale")) for layer in layers}
-        dense = {
-            k: f.get_tensor(k)
-            for k in keys
-            if not k.endswith((".comfy_quant", ".weight_scale")) and k.removesuffix(".weight") not in layers
+        metas = {
+            k.removesuffix(".comfy_quant"): read_quant_meta(f.get_tensor(k)) for k in keys if k.endswith(".comfy_quant")
         }
-    return Split(dense, quant)
+        quant, w4 = {}, {}
+        for layer, meta in metas.items():
+            if meta.get("format") == "asym_w4a8_int8" and meta.get("convrot_groupsize", GROUP) == GROUP:
+                w4[layer] = (
+                    f.get_tensor(f"{layer}.weight"),
+                    f.get_tensor(f"{layer}.weight_s_rel"),
+                    f.get_tensor(f"{layer}.weight_s_channel"),
+                    f.get_tensor(f"{layer}.weight_codebook"),
+                    int(cast(int, meta["group_size"])),
+                )
+            elif meta.get("convrot") and meta.get("convrot_groupsize", GROUP) == GROUP:
+                quant[layer] = (f.get_tensor(f"{layer}.weight"), f.get_tensor(f"{layer}.weight_scale"))
+            else:
+                raise ValueError(f"{Path(path).name}: {layer} is {meta}, which no kernel here runs")
+        parts = (".comfy_quant", ".weight_scale", ".weight_s_rel", ".weight_s_channel", ".weight_codebook")
+        dense = {k: f.get_tensor(k) for k in keys if not k.endswith(parts) and k.removesuffix(".weight") not in metas}
+    return Split(dense, quant, w4)
 
 
 def _renamed(key: str, renames: Sequence[tuple[str, str]]) -> str:
@@ -142,6 +152,11 @@ def place(model: nn.Module, split: Split, rename: Callable[[str], str]) -> None:
         path = rename(layer)
         parent_path, _, name = path.rpartition(".")
         setattr(model.get_submodule(parent_path), name, ConvRotLinear(weight, scale, dense.pop(f"{path}.bias", None)))
+    for layer, (qdata, s_rel, s_channel, codebook, group) in split.w4.items():
+        path = rename(layer)
+        parent_path, _, name = path.rpartition(".")
+        linear = W4A8Linear(qdata, s_rel, s_channel, codebook, dense.pop(f"{path}.bias", None), group)
+        setattr(model.get_submodule(parent_path), name, linear)
     missing, unexpected = model.load_state_dict(dense, strict=False, assign=True)
     # The DiT ships its AdaLN tables in fp32, and diffusers' blocks mix them into bf16 activations unconverted.
     for parameter in model.parameters():
@@ -195,7 +210,9 @@ def load_connectors(dit: Path, text_encoder: Path) -> LTX2TextConnectors:
         read(text_encoder, lambda k: k.startswith("text_embedding_projection.")),
     )
     split = Split(
-        {k: v for h in halves for k, v in h.dense.items()}, {k: v for h in halves for k, v in h.quant.items()}
+        {k: v for h in halves for k, v in h.dense.items()},
+        {k: v for h in halves for k, v in h.quant.items()},
+        {k: v for h in halves for k, v in h.w4.items()},
     )
     place(model, split, lambda k: _renamed(k.removeprefix(DIT_PREFIX), CONNECTOR_RENAMES))
     return model.requires_grad_(False).eval()
