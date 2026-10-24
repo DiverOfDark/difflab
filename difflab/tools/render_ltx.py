@@ -98,17 +98,18 @@ def condition(
     slots: weights.SlotEmbedding | None,
     closing: Frame | None = None,
     version: str = config.V25,
+    scene: Frame | None = None,
 ) -> tuple[torch.Tensor | None, list[tuple[torch.Tensor, float]], torch.Tensor | None]:
     """The opening frame's latent, the references' with where each starts, and the landing's. 2.5's are one
     still apiece, a frame apart before the clip, each with its slot identity added; 2.3's are Licon's one
-    pseudo-video from frame 0, its background the opening frame."""
+    pseudo-video from frame 0, its background `scene`."""
     vae = models.registry.acquire(video_vae_spec(settings))
     crf = config.IMAGE_CRF[version]
     with ui.step("Encoding frames and references") as detail:
         opening = pipeline.encode_opening(vae, frame, geometry, crf) if frame is not None else None
         guides: list[tuple[torch.Tensor, float]] = []
         if references and version == config.V23:
-            guides = [(pipeline.encode_msr23(vae, references, frame, geometry), 0.0)]
+            guides = [(pipeline.encode_msr23(vae, references, scene or frame, geometry), 0.0)]
         elif slots is not None:
             guides = [
                 (
@@ -213,7 +214,8 @@ def latents(
     else:
         raise ValueError("a clip with no opening frame needs its canvas size")
     ui.line(f"{geometry.width}x{geometry.height}, {geometry.frame_count} frames, {len(references)} reference(s)")
-    opening, guides, landing = condition(frame, references, settings, geometry, slots, closing, version)
+    opened = frame if not references or version == config.V25 or settings.open_on_photo_23 else None
+    opening, guides, landing = condition(opened, references, settings, geometry, slots, closing, version, frame)
     conditioning = encode(prompt, settings, version)
     return sample(conditioning, geometry, settings, loras, opening, guides, landing, version)
 

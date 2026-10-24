@@ -13,7 +13,7 @@ from difflab.models.ltx25 import config
 # Every file below matches Lightricks/LTX-2.5@49b093a by sha256, with no licence click to fetch it.
 PACK = "deAPI-ai/ltx2-5-22b-dist-int8@a4d65f15437f75c2ccbba4ff42932d0386fcdfe2"
 # Fields a 2.5 model never reads: left at their defaults they stay out of the key, so a 2.5 clip keeps its key.
-_V23_ONLY = ("text_encoder_23", "loras_23", "msr_23", "sigmas")
+_V23_ONLY = ("text_encoder_23", "loras_23", "msr_23", "open_on_photo_23", "sigmas")
 
 
 @dataclass(frozen=True)
@@ -68,6 +68,14 @@ class LtxSettings(Settings):
         "the LoRA that places up to four references on an LTX-2.3 model: repo@commit:path",
         advanced=True,
         role="ltx23-msr",
+    )
+    # Licon trained the pseudo-video against no opening frame: one pinned at frame 0 beside it cut away after
+    # the first frame (2026-10-24, 10Eros v1.4 DMD, one subject).
+    open_on_photo_23: bool = setting(
+        False,
+        "2.3 MSR opens on the photo",
+        "with references on 2.3, the first photo is the opening frame as well as the scene; off, it is the scene alone",
+        advanced=True,
     )
     sigmas: str = setting(
         "",
