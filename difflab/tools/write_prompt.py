@@ -13,6 +13,7 @@ from difflab import prompts as edit_prompts
 from difflab.core.settings import VlmSettings
 from difflab.core.types import Frame
 from difflab.models.exl3vl import ANY_JSON
+from difflab.models.ltx25 import config as ltx_config
 from difflab.models.ltx25 import prompts as ltx_prompts
 from difflab.models.minimax_h3 import caption
 from difflab.models.minimax_h3 import prompts as video_prompts
@@ -61,14 +62,22 @@ def write_video_prompt(
 
 
 def write_ltx_prompt(
-    frame: Frame, idea: str, references: Sequence[Frame] = (), settings: VlmSettings | None = None
+    frame: Frame,
+    idea: str,
+    references: Sequence[Frame] = (),
+    settings: VlmSettings | None = None,
+    version: str = ltx_config.V25,
 ) -> str:
-    """A rough idea, the opening frame and any MSR references -> one finished LTX-2.5 prompt."""
+    """A rough idea, the opening frame and any MSR references -> one finished LTX prompt, in its version's style."""
     settings = settings or VIDEO_VLM
+    if version == ltx_config.V23:
+        system = ltx_prompts.VLM_SYSTEM_PROMPT_23
+    else:
+        system = ltx_prompts.VLM_SYSTEM_PROMPT_REFERENCES if references else ltx_prompts.VLM_SYSTEM_PROMPT
     written = _vlm(settings).ask(
         [frame.pil(), *(reference.pil() for reference in references)],
         idea,
-        system=ltx_prompts.VLM_SYSTEM_PROMPT_REFERENCES if references else ltx_prompts.VLM_SYSTEM_PROMPT,
+        system=system,
         title="LTX prompt",
         effort=config.VLM_WRITING_EFFORT,
         **settings.generation(),

@@ -20,7 +20,9 @@ ROLE_ORDER = {"body": 1, "view": 1, "object": 1, "environment": 1, "face": 2}
 
 
 def pictures(take: Take, index: int) -> tuple[str, ...]:
-    """One of the crops `compiler.references` would hold per member, at most five."""
+    """One of the crops `compiler.references` would hold per member, at most five; none on a 2.3 model."""
+    if not take.msr:
+        return ()
     held = compiler.references(take, index)
     cast = take.chunks[index].cast
     order = sorted(cast, key=lambda m: (SLOT_ORDER[take.cards[m].kind], take.members.index(m)))

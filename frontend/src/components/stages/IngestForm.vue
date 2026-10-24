@@ -354,7 +354,7 @@ const onPick = (event: Event, take: (files: File[]) => void) => {
             <span class="eyebrow">VIDEO MODEL</span>
             <select v-model="engine">
               <option value="minimax-h3">MiniMax H3</option>
-              <option value="ltx-2.5">LTX-2.5</option>
+              <option value="ltx-2.5">LTX (2.5 or 2.3)</option>
             </select>
           </label>
           <label v-else class="field"><span class="eyebrow">CLIP SCALE</span><input v-model.number="redo.clip_scale" type="number" min="0.1" max="1" step="0.1" /></label>

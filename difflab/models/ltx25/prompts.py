@@ -1,9 +1,11 @@
-"""What the VLM is told when it writes an LTX-2.5 prompt."""
+"""What the VLM is told when it writes an LTX prompt."""
 
-from diffusers.pipelines.ltx2.utils import LTX2_5_I2V_DEFAULT_SYSTEM_PROMPT
+from diffusers.pipelines.ltx2.utils import I2V_DEFAULT_SYSTEM_PROMPT, LTX2_5_I2V_DEFAULT_SYSTEM_PROMPT
 
 # Lightricks' own I2V enhancer prompt: the caption style 2.5 was trained on.
 VLM_SYSTEM_PROMPT = LTX2_5_I2V_DEFAULT_SYSTEM_PROMPT
+# Lightricks' enhancer prompt from before 2.5, which 2.3's captions follow.
+VLM_SYSTEM_PROMPT_23 = I2V_DEFAULT_SYSTEM_PROMPT
 
 # The labelling follows LiconStudio's MSR examples: an "Image N:" line per reference, then the scene naming them.
 VLM_SYSTEM_PROMPT_REFERENCES = (

@@ -108,6 +108,8 @@ class Job:
             problems.append(
                 f"ltx-2.5 places at most {ltx_config.MSR_MAX_REFERENCES} references after the opening photo"
             )
+        elif self.video_engine == "ltx-2.5" and len(self.photos) > 1 and self.ltx.version() == ltx_config.V23:
+            problems.append("the LTX model is 2.3, which has no MSR: references need a 2.5 model")
         problems += [f"no such photo: {photo}" for photo in self.photos if not photo.is_file()]
         if self.finish_megapixels is not None and self.finish_megapixels <= 0:
             problems.append(f"finish_megapixels={self.finish_megapixels:g}: leave it unset to deliver as sampled")

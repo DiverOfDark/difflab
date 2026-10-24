@@ -16,10 +16,10 @@ from diffusers.pipelines.ltx2.connectors import LTX2TextConnectors
 from diffusers.pipelines.ltx2.vocoder import LTX2VocoderWithBWE
 from safetensors import safe_open
 from torch import nn
-from transformers import AutoConfig, Gemma4UnifiedForConditionalGeneration
+from transformers import AutoConfig, Gemma3ForCausalLM, Gemma4UnifiedForConditionalGeneration
 
 from difflab.models import lora
-from difflab.models.convrot import GROUP, ConvRotLinear, W4A8Linear, read_quant_meta
+from difflab.models.convrot import GROUP, ConvRotLinear, W4A8Linear, quantize, read_quant_meta
 from difflab.models.ltx25 import config
 
 DIT_PREFIX = "model.diffusion_model."
@@ -82,12 +82,13 @@ VOCODER_RENAMES = (
     ("downsample.lowpass", "downsample"),
 )
 SLOT_PREFIX = "diffusion_model.reference_slot_embedding."
+PROJECTION = "text_embedding_projection."
 
 
 @dataclass
 class Split:
     dense: dict[str, torch.Tensor]
-    quant: dict[str, tuple[torch.Tensor, torch.Tensor]]  # layer -> (int8 weight, fp32 per-row scale)
+    quant: dict[str, tuple[torch.Tensor, torch.Tensor, bool]]  # layer -> (int8 weight, fp32 scale, rotated)
     w4: dict[str, tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, int]] = field(default_factory=dict)
 
 
@@ -114,6 +115,17 @@ def layout(component: str) -> dict[str, Any]:
     return loaded
 
 
+def _int8(f: Any, layer: str, meta: dict[str, Any]) -> tuple[torch.Tensor, torch.Tensor, bool] | None:
+    """A layer as the int8 GEMM takes it; fp8 is rotated and requantized, since Ampere has no fp8 GEMM."""
+    grouped = meta.get("convrot_groupsize", GROUP) == GROUP
+    if meta.get("format") == "int8_tensorwise" and grouped:
+        return f.get_tensor(f"{layer}.weight"), f.get_tensor(f"{layer}.weight_scale"), bool(meta.get("convrot"))
+    if meta.get("format") == "float8_e4m3fn":
+        weight = f.get_tensor(f"{layer}.weight").float() * f.get_tensor(f"{layer}.weight_scale").float()
+        return (*quantize(weight), True)
+    return None
+
+
 def read(path: str | Path, keep: Callable[[str], bool] = lambda _: True) -> Split:
     with safe_open(str(path), framework="pt", device="cpu") as f:
         keys = [k for k in list(f.keys()) if keep(k)]  # safe_open is not a mapping
@@ -130,11 +142,13 @@ def read(path: str | Path, keep: Callable[[str], bool] = lambda _: True) -> Spli
                     f.get_tensor(f"{layer}.weight_codebook"),
                     int(cast(int, meta["group_size"])),
                 )
-            elif meta.get("convrot") and meta.get("convrot_groupsize", GROUP) == GROUP:
-                quant[layer] = (f.get_tensor(f"{layer}.weight"), f.get_tensor(f"{layer}.weight_scale"))
+            elif (found := _int8(f, layer, meta)) is not None:
+                quant[layer] = found
             else:
                 raise ValueError(f"{Path(path).name}: {layer} is {meta}, which no kernel here runs")
-        parts = (".comfy_quant", ".weight_scale", ".weight_s_rel", ".weight_s_channel", ".weight_codebook")
+        parts = (
+            ".comfy_quant", ".weight_scale", ".input_scale", ".weight_s_rel", ".weight_s_channel", ".weight_codebook"
+        )  # fmt: skip
         dense = {k: f.get_tensor(k) for k in keys if not k.endswith(parts) and k.removesuffix(".weight") not in metas}
     return Split(dense, quant, w4)
 
@@ -148,15 +162,16 @@ def _renamed(key: str, renames: Sequence[tuple[str, str]]) -> str:
 def place(model: nn.Module, split: Split, rename: Callable[[str], str]) -> None:
     """int8 layers swapped in with their biases, every dense tensor assigned; anything left over raises."""
     dense = {rename(k): v for k, v in split.dense.items()}
-    for layer, (weight, scale) in split.quant.items():
+    for layer, (weight, scale, rotated) in split.quant.items():
         path = rename(layer)
         parent_path, _, name = path.rpartition(".")
-        setattr(model.get_submodule(parent_path), name, ConvRotLinear(weight, scale, dense.pop(f"{path}.bias", None)))
+        linear = ConvRotLinear(weight, scale, dense.pop(f"{path}.bias", None), convrot=rotated)
+        setattr(model.get_submodule(parent_path), name, linear)
     for layer, (qdata, s_rel, s_channel, codebook, group) in split.w4.items():
         path = rename(layer)
         parent_path, _, name = path.rpartition(".")
-        linear = W4A8Linear(qdata, s_rel, s_channel, codebook, dense.pop(f"{path}.bias", None), group)
-        setattr(model.get_submodule(parent_path), name, linear)
+        packed = W4A8Linear(qdata, s_rel, s_channel, codebook, dense.pop(f"{path}.bias", None), group)
+        setattr(model.get_submodule(parent_path), name, packed)
     missing, unexpected = model.load_state_dict(dense, strict=False, assign=True)
     # The DiT ships its AdaLN tables in fp32, and diffusers' blocks mix them into bf16 activations unconverted.
     for parameter in model.parameters():
@@ -179,18 +194,13 @@ def _dit_name(key: str) -> str:
     return key
 
 
-def require_version(path: Path) -> None:
-    """An LTX-2.3 file loads nearly whole here and fails deep in, and its prompts come from Gemma 3, not 4."""
-    with safe_open(str(path), framework="pt", device="cpu") as f:
-        version = (f.metadata() or {}).get("model_version", "")
-    if version and not version.startswith("2.5"):
-        raise ValueError(f"{path.name} is LTX-{version}; this pipeline runs LTX-2.5 models only")
-
-
-def load_dit(path: Path, loras: Sequence[tuple[Path, float]]) -> LTX2VideoTransformer3DModel:
-    """On the CPU; the caller decides what streams."""
+def load_dit(path: Path, loras: Sequence[tuple[Path, float]], version: str) -> LTX2VideoTransformer3DModel:
+    """On the CPU; the caller decides what streams. 2.3 is 2.5 with feed-forward biases and no keyframe marker."""
+    v25 = version == config.V25
     with init_empty_weights():
-        model = LTX2VideoTransformer3DModel.from_config(layout("transformer"))
+        model = LTX2VideoTransformer3DModel.from_config(
+            layout("transformer") | {"use_keyframes_abs_pos_embedding": v25, "ff_bias": not v25}
+        )
     place(model, read(path, lambda k: k.startswith(DIT_PREFIX) and "_embeddings_connector." not in k), _dit_name)
     for lora_path, strength in loras:
         adapter = lora.read(lora_path, lambda k: k.removeprefix("diffusion_model."))
@@ -211,11 +221,14 @@ def read_slots(path: Path) -> SlotEmbedding | None:
 
 
 def load_connectors(dit: Path, text_encoder: Path) -> LTX2TextConnectors:
+    """The feature projection ships with 2.5's Gemma and inside a 2.3 checkpoint."""
     with init_empty_weights():
         model = LTX2TextConnectors.from_config(layout("connectors"))
+    with safe_open(str(text_encoder), framework="pt", device="cpu") as f:
+        projected = any(k.startswith("text_embedding_projection.") for k in list(f.keys()))
     halves = (
-        read(dit, lambda k: "_embeddings_connector." in k),
-        read(text_encoder, lambda k: k.startswith("text_embedding_projection.")),
+        read(dit, lambda k: "_embeddings_connector." in k or (not projected and k.startswith(PROJECTION))),
+        read(text_encoder, lambda k: k.startswith(PROJECTION)) if projected else Split({}, {}),
     )
     split = Split(
         {k: v for h in halves for k, v in h.dense.items()},
@@ -238,22 +251,33 @@ def _gemma_name(key: str) -> str:
     return key
 
 
+def load_gemma3(path: Path) -> Gemma3ForCausalLM:
+    """Gemma 3 text-only, without its vocabulary head, as LTX-2.3 reads it: the hidden states of every layer."""
+    text_config = AutoConfig.from_pretrained(config.GEMMA3.fetch()).text_config
+    with init_empty_weights():
+        model = Gemma3ForCausalLM._from_config(text_config, attn_implementation="sdpa")
+    model.lm_head = nn.Identity()
+    place(model, read(path, lambda k: k.startswith("model.")), lambda k: k)
+    return model.requires_grad_(False).eval()
+
+
 def load_text_encoder(path: Path) -> Gemma4UnifiedForConditionalGeneration:
     """Gemma 4 without its vocabulary head: only the hidden states of every layer are read."""
     gemma_config = AutoConfig.from_pretrained(config.LAYOUT.fetch() / "text_encoder")
     with init_empty_weights():
         model = Gemma4UnifiedForConditionalGeneration._from_config(gemma_config, attn_implementation="sdpa")
     model.lm_head = nn.Identity()
-    keep = lambda k: not k.startswith(("text_embedding_projection.", "hf_asset", "tokenizer_json"))  # noqa: E731
+    keep = lambda k: not k.startswith((PROJECTION, "hf_asset", "tokenizer_json"))  # noqa: E731
     place(model, read(path, keep), _gemma_name)
     return model.requires_grad_(False).eval()
 
 
-def load_video_vae(path: Path) -> AutoencoderKLLTX2Video:
+def load_video_vae(path: Path, prefix: str = "") -> AutoencoderKLLTX2Video:
+    """`prefix` is "vae." in a checkpoint that carries its own."""
     with init_empty_weights():
         model = AutoencoderKLLTX2Video.from_config(layout("vae"))
-    split = read(path, lambda k: "per_channel_statistics.channel" not in k and "mean-of-stds" not in k)
-    place(model, split, lambda k: _renamed(k, VIDEO_VAE_RENAMES))
+    keep = lambda k: k.startswith(prefix) and "per_channel_statistics.channel" not in k and "mean-of-stds" not in k  # noqa: E731
+    place(model, read(path, keep), lambda k: _renamed(k.removeprefix(prefix), VIDEO_VAE_RENAMES))
     return model.requires_grad_(False).eval()
 
 

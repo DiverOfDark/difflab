@@ -36,26 +36,49 @@ const ROLE_NOTES: Record<string, string> = {
   'video-vae': 'turns sampled latents into frames',
   'audio-vae': 'turns sampled latents into sound',
   'preview-decoder': 'the quick picture of each step while a clip samples',
-  'ltx-model': 'samples a take when its video model is LTX-2.5',
+  'ltx-model': 'samples a take when its video model is LTX: a 2.5 or a 2.3 model, read from the file',
   'ltx-loras': 'stacked on LTX-2.5 when a take has references; the first carrying slot embeddings (MSR) places them',
   'ltx-text-encoder': 'reads the prompt for LTX-2.5: its own Gemma 4 with the projections',
-  'ltx-video-vae': 'takes frames into and out of LTX-2.5',
-  'ltx-audio-vae': 'turns LTX-2.5 latents into sound, with its vocoder',
+  'ltx23-text-encoder': 'reads the prompt for LTX-2.3: Gemma 3 12B; the projections come with the model',
+  'ltx23-loras': 'stacked on an LTX-2.3 model for every clip: a DMD LoRA, a style; 2.3 places no references',
+  'ltx-video-vae': 'takes frames into and out of LTX, unless the model file carries its own',
+  'ltx-audio-vae': 'turns LTX latents into sound, with its vocoder, unless the model file carries its own',
   'pixel-upscaler': 'enlarges finished frames',
   restorer: 'restores a finished chapter at half its 4K size, before the upscaler doubles it',
   'restorer-vae': 'takes frames into and out of the restorer',
   'frame-interpolation': 'draws the frames between frames, for 48 or 60 fps',
 }
-const GROUPS: { title: string; tools: [string, string][] }[] = [
-  { title: 'Pictures', tools: [['edit_image', 'Editing a photo'], ['compose_keyframe', 'Drawing a keyframe']] },
+// Tools whose knobs share every name are drawn as one table, a column each.
+const TABS: { key: string; title: string; roles: string[]; tools: [string, string][] }[] = [
   {
-    title: 'Video',
-    tools: [['render_chunk', 'Rendering'], ['render_ltx', 'Rendering with LTX-2.5'], ['handoff', 'Joining shots'], ['restore', 'Finishing at 4K'], ['retime', 'Retiming to 60 fps']],
-  },
-  { title: 'Checking', tools: [['judge', 'Judge']] },
-  {
+    key: 'writing',
     title: 'Writing',
-    tools: [['ask_vlm', 'Questions'], ['write_instruction', 'Edit instructions'], ['write_video_prompt', 'Video captions'], ['write_ltx_prompt', 'LTX-2.5 prompts']],
+    roles: ['vlm'],
+    tools: [['ask_vlm', 'Questions'], ['write_instruction', 'Edit instructions'], ['write_video_prompt', 'H3 captions'], ['write_ltx_prompt', 'LTX prompts'], ['judge', 'Judge']],
+  },
+  {
+    key: 'pictures',
+    title: 'Pictures',
+    roles: ['editor', 'editor-21', 'editor-21-loras', 'editor-21-text-encoder', 'editor-21-vae'],
+    tools: [['edit_image', 'Editing a photo'], ['compose_keyframe', 'Drawing a keyframe']],
+  },
+  {
+    key: 'h3',
+    title: 'MiniMax H3',
+    roles: ['video-model', 'video-loras', 'video-text-encoder', 'video-vae', 'audio-vae', 'preview-decoder'],
+    tools: [['render_chunk', 'Rendering'], ['handoff', 'Joining shots']],
+  },
+  {
+    key: 'ltx',
+    title: 'LTX',
+    roles: ['ltx-model', 'ltx-loras', 'ltx-text-encoder', 'ltx23-text-encoder', 'ltx23-loras', 'ltx-video-vae', 'ltx-audio-vae'],
+    tools: [['render_ltx', 'Rendering']],
+  },
+  {
+    key: 'finishing',
+    title: 'Finishing',
+    roles: ['pixel-upscaler', 'restorer', 'restorer-vae', 'frame-interpolation'],
+    tools: [['restore', 'At 4K'], ['retime', 'To 60 fps']],
   },
 ]
 
@@ -212,15 +235,45 @@ function signedIn(a: Account | undefined) {
 
 // --- knobs -------------------------------------------------------------------------------------
 const knobs = (tool: ToolInfo) => tool.settings.filter((f) => !f.role && (advanced.value || !f.advanced))
-const groups = computed(() =>
-  GROUPS.map((g) => ({
-    title: g.title,
-    tools: g.tools
-      .map(([name, title]) => ({ tool: byName.value[name], title }))
-      .filter((t) => t.tool && knobs(t.tool).length),
-  })).filter((g) => g.tools.length),
-)
-const hidden = computed(() => tools.value.reduce((n, t) => n + t.settings.filter((f) => !f.role && f.advanced).length, 0))
+const fieldOf = (tool: ToolInfo, name: string) => tool.settings.find((f) => f.name === name)!
+const differs = (tool: ToolInfo, f: SettingField) =>
+  (drafts.value[tool.name]?.[f.name] ?? null) !== (own(tool)[f.name] === undefined ? null : String(own(tool)[f.name]))
+
+type Column = { tool: ToolInfo; title: string }
+function blocks(names: [string, string][]) {
+  const out: { columns: Column[]; fields: SettingField[] }[] = []
+  for (const [name, title] of names) {
+    const tool = byName.value[name]
+    const fields = tool ? knobs(tool) : []
+    if (!fields.length) continue
+    const last = out.at(-1)
+    if (last && last.fields.map((f) => f.name).join() === fields.map((f) => f.name).join()) last.columns.push({ tool, title })
+    else out.push({ columns: [{ tool, title }], fields })
+  }
+  return out
+}
+
+const placed = new Set(TABS.flatMap((t) => t.roles))
+const tabs = computed(() => {
+  const loose = roles.value.map((r) => r.role).filter((r) => !placed.has(r))
+  return [...TABS, ...(loose.length ? [{ key: 'other', title: 'Other', roles: loose, tools: [] }] : [])].map((t) => {
+    const models = t.roles.flatMap((role) => roles.value.filter((r) => r.role === role))
+    const tools = t.tools.map(([name]) => byName.value[name]).filter(Boolean)
+    const fields = [...models.flatMap((r) => r.uses), ...tools.flatMap((tool) => tool.settings.filter((f) => !f.role).map((field) => ({ tool, field })))]
+    return {
+      ...t,
+      models,
+      blocks: blocks(t.tools),
+      here: models.filter((r) => r.uses.some((u) => setHere(u.tool, u.field))).length + fields.filter((u) => !u.field.role && setHere(u.tool, u.field)).length,
+      changed: fields.some((u) => differs(u.tool, u.field)),
+      hidden: tools.reduce((n, tool) => n + tool.settings.filter((f) => !f.role && f.advanced).length, 0),
+    }
+  })
+})
+const tab = ref(localStorage.getItem('settings.tab') ?? TABS[0].key)
+watch(tab, (t) => localStorage.setItem('settings.tab', t))
+const current = computed(() => tabs.value.find((t) => t.key === tab.value) ?? tabs.value[0])
+const hidden = computed(() => tabs.value.reduce((n, t) => n + t.hidden, 0))
 
 const describe = (f: SettingField) =>
   [f.hint, f.unit, f.low !== null || f.high !== null ? `${f.low ?? '…'} – ${f.high ?? '…'}` : ''].filter(Boolean).join(' · ')
@@ -228,7 +281,7 @@ const describe = (f: SettingField) =>
 
 <template>
   <main class="screen settings">
-    <header class="top">
+    <aside class="rail">
       <div class="seg">
         <button :class="{ on: scope === 'machine' }" @click="scope = 'machine'">This machine</button>
         <button :class="{ on: scope === 'production' }" :disabled="!state.productions.length" @click="scope = 'production'">A production</button>
@@ -236,148 +289,242 @@ const describe = (f: SettingField) =>
       <select v-if="scope === 'production'" v-model.number="productionId" class="production">
         <option v-for="p in state.productions" :key="p.id" :value="p.id">{{ p.title }}</option>
       </select>
-      <span class="note grow">
+      <p class="note">
         {{ scope === 'machine' ? 'Every run on this machine, unless a production says otherwise.' : 'Only this production; the rest comes from this machine.' }}
-      </span>
+      </p>
+
+      <nav class="tabs">
+        <button v-for="t in tabs" :key="t.key" class="tab" :class="{ on: current.key === t.key }" @click="tab = t.key">
+          <span>{{ t.title }}</span>
+          <i v-if="t.changed" class="unsaved" title="unsaved changes" />
+          <span v-if="t.here" class="count" :title="`${t.here} set ${scope === 'machine' ? 'for this machine' : 'for this production'}`">{{ t.here }}</span>
+        </button>
+        <button class="tab" :class="{ on: tab === 'accounts' }" @click="tab = 'accounts'">
+          <span>Accounts</span>
+        </button>
+      </nav>
+
       <label class="toggle"><input v-model="advanced" type="checkbox" /> Advanced{{ advanced ? '' : ` (${hidden} more)` }}</label>
-    </header>
+    </aside>
 
-    <section class="card">
-      <div class="head"><h5>Models</h5><span class="note">pick one, paste another, or forget one you no longer use</span></div>
-      <div class="rows">
-        <div v-for="r in roles" :key="r.role" class="row" :class="{ list: r.uses[0].field.multiple }">
-          <div class="what">
-            <span class="title">
-              {{ ROLES[r.role] ?? r.role }}
-              <button v-if="r.uses.some((u) => setHere(u.tool, u.field))" class="link" title="back to what the layer below says" @click="pickRole(r.uses, inherited(r.uses[0].tool, r.uses[0].field))">
-                reset
-              </button>
-            </span>
-            <span class="hint">{{ ROLE_NOTES[r.role] ?? r.uses[0].field.hint }}</span>
+    <section class="pane">
+      <div class="body">
+        <section v-if="tab === 'accounts'" class="card">
+          <div class="head"><h5>Accounts</h5><span class="note">tokens for downloading models; kept on this machine, never shown again</span></div>
+          <div class="rows">
+            <div v-for="svc in SERVICES" :key="svc.name" class="row">
+              <div class="what">
+                <span class="title">
+                  {{ svc.title }}
+                  <button v-if="accounts[svc.name]?.source === 'settings'" class="link" :disabled="checking === svc.name" @click="saveToken(svc.name, '')">remove</button>
+                </span>
+                <span class="hint">{{ signedIn(accounts[svc.name]) }} · {{ svc.note }} · <a :href="svc.where" target="_blank" rel="noopener">get a token</a></span>
+              </div>
+              <form class="token" @submit.prevent="saveToken(svc.name, typed[svc.name] ?? '')">
+                <input v-model="typed[svc.name]" type="password" autocomplete="off" placeholder="paste a token" spellcheck="false" />
+                <button type="submit" :disabled="!typed[svc.name]?.trim() || checking === svc.name">{{ checking === svc.name ? 'Checking…' : 'Save' }}</button>
+              </form>
+            </div>
           </div>
-          <LoraList
-            v-if="r.uses[0].field.multiple"
-            :value="roleValue(r.uses) ?? ''"
-            :role="r.role"
-            :remembered="remembered[r.role] ?? []"
-            @pick="(v) => pickRole(r.uses, v)"
-            @forget="(v) => forget(r.role, v)"
-          />
-          <ModelPicker
-            v-else
-            :value="roleValue(r.uses)"
-            :fallback="String(r.uses[0].field.default)"
-            :code-default="String(r.uses[0].field.default)"
-            :role="r.role"
-            :remembered="remembered[r.role] ?? []"
-            @pick="(v) => pickRole(r.uses, v)"
-            @forget="(v) => forget(r.role, v)"
-          />
+        </section>
+
+        <div v-else class="split" :class="{ wide: current.models.length < 3 }">
+          <section class="card">
+            <div class="head"><h5>Models</h5><span class="note">pick one, paste another, or forget one you no longer use</span></div>
+            <div class="rows">
+              <div v-for="r in current.models" :key="r.role" class="row model" :class="{ list: r.uses[0].field.multiple }">
+                <div class="what">
+                  <span class="title">
+                    {{ ROLES[r.role] ?? r.role }}
+                    <button v-if="r.uses.some((u) => setHere(u.tool, u.field))" class="link" title="back to what the layer below says" @click="pickRole(r.uses, inherited(r.uses[0].tool, r.uses[0].field))">
+                      reset
+                    </button>
+                  </span>
+                  <span class="hint" :title="ROLE_NOTES[r.role] ?? r.uses[0].field.hint">{{ ROLE_NOTES[r.role] ?? r.uses[0].field.hint }}</span>
+                </div>
+                <LoraList
+                  v-if="r.uses[0].field.multiple"
+                  :value="roleValue(r.uses) ?? ''"
+                  :role="r.role"
+                  :remembered="remembered[r.role] ?? []"
+                  @pick="(v) => pickRole(r.uses, v)"
+                  @forget="(v) => forget(r.role, v)"
+                />
+                <ModelPicker
+                  v-else
+                  :value="roleValue(r.uses)"
+                  :fallback="String(r.uses[0].field.default)"
+                  :code-default="String(r.uses[0].field.default)"
+                  :role="r.role"
+                  :remembered="remembered[r.role] ?? []"
+                  @pick="(v) => pickRole(r.uses, v)"
+                  @forget="(v) => forget(r.role, v)"
+                />
+              </div>
+            </div>
+          </section>
+
+          <section class="card">
+            <div class="head"><h5>Settings</h5><span v-if="!advanced && current.hidden" class="note">{{ current.hidden }} more under Advanced</span></div>
+            <p v-if="!current.blocks.length" class="empty note">nothing to tune here{{ advanced || !current.hidden ? '' : ' without Advanced' }}</p>
+            <div v-for="b in current.blocks" :key="b.columns[0].tool.name" class="tool" :style="{ '--columns': b.columns.length }">
+              <div class="grid tool-head">
+                <span v-if="b.columns.length === 1" class="title">{{ b.columns[0].title }} <span class="note">{{ b.columns[0].tool.hint }}</span></span>
+                <template v-else>
+                  <span />
+                  <span v-for="c in b.columns" :key="c.tool.name" class="title column" :title="c.tool.hint">{{ c.title }}</span>
+                </template>
+              </div>
+              <div v-for="f in b.fields" :key="f.name" class="grid row" :class="{ here: b.columns.some((c) => setHere(c.tool, fieldOf(c.tool, f.name))) }">
+                <div class="what">
+                  <span class="title">
+                    <i class="mark" :title="scope === 'machine' ? 'set for this machine' : 'set for this production'" />
+                    {{ f.label || f.name }}
+                    <button v-if="b.columns.some((c) => setHere(c.tool, fieldOf(c.tool, f.name)))" class="link" @click="b.columns.forEach((c) => (drafts[c.tool.name][f.name] = null))">reset</button>
+                  </span>
+                  <span class="hint" :title="describe(f)">{{ describe(f) }}</span>
+                </div>
+                <div v-for="c in b.columns" :key="c.tool.name" class="cell" :class="{ set: setHere(c.tool, fieldOf(c.tool, f.name)) }">
+                  <select v-if="f.choices.length" :value="value(c.tool, fieldOf(c.tool, f.name))" @change="set(c.tool, fieldOf(c.tool, f.name), ($event.target as HTMLSelectElement).value)">
+                    <option v-for="o in f.choices" :key="String(o)" :value="String(o)">{{ String(o) }}</option>
+                  </select>
+                  <label v-else-if="f.type === 'bool'" class="switch">
+                    <input
+                      type="checkbox"
+                      :checked="value(c.tool, fieldOf(c.tool, f.name)) === 'true'"
+                      @change="set(c.tool, fieldOf(c.tool, f.name), String(($event.target as HTMLInputElement).checked))"
+                    />
+                    {{ value(c.tool, fieldOf(c.tool, f.name)) === 'true' ? 'on' : 'off' }}
+                  </label>
+                  <input
+                    v-else
+                    :value="value(c.tool, fieldOf(c.tool, f.name))"
+                    :type="f.type === 'str' ? 'text' : 'number'"
+                    :min="f.low ?? undefined"
+                    :max="f.high ?? undefined"
+                    :step="f.type === 'float' ? 'any' : 1"
+                    @input="set(c.tool, fieldOf(c.tool, f.name), ($event.target as HTMLInputElement).value)"
+                  />
+                </div>
+              </div>
+            </div>
+          </section>
         </div>
       </div>
-    </section>
 
-    <section class="card">
-      <div class="head"><h5>Accounts</h5><span class="note">tokens for downloading models; kept on this machine, never shown again</span></div>
-      <div class="rows">
-        <div v-for="svc in SERVICES" :key="svc.name" class="row">
-          <div class="what">
-            <span class="title">
-              {{ svc.title }}
-              <button v-if="accounts[svc.name]?.source === 'settings'" class="link" :disabled="checking === svc.name" @click="saveToken(svc.name, '')">remove</button>
-            </span>
-            <span class="hint">{{ signedIn(accounts[svc.name]) }} · {{ svc.note }} · <a :href="svc.where" target="_blank" rel="noopener">get a token</a></span>
-          </div>
-          <form class="token" @submit.prevent="saveToken(svc.name, typed[svc.name] ?? '')">
-            <input v-model="typed[svc.name]" type="password" autocomplete="off" placeholder="paste a token" spellcheck="false" />
-            <button type="submit" :disabled="!typed[svc.name]?.trim() || checking === svc.name">{{ checking === svc.name ? 'Checking…' : 'Save' }}</button>
-          </form>
-        </div>
-      </div>
-    </section>
+      <p v-if="failure" class="band error">{{ failure }}</p>
 
-    <section v-for="g in groups" :key="g.title" class="card">
-      <div class="head"><h5>{{ g.title }}</h5></div>
-      <div v-for="t in g.tools" :key="t.tool.name" class="tool">
-        <div class="tool-head">
-          <span class="title">{{ t.title }}</span><span class="note">{{ t.tool.hint }}</span>
-        </div>
-        <div v-for="f in knobs(t.tool)" :key="f.name" class="row" :class="{ here: setHere(t.tool, f) }">
-          <div class="what">
-            <span class="title">
-              <i class="mark" :title="scope === 'machine' ? 'set for this machine' : 'set for this production'" />
-              {{ f.label || f.name }}
-              <button v-if="setHere(t.tool, f)" class="link" @click="drafts[t.tool.name][f.name] = null">reset</button>
-            </span>
-            <span class="hint">{{ describe(f) }}</span>
-          </div>
-          <select v-if="f.choices.length" :value="value(t.tool, f)" @change="set(t.tool, f, ($event.target as HTMLSelectElement).value)">
-            <option v-for="c in f.choices" :key="String(c)" :value="String(c)">{{ String(c) }}</option>
-          </select>
-          <label v-else-if="f.type === 'bool'" class="switch">
-            <input type="checkbox" :checked="value(t.tool, f) === 'true'" @change="set(t.tool, f, String(($event.target as HTMLInputElement).checked))" />
-            {{ value(t.tool, f) === 'true' ? 'on' : 'off' }}
-          </label>
-          <input
-            v-else
-            :value="value(t.tool, f)"
-            :type="f.type === 'str' ? 'text' : 'number'"
-            :min="f.low ?? undefined"
-            :max="f.high ?? undefined"
-            :step="f.type === 'float' ? 'any' : 1"
-            @input="set(t.tool, f, ($event.target as HTMLInputElement).value)"
-          />
-        </div>
-      </div>
-    </section>
-
-    <p v-if="failure" class="band error">{{ failure }}</p>
-
-    <footer v-if="dirty.length" class="foot">
-      <span class="note">
-        {{ changes }} change{{ changes === 1 ? '' : 's' }}
-        <template v-if="stale">
-          <template v-if="stale.changed.length">
-            · re-makes what depends on {{ stale.changed.join(', ') }}
-            <template v-for="(n, kind) in stale.stale" :key="kind"> · {{ n }} {{ kind }} go stale</template>
+      <footer v-if="dirty.length" class="foot">
+        <span class="note">
+          {{ changes }} change{{ changes === 1 ? '' : 's' }}
+          <template v-if="stale">
+            <template v-if="stale.changed.length">
+              · re-makes what depends on {{ stale.changed.join(', ') }}
+              <template v-for="(n, kind) in stale.stale" :key="kind"> · {{ n }} {{ kind }} go stale</template>
+            </template>
+            <template v-else> · nothing already made goes stale</template>
           </template>
-          <template v-else> · nothing already made goes stale</template>
-        </template>
-      </span>
-      <div class="buttons">
-        <button :disabled="saving" @click="load">Discard</button>
-        <button class="primary" :disabled="saving" @click="save">{{ saving ? 'Saving…' : 'Save' }}</button>
-      </div>
-    </footer>
+        </span>
+        <div class="buttons">
+          <button :disabled="saving" @click="load">Discard</button>
+          <button class="primary" :disabled="saving" @click="save">{{ saving ? 'Saving…' : 'Save' }}</button>
+        </div>
+      </footer>
+    </section>
   </main>
 </template>
 
 <style scoped>
 .settings {
   display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   gap: var(--space-3);
-  align-content: start;
-  max-width: 960px;
-  margin: 0 auto;
-  width: 100%;
+  height: calc(100vh - 56px);
+  overflow: hidden;
 }
 
-.top {
+.rail {
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: var(--space-2);
-  flex-wrap: wrap;
+  min-height: 0;
 }
 
-.top .grow {
-  flex: 1;
-  min-width: 200px;
+.rail .seg {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.rail .seg > * {
+  padding-inline: 4px;
+}
+
+.rail > .note {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
 }
 
 .production {
-  width: auto;
-  min-width: 220px;
   background: var(--raised);
+  font-size: var(--text-sm);
+}
+
+.tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: var(--space-1);
+  border-top: 1px solid var(--line);
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-input);
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--text-sm);
+  text-align: left;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.tab > span:first-child {
+  flex: 1;
+}
+
+.tab:hover {
+  color: var(--text);
+  background: var(--surface);
+}
+
+.tab.on {
+  color: var(--text);
+  background: var(--surface);
+  border-color: var(--line);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.count {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--accent);
+}
+
+.unsaved {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.toggle {
+  margin-top: auto;
 }
 
 .toggle,
@@ -397,6 +544,34 @@ const describe = (f: SettingField) =>
   color: var(--muted);
 }
 
+.pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.pane > .body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.pane > .band {
+  margin: var(--space-2) 0 0;
+}
+
+.split {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: var(--space-3);
+  align-items: start;
+}
+
+.split.wide {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .rows,
 .tool {
   padding: 0 var(--space-2);
@@ -406,32 +581,68 @@ const describe = (f: SettingField) =>
   border-top: 1px solid var(--line);
 }
 
+.empty {
+  padding: var(--space-2);
+  margin: 0;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) repeat(var(--columns), 120px);
+  gap: var(--space-2);
+  align-items: center;
+}
+
 .tool-head {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-1);
   padding: var(--space-2) 0 var(--space-1);
 }
 
 .tool-head .title {
+  grid-column: 1 / -1;
   font-size: var(--text-sm);
   font-weight: var(--weight-medium);
 }
 
+.tool-head .title.column {
+  grid-column: auto;
+  font-size: var(--text-xs);
+  text-align: right;
+}
+
+.tool-head .note {
+  font-weight: normal;
+}
+
 .row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 280px;
-  gap: var(--space-2);
-  align-items: center;
-  padding: 10px 0;
+  padding: 6px 0;
 }
 
 .row + .row {
   border-top: 1px dashed var(--line);
 }
 
-.tool .row {
-  grid-template-columns: minmax(0, 1fr) 160px;
+.row.model {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: var(--space-2);
+  align-items: center;
+  padding: 8px 0;
+}
+
+.row.model.list {
+  grid-template-columns: minmax(0, 1fr) 360px;
+  align-items: start;
+}
+
+.wide .row.model {
+  grid-template-columns: minmax(0, 1fr) 420px;
+}
+
+.rows > .row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: var(--space-2);
+  align-items: center;
 }
 
 .token {
@@ -442,11 +653,6 @@ const describe = (f: SettingField) =>
 
 .row .token input {
   text-align: left;
-}
-
-.row.list {
-  grid-template-columns: minmax(0, 1fr) 380px;
-  align-items: start;
 }
 
 .what {
@@ -468,6 +674,18 @@ const describe = (f: SettingField) =>
   font-weight: var(--weight-light);
   color: var(--muted);
   line-height: 1.4;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+}
+
+.row.model .hint {
+  -webkit-line-clamp: 2;
+}
+
+.row:focus-within .hint {
+  -webkit-line-clamp: unset;
 }
 
 .mark {
@@ -483,16 +701,22 @@ const describe = (f: SettingField) =>
   background: var(--accent);
 }
 
-.row input,
-.row select {
-  text-align: right;
+.cell input,
+.cell select,
+.row .token input {
   font-size: var(--text-xs);
   background: var(--raised);
   font-family: var(--font-mono);
 }
 
-.here input,
-.here select {
+.cell input:not([type='checkbox']),
+.cell select {
+  text-align: right;
+  width: 100%;
+}
+
+.cell.set input,
+.cell.set select {
   border-color: var(--accent-muted);
 }
 

@@ -1,4 +1,4 @@
-"""LTX-2.5 stages: a frame, its references and a prompt in, a clip out."""
+"""LTX-2.5 and 2.3 stages: a frame, its references and a prompt in, a clip out."""
 
 # One model resident at a time: the Gemma encoder is 15.4 GB of int8 and the DiT 21.5 GB. Each stage is a
 # function of its own so its model leaves with it: the encoder held in a local of `render` sat beside the
@@ -23,19 +23,22 @@ from difflab.tools import previews
 
 
 def video_vae_spec(settings: LtxSettings) -> models.ModelSpec:
-    file = HubFile.parse(settings.video_vae)
+    reference, prefix = settings.video_vae_source()
+    file = parse_file(reference)
 
     def build() -> nn.Module:
-        vae = weights.load_video_vae(file.fetch())
+        vae = weights.load_video_vae(file.fetch(), prefix)
         vae.enable_tiling()
         built: nn.Module = vae.to(app_config.DEVICE)
         return built
 
-    return models.ModelSpec(name=f"ltx_video_vae:{file.filename}", build=build, checkpoints=(file.path,), heavy=False)
+    return models.ModelSpec(
+        name=f"ltx_video_vae:{file.filename}:{prefix}", build=build, checkpoints=(file.path,), heavy=False
+    )
 
 
 def _audio_vae_spec(settings: LtxSettings) -> models.ModelSpec:
-    file = HubFile.parse(settings.audio_vae)
+    file = parse_file(settings.audio_vae_source())
 
     def build() -> nn.Module:
         vae, vocoder = weights.load_audio_vae(file.fetch())
@@ -44,17 +47,19 @@ def _audio_vae_spec(settings: LtxSettings) -> models.ModelSpec:
     return models.ModelSpec(name=f"ltx_audio_vae:{file.filename}", build=build, checkpoints=(file.path,), heavy=False)
 
 
-def _text_encoder_spec(settings: LtxSettings) -> models.ModelSpec:
-    file = HubFile.parse(settings.text_encoder)
+def _text_encoder_spec(settings: LtxSettings, version: str) -> models.ModelSpec:
+    file = HubFile.parse(settings.text_encoder_23 if version == config.V23 else settings.text_encoder)
+    load = weights.load_gemma3 if version == config.V23 else weights.load_text_encoder
     return models.ModelSpec(
         name=f"ltx_text_encoder:{file.filename}",
-        build=lambda: weights.load_text_encoder(file.fetch()).to(app_config.DEVICE),
+        build=lambda: load(file.fetch()).to(app_config.DEVICE),
         checkpoints=(file.path,),
     )
 
 
-def _connectors_spec(settings: LtxSettings) -> models.ModelSpec:
-    dit, encoder = parse_file(settings.checkpoint), HubFile.parse(settings.text_encoder)
+def _connectors_spec(settings: LtxSettings, version: str) -> models.ModelSpec:
+    dit = parse_file(settings.checkpoint)
+    encoder = HubFile.parse(settings.text_encoder_23 if version == config.V23 else settings.text_encoder)
     return models.ModelSpec(
         name=f"ltx_connectors:{dit.filename}:{encoder.filename}",
         build=lambda: weights.load_connectors(dit.fetch(), encoder.fetch()).to(app_config.DEVICE),
@@ -62,16 +67,16 @@ def _connectors_spec(settings: LtxSettings) -> models.ModelSpec:
     )
 
 
-def _dit_spec(settings: LtxSettings, loras: Sequence[tuple[str, float]]) -> models.ModelSpec:
+def _dit_spec(settings: LtxSettings, loras: Sequence[tuple[str, float]], version: str) -> models.ModelSpec:
     file = parse_file(settings.checkpoint)
     stack = [(parse_file(reference), strength) for reference, strength in loras]
 
     def build() -> nn.Module:
         with ui.step(f"Loading DiT ({file.path.stem})") as detail:
-            dit = weights.load_dit(file.fetch(), [(lora.fetch(), strength) for lora, strength in stack])
+            dit = weights.load_dit(file.fetch(), [(lora.fetch(), strength) for lora, strength in stack], version)
             attentions = attention.use_int8_attention(dit)
             loaded = ", ".join(f"{lora.filename}*{strength:g}" for lora, strength in stack) or "no LoRA"
-            detail(f"{loaded} · {attentions} int8 attn")
+            detail(f"LTX-{version} · {loaded} · {attentions} int8 attn")
         offload.stream_blocks(dit.transformer_blocks, app_config.DEVICE)
         for name, child in dit.named_children():
             if name != "transformer_blocks":
@@ -92,26 +97,30 @@ def condition(
     geometry: pipeline.Geometry,
     slots: weights.SlotEmbedding | None,
     closing: Frame | None = None,
+    version: str = config.V25,
 ) -> tuple[torch.Tensor | None, list[torch.Tensor], torch.Tensor | None]:
     """The opening frame's latent, each reference's with its slot identity added, and the landing's."""
     vae = models.registry.acquire(video_vae_spec(settings))
+    crf = config.IMAGE_CRF[version]
     with ui.step("Encoding frames and references") as detail:
-        opening = pipeline.encode_opening(vae, frame, geometry) if frame is not None else None
+        opening = pipeline.encode_opening(vae, frame, geometry, crf) if frame is not None else None
         guides = [
             pipeline.encode_reference(vae, reference, geometry, slots, slot)
             for slot, reference in enumerate(references, start=1)
             if slots is not None
         ]
-        landing = pipeline.encode_opening(vae, closing, geometry) if closing is not None else None
+        landing = pipeline.encode_opening(vae, closing, geometry, crf) if closing is not None else None
         detail(f"{(opening is not None) + len(guides) + (landing is not None)} encoded")
     return opening, guides, landing
 
 
-def encode(prompt: str, settings: LtxSettings) -> pipeline.Conditioning:
+def encode(prompt: str, settings: LtxSettings, version: str = config.V25) -> pipeline.Conditioning:
     ui.stage("encoding")
-    gemma = models.registry.acquire(_text_encoder_spec(settings))
-    connectors = models.registry.acquire(_connectors_spec(settings))
-    tokenizer = AutoTokenizer.from_pretrained(config.LAYOUT.fetch() / "tokenizer")
+    gemma = models.registry.acquire(_text_encoder_spec(settings, version))
+    connectors = models.registry.acquire(_connectors_spec(settings, version))
+    tokenizer = AutoTokenizer.from_pretrained(
+        config.GEMMA3.fetch() if version == config.V23 else config.LAYOUT.fetch() / "tokenizer"
+    )
     with ui.step("Encoding prompt") as detail, torch.no_grad():
         conditioning = pipeline.encode_prompt(gemma, connectors, tokenizer, prompt)
         detail(f"{len(tokenizer(prompt).input_ids)} tokens")
@@ -126,20 +135,22 @@ def sample(
     opening: torch.Tensor | None,
     guides: Sequence[torch.Tensor],
     landing: torch.Tensor | None = None,
+    version: str = config.V25,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     ui.stage("sampling")
-    dit = models.registry.acquire(_dit_spec(settings, loras))
+    dit = models.registry.acquire(_dit_spec(settings, loras, version))
+    sigmas = settings.schedule()
     blocks = dit.transformer_blocks
     rows = geometry.latent_frames * geometry.tokens_per_frame + sum(guide[0, 0].numel() for guide in guides)
     settled = offload.fit(blocks, config.SAMPLE_RESERVE + rows * config.SAMPLE_RESERVE_PER_ROW)
     ui.line(f"{settled}/{len(blocks)} DiT blocks resident for {rows} rows")
     previewer = previews.for_ltx(settings)
-    with ui.sampling("Sampling", len(config.SIGMAS) - 1, len(blocks)) as tick:
+    with ui.sampling("Sampling", len(sigmas) - 1, len(blocks)) as tick:
         hooks = [block.register_forward_hook(lambda *_: tick()) for block in blocks]
         try:
             return pipeline.sample(
-                dit, conditioning, geometry, settings.seed, opening, guides, settings.reference_strength, previewer,
-                landing,
+                dit, conditioning, geometry, settings.seed, sigmas, opening, guides, settings.reference_strength,
+                previewer, landing,
             )  # fmt: skip
         finally:
             for hook in hooks:
@@ -176,8 +187,10 @@ def latents(
     settings = settings or LtxSettings()
     if len(references) > config.MSR_MAX_REFERENCES:
         raise ValueError(f"MSR places at most {config.MSR_MAX_REFERENCES} references, got {len(references)}")
-    weights.require_version(parse_file(settings.checkpoint).fetch())
-    loras = settings.stack() if references else []
+    version = settings.version()
+    if references and version == config.V23:
+        raise ValueError("references are placed by MSR, which is LTX-2.5's: pick a 2.5 model, or drop them")
+    loras = settings.stack(bool(references))
     slots = None
     if references:
         slots = next(
@@ -192,9 +205,9 @@ def latents(
     else:
         raise ValueError("a clip with no opening frame needs its canvas size")
     ui.line(f"{geometry.width}x{geometry.height}, {geometry.frame_count} frames, {len(references)} reference(s)")
-    opening, guides, landing = condition(frame, references, settings, geometry, slots, closing)
-    conditioning = encode(prompt, settings)
-    return sample(conditioning, geometry, settings, loras, opening, guides, landing)
+    opening, guides, landing = condition(frame, references, settings, geometry, slots, closing, version)
+    conditioning = encode(prompt, settings, version)
+    return sample(conditioning, geometry, settings, loras, opening, guides, landing, version)
 
 
 def render(frame: Frame, prompt: str, settings: LtxSettings | None = None, references: Sequence[Frame] = ()) -> Clip:

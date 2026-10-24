@@ -190,6 +190,7 @@ class Take:
     voices: dict[str, str] = dataclasses.field(default_factory=dict)  # member -> how it sounds, from the bible
     look: str = ""  # the style members' words: the grade and lens every shot keeps
     engine: str = ""  # the video model the production renders on; "" is MiniMax H3
+    msr: bool = True  # on LTX, whether the model places references: 2.3 has no MSR
 
 
 @dataclass(frozen=True)
@@ -1026,7 +1027,17 @@ def take_of(connection: sqlite3.Connection, production: store.Production, chapte
         voices={member.slug: said for member in members if (said := voice_of(member))},
         look=look_of(connection, production.id),
         engine=engine,
+        msr=engine != ltx_config.ENGINE or _ltx_version(production.id) == ltx_config.V25,
     )
+
+
+def _ltx_version(production_id: int) -> str:
+    from difflab.models.ltx25.settings import LtxSettings
+    from difflab.screenplay import settings  # here: it imports the tools, which import this module
+
+    chosen, _ = settings.effective("render_ltx", production_id)
+    assert isinstance(chosen, LtxSettings)
+    return chosen.version()
 
 
 def look_of(connection: sqlite3.Connection, production_id: int) -> str:

@@ -157,7 +157,11 @@ def run_render_clip(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
 
 def run_write_ltx_prompt(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
     text = write_prompt.write_ltx_prompt(
-        _opening(inputs), str(inputs["idea"]), _references(inputs), VideoPromptSettings(**settings)
+        _opening(inputs),
+        str(inputs["idea"]),
+        _references(inputs),
+        VideoPromptSettings(**settings),
+        str(inputs.get("version", ltx_config.V25)),
     )
     return {"text": text}
 

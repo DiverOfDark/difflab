@@ -31,7 +31,7 @@ const ENGINES = [
 
 const VIDEO_ENGINES = [
   { id: 'minimax-h3', name: 'MiniMax H3', give: 'photos after the first steer it as references', get: 'its own caption format' },
-  { id: 'ltx-2.5', name: 'LTX-2.5', give: 'up to 5 photos after the first, as Image 1, Image 2…', get: '8 steps · MSR references' },
+  { id: 'ltx-2.5', name: 'LTX', give: 'on 2.5, up to 5 photos after the first, as Image 1, Image 2…', get: '2.5 or 2.3 · MSR references on 2.5' },
 ] as const
 
 const USES: Record<string, string[]> = {
@@ -184,7 +184,7 @@ const groups = computed(() => {
   if (shows('video') && ltx.value)
     out.push({
       title: 'Video',
-      meta: `8 steps · seed ${j.ltx.seed}`,
+      meta: `seed ${j.ltx.seed}`,
       rows: [
         ...reshape(j),
         {

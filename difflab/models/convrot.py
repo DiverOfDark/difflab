@@ -24,18 +24,37 @@ GROUP = 256
 _H4 = [[1.0, 1, 1, -1], [1, 1, -1, 1], [1, -1, 1, 1], [-1, 1, 1, 1]]
 
 
-def dequantize(weight: torch.Tensor, scale: torch.Tensor, rows: int = 16384) -> torch.Tensor:
-    """The bf16 matrix behind a ConvRot layer, for one that is looked up rather than multiplied (an embedding)."""
+def _hadamard() -> torch.Tensor:
     h4 = torch.tensor(_H4)
     h = h4
     for _ in range(3):
         h = torch.kron(h, h4)
-    h /= 16
+    return h / 16
+
+
+def dequantize(weight: torch.Tensor, scale: torch.Tensor, rows: int = 16384) -> torch.Tensor:
+    """The bf16 matrix behind a ConvRot layer, for one that is looked up rather than multiplied (an embedding)."""
+    h = _hadamard()
     out = torch.empty(weight.shape, dtype=torch.bfloat16)
     for start in range(0, weight.shape[0], rows):  # a 150k-row vocab in fp32 at once is 2.5 GB
         part = weight[start : start + rows].float() * scale[start : start + rows].float().reshape(-1, 1)
         out[start : start + rows] = (part.view(part.shape[0], -1, GROUP) @ h).view(part.shape).to(torch.bfloat16)
     return out
+
+
+def quantize(weight: torch.Tensor, rows: int = 4096) -> tuple[torch.Tensor, torch.Tensor]:
+    """A float matrix as ConvRot int8 and its per-row scales: what an fp8 checkpoint is turned into, since
+    no fp8 GEMM runs on Ampere."""
+    h = _hadamard()
+    q = torch.empty(weight.shape, dtype=torch.int8)
+    scale = torch.empty((weight.shape[0], 1), dtype=torch.float32)
+    for start in range(0, weight.shape[0], rows):
+        part = weight[start : start + rows].float()
+        rotated = (part.view(part.shape[0], -1, GROUP) @ h).view(part.shape)
+        row = (rotated.abs().amax(dim=1, keepdim=True) / 127).clamp(min=1e-12)
+        q[start : start + rows] = (rotated / row).round().clamp(-127, 127).to(torch.int8)
+        scale[start : start + rows] = row
+    return q, scale
 
 
 def read_quant_meta(blob: torch.Tensor) -> dict[str, object]:
@@ -51,15 +70,18 @@ class ConvRotLinear(nn.Module):
     """
 
     weight: torch.Tensor  # int8 [N, K]
-    scale: torch.Tensor  # fp32 [N, 1]
+    scale: torch.Tensor  # fp32 [N, 1]; a scalar for a plain per-tensor layer
     bias: torch.Tensor | None
     lora_a: torch.Tensor | None
     lora_b: torch.Tensor | None
 
-    def __init__(self, weight: torch.Tensor, scale: torch.Tensor, bias: torch.Tensor | None = None) -> None:
+    def __init__(
+        self, weight: torch.Tensor, scale: torch.Tensor, bias: torch.Tensor | None = None, convrot: bool = True
+    ) -> None:
         super().__init__()
+        self.convrot = convrot
         self.register_buffer("weight", weight, persistent=False)  # int8 [N, K]
-        self.register_buffer("scale", scale.reshape(-1, 1).float(), persistent=False)  # [N, 1]
+        self.register_buffer("scale", (scale.reshape(-1, 1) if convrot else scale).float(), persistent=False)
         self.register_buffer("bias", bias, persistent=False)
         # Buffers rather than plain attributes, so a LoRA travels with its block when it is streamed.
         self.register_buffer("lora_a", None, persistent=False)
@@ -75,7 +97,7 @@ class ConvRotLinear(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         out: torch.Tensor = comfy_kitchen.int8_linear(
-            x, self.weight, self.scale, self.bias, x.dtype, convrot=True, convrot_groupsize=GROUP
+            x, self.weight, self.scale, self.bias, x.dtype, convrot=self.convrot, convrot_groupsize=GROUP
         )
         lora_a, lora_b = self.lora_a, self.lora_b
         if lora_a is not None and lora_b is not None:

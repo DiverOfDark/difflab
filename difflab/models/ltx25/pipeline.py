@@ -1,8 +1,9 @@
-"""LTX-2.5 distilled sampling: an opening frame, MSR references and a prompt into video and audio latents."""
+"""LTX-2.5 and 2.3 sampling: an opening frame, MSR references and a prompt into video and audio latents."""
 
 # Step for step diffusers' `LTX2ConditionPipeline`. References are ComfyUI's `LTXVAddGuide` as the MSR guide node
 # calls it: appended clean tokens with their own RoPE coordinates, cropped after sampling.
 
+import itertools
 import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -105,10 +106,10 @@ def _encode(vae: AutoencoderKLLTX2Video, pixels: torch.Tensor) -> torch.Tensor:
     return _normalized(vae, latents)
 
 
-def encode_opening(vae: AutoencoderKLLTX2Video, frame: Frame, geometry: Geometry) -> torch.Tensor:
+def encode_opening(vae: AutoencoderKLLTX2Video, frame: Frame, geometry: Geometry, crf: int) -> torch.Tensor:
     """Re-compressed at the training CRF at its own size, then covered onto the canvas, in diffusers' order."""
     image = (frame.pixels.clamp(0, 1) * 255).round().to(torch.uint8).numpy()
-    image = apply_image_conditioning_crf(image, config.IMAGE_CRF)
+    image = apply_image_conditioning_crf(image, crf)
     pixels = torch.from_numpy(np.ascontiguousarray(image)).float().permute(2, 0, 1)[None]
     source_height, source_width = pixels.shape[-2:]
     scale = max(geometry.height / source_height, geometry.width / source_width)
@@ -159,6 +160,7 @@ def sample(
     conditioning: Conditioning,
     geometry: Geometry,
     seed: int,
+    sigmas: Sequence[float],
     opening: torch.Tensor | None = None,
     references: Sequence[torch.Tensor] = (),
     reference_strength: float = 1.0,
@@ -205,7 +207,7 @@ def sample(
     video_coords = torch.cat(coords, dim=2)
     audio_coords = dit.audio_rope.prepare_audio_coords(1, geometry.audio_latents, device)
 
-    for step, (sigma, following) in enumerate(zip(config.SIGMAS, config.SIGMAS[1:], strict=False)):
+    for step, (sigma, following) in enumerate(itertools.pairwise(sigmas)):
         timestep = torch.full((1,), sigma * 1000.0, device=device)
         with torch.no_grad():
             video_velocity, audio_velocity = dit(

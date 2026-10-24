@@ -19,7 +19,7 @@ from PIL import Image
 
 from difflab import config
 from difflab.core import context, events, models, protocol, ui, video_io
-from difflab.core.hub import HubFile
+from difflab.core.hub import HubFile, parse_file
 from difflab.models import tae, taeltx
 from difflab.models.ltx25 import config as ltx_config
 from difflab.models.ltx25 import pipeline as ltx_pipeline
@@ -79,7 +79,7 @@ def for_sampling(settings: VideoSettings) -> Previewer | None:
 
 
 def for_ltx(settings: LtxSettings) -> Previewer | None:
-    """An LTX-2.5 previewer, or `None` when previews are off or cannot work."""
+    """An LTX previewer, or `None` when previews are off or cannot work."""
     if not _wanted(settings.previews):
         return None
     try:
@@ -89,11 +89,11 @@ def for_ltx(settings: LtxSettings) -> Previewer | None:
         return None
     ctx = context.current()
     return Previewer(
-        len(ltx_config.SIGMAS) - 1,
+        len(settings.schedule()) - 1,
         ctx.preview_item,
         ctx.preview_name,
         lambda video: taeltx.decode(models.registry.acquire(taeltx_spec()), video, scale=settings.preview_scale),
-        lambda audio: _decode_ltx_audio(audio, settings.audio_vae),
+        lambda audio: _decode_ltx_audio(audio, settings.audio_vae_source()),
         ltx_config.FPS,
         ltx_config.AUDIO_SAMPLE_RATE,
     )
@@ -185,7 +185,7 @@ def _decode_ltx_audio(latents: torch.Tensor, checkpoint: str) -> torch.Tensor:
     global _ltx_audio
     with _audio_lock:
         if _ltx_audio is None or _ltx_audio[0] != checkpoint:
-            audio_vae, vocoder = ltx_weights.load_audio_vae(HubFile.parse(checkpoint).fetch())
+            audio_vae, vocoder = ltx_weights.load_audio_vae(parse_file(checkpoint).fetch())
             _ltx_audio = checkpoint, audio_vae.float(), vocoder.float()
         return ltx_pipeline.decode_audio(_ltx_audio[1], _ltx_audio[2], latents)
 

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import re
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -42,9 +44,15 @@ _OPTIONAL: dict[str, tuple[str, ...]] = {
 }
 _QUANT_PARTS = (".comfy_quant", ".weight_scale", ".weight_s_rel", ".weight_s_channel", ".weight_codebook")
 _W4 = "asym_w4a8_int8"
-_LORA_BASE = {"ltx-loras": "ltx-model", "video-loras": "video-model", "editor-21-loras": "editor-21"}
+# 2.3's DiT is 2.5's without the keyframe marker, so the 2.5 default stands in as its base.
+_LORA_BASE = {
+    "ltx-loras": "ltx-model", "ltx23-loras": "ltx-model", "video-loras": "video-model", "editor-21-loras": "editor-21"
+}  # fmt: skip
 # LTX's loader looks every target up and raises on one it lacks; H3's and Qwen's skip it.
-_LORA_STRICT = {"ltx-loras"}
+_LORA_STRICT = {"ltx-loras", "ltx23-loras"}
+_LTX_DIT = "model.diffusion_model."
+_KEYFRAMES = _LTX_DIT + "keyframes_abs_pos_embedding"
+_FF_BIAS = re.compile(r"transformer_blocks\.\d+\.ff\.net\.(0\.proj|2)\.bias$")  # 2.3's, which 2.5 dropped
 _LORA_PARTS = (
     ".lora_A.weight",
     ".lora_A.default.weight",
@@ -114,8 +122,9 @@ def _runs(role: str, meta: dict[str, Any]) -> bool:
     if role == "video-vae":
         return meta == {"format": "int8_tensorwise", "convrot": True, "convrot_groupsize": 256}
     grouped = meta.get("convrot_groupsize", 256) == 256
-    if meta.get("format") == _W4:
-        return role.startswith("ltx-") and grouped
+    if role.startswith("ltx"):
+        # The LTX loader runs int8 with or without the rotation, and turns fp8 into ConvRot int8.
+        return (meta.get("format") in (_W4, "int8_tensorwise") and grouped) or meta.get("format") == "float8_e4m3fn"
     if not meta and role == "video-model":
         return True  # `_quantization_metadata` names the layer without a format; the loader assumes ConvRot
     return (bool(meta.get("convrot")) and grouped) or role == "video-text-encoder"
@@ -137,12 +146,22 @@ def _shapes(header: hub.Header, quant: dict[str, dict[str, Any]]) -> dict[str, t
 def _against(role: str, found: hub.Header, reference: hub.Header) -> Fit:
     optional = _OPTIONAL.get(role, ())
     kept: Callable[[str], bool] = lambda name: not any(part in name for part in optional)  # noqa: E731
+    notes = _version(found, reference)
+    if role == "ltx-model":
+        # A ComfyUI checkpoint carries its VAEs and text projection beside the DiT, and only the DiT is compared.
+        v23 = _KEYFRAMES not in found.tensors and any(name.startswith(_LTX_DIT) for name in found.tensors)
+        kept = lambda name: (
+            name.startswith(_LTX_DIT)
+            and not (  # noqa: E731
+                v23 and (name == _KEYFRAMES or _FF_BIAS.search(name))
+            )
+        )
+        notes = ["LTX-2.3: read through Gemma 3, with the 2.3 LoRAs, and no MSR references"] if v23 else []
     quant, reference_quant = _quant(found), _quant(reference)
     shapes = {k: v for k, v in _shapes(found, quant).items() if kept(k)}
     wanted = {k: v for k, v in _shapes(reference, reference_quant).items() if kept(k)}
     missing, extra = sorted(wanted.keys() - shapes.keys()), sorted(shapes.keys() - wanted.keys())
     resized = sorted(k for k in wanted.keys() & shapes.keys() if wanted[k] != shapes[k])
-    notes = _version(found, reference)
     if missing or extra or resized:
         problems = [
             *([f"lacks {len(missing)} tensors it needs: {_some(missing)}"] if missing else []),
@@ -154,7 +173,7 @@ def _against(role: str, found: hub.Header, reference: hub.Header) -> Fit:
         if not missing and not extra and len(resized) <= 2:
             summary = "same layout, different size"
         mine = found.metadata.get("model_version")
-        if mine and mine != reference.metadata.get("model_version", mine):
+        if mine and mine != reference.metadata.get("model_version", mine) and role != "ltx-model":
             summary = f"version {mine}: this field runs {reference.metadata['model_version']}"
         return Fit(BAD, summary, problems + notes, like=guess or "")
     refused = sorted(layer for layer, meta in quant.items() if not _runs(role, meta))
@@ -177,9 +196,15 @@ def _against(role: str, found: hub.Header, reference: hub.Header) -> Fit:
 
 
 def _describe(quant: dict[str, dict[str, Any]], dense: set[str]) -> str:
-    w4 = sum(meta.get("format") == _W4 for meta in quant.values())
-    parts = [f"int8 ConvRot ({len(quant) - w4} layers)"] if len(quant) > w4 else []
-    parts += [f"4-bit ConvRot ({w4})"] if w4 else []
+    def kind(meta: dict[str, Any]) -> str:
+        if meta.get("format") == _W4:
+            return "4-bit ConvRot"
+        if meta.get("format") == "float8_e4m3fn":
+            return "fp8, made int8 ConvRot as it loads"
+        return "int8 ConvRot" if meta.get("convrot", True) else "int8"
+
+    counted = Counter(kind(meta) for meta in quant.values())
+    parts = [f"{name} ({count} layers)" for name, count in counted.most_common()]
     parts += [] if quant else ["/".join(sorted(dense & {"BF16", "F16", "F32", *_FP8}))]
     return "fits · " + " + ".join(parts)
 

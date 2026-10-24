@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import Any
 
 from difflab import store
+from difflab.models.ltx25 import config as ltx_config
 from difflab.screenplay import settings
 from difflab.work.quick import Job
 
@@ -39,6 +40,8 @@ def plan(job: Job) -> list[JobSpec]:
         references = [str(p) for p in job.photos[1:]]
         if job.idea:
             writing = {"photo": photo, "idea": job.idea, **({"references": references} if ltx else {}), **cut}
+            if ltx and (version := job.ltx.version()) != ltx_config.V25:
+                writing["version"] = version
             jobs.append(
                 JobSpec(
                     "write_ltx_prompt" if ltx else "write_video_prompt",
