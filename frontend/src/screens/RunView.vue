@@ -5,7 +5,7 @@
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import type { Job } from '../api'
+import { deleteRun, type Job } from '../api'
 import DeleteButton from '../components/DeleteButton.vue'
 import DeliverScreen from '../components/DeliverScreen.vue'
 import RenderScreen from '../components/RenderScreen.vue'
@@ -63,7 +63,7 @@ function again(spec: Job) {
       {{ finished }}
     </button>
     <span class="mono muted">{{ id }}</span>
-    <DeleteButton :id="id" class="end" :disabled="working" @deleted="deleted" />
+    <DeleteButton :remove="() => deleteRun(id)" what="the run and the files it made" why="cancel the run first" class="end" :disabled="working" @deleted="deleted" />
   </div>
   <RenderScreen v-if="screen === 'render' && run" :run="run" />
   <DeliverScreen v-else-if="screen === 'deliver' && run" :run="run" :record="record" @again="again" />

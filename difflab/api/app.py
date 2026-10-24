@@ -30,6 +30,7 @@ from difflab.models.minimax_h3.settings import VideoSettings
 from difflab.screenplay import (
     assembling,
     compat,
+    downloads,
     drawn,
     ideas,
     ingest,

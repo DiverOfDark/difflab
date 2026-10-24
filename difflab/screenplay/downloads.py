@@ -16,6 +16,7 @@ from fnmatch import fnmatch
 from typing import Any
 
 from huggingface_hub import scan_cache_dir
+from huggingface_hub.constants import HF_HUB_CACHE
 
 from difflab import store, tools
 from difflab.core import hub
@@ -108,12 +109,12 @@ def _named_by(uses: list[tuple[Pin, str, str]], repo: str, revision: str, name: 
 def listing() -> list[dict[str, Any]]:
     """One entry per Hub snapshot and per pinned file, biggest first, each file with what names it."""
     uses = _uses()
-    out = []
-    for repo in scan_cache_dir(hub.HF_HUB_CACHE).repos:
+    out: list[dict[str, Any]] = []
+    for repo in scan_cache_dir(HF_HUB_CACHE).repos:
         if repo.repo_type != "model":
             continue
         for revision in repo.revisions:
-            files = [
+            files: list[dict[str, Any]] = [
                 {"name": rel, "size": f.size_on_disk, "uses": _named_by(uses, repo.repo_id, revision.commit_hash, rel)}
                 for f in revision.files
                 if not (rel := f.file_path.relative_to(revision.snapshot_path).as_posix()).startswith(MARKER)
@@ -176,7 +177,7 @@ def delete(entry_id: str, names: list[str]) -> None:
         shutil.rmtree(hub.URL_CACHE / sha)
         return
     repo_id, _, commit = entry_id.rpartition("@")
-    cache = scan_cache_dir(hub.HF_HUB_CACHE)
+    cache = scan_cache_dir(HF_HUB_CACHE)
     revision = next(
         (r for repo in cache.repos if repo.repo_id == repo_id for r in repo.revisions if r.commit_hash == commit), None
     )

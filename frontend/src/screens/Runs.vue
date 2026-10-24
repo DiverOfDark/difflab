@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
-import { thumbUrl } from '../api'
+import { deleteRun, thumbUrl } from '../api'
 import DeleteButton from '../components/DeleteButton.vue'
 import { refresh, state } from '../store'
 
@@ -53,7 +53,7 @@ const working = (status: string) => ['live', 'queued', 'paused'].includes(status
             </td>
             <td class="mono muted">{{ when(one.started) }}</td>
             <td>
-              <DeleteButton :id="one.id" :disabled="working(one.status)" @deleted="refresh" />
+              <DeleteButton :remove="() => deleteRun(one.id)" what="the run and the files it made" why="cancel the run first" :disabled="working(one.status)" @deleted="refresh" />
             </td>
           </tr>
           <tr v-if="!rows.length">

@@ -6,6 +6,7 @@
  */
 import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import Downloads from '../components/Downloads.vue'
 import LoraList from '../components/LoraList.vue'
 import ModelPicker from '../components/ModelPicker.vue'
 import {
@@ -72,7 +73,7 @@ const TABS: { key: string; title: string; roles: string[]; tools: [string, strin
   {
     key: 'ltx',
     title: 'LTX',
-    roles: ['ltx-model', 'ltx-loras', 'ltx-text-encoder', 'ltx23-text-encoder', 'ltx23-loras', 'ltx-video-vae', 'ltx-audio-vae'],
+    roles: ['ltx-model', 'ltx-loras', 'ltx-text-encoder', 'ltx23-text-encoder', 'ltx23-loras', 'ltx23-msr', 'ltx-video-vae', 'ltx-audio-vae'],
     tools: [['render_ltx', 'Rendering']],
   },
   {
@@ -295,13 +296,16 @@ const describe = (f: SettingField) =>
       </p>
 
       <nav class="tabs">
-        <button v-for="t in tabs" :key="t.key" class="tab" :class="{ on: current.key === t.key }" @click="tab = t.key">
+        <button v-for="t in tabs" :key="t.key" class="tab" :class="{ on: tab !== 'accounts' && tab !== 'downloads' && current.key === t.key }" @click="tab = t.key">
           <span>{{ t.title }}</span>
           <i v-if="t.changed" class="unsaved" title="unsaved changes" />
           <span v-if="t.here" class="count" :title="`${t.here} set ${scope === 'machine' ? 'for this machine' : 'for this production'}`">{{ t.here }}</span>
         </button>
         <button class="tab" :class="{ on: tab === 'accounts' }" @click="tab = 'accounts'">
           <span>Accounts</span>
+        </button>
+        <button class="tab" :class="{ on: tab === 'downloads' }" @click="tab = 'downloads'">
+          <span>Downloads</span>
         </button>
       </nav>
 
@@ -310,7 +314,8 @@ const describe = (f: SettingField) =>
 
     <section class="pane">
       <div class="body">
-        <section v-if="tab === 'accounts'" class="card">
+        <Downloads v-if="tab === 'downloads'" @failed="(m) => (failure = m)" />
+        <section v-else-if="tab === 'accounts'" class="card">
           <div class="head"><h5>Accounts</h5><span class="note">tokens for downloading models; kept on this machine, never shown again</span></div>
           <div class="rows">
             <div v-for="svc in SERVICES" :key="svc.name" class="row">

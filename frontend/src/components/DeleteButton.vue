@@ -1,12 +1,11 @@
 <script setup lang="ts">
-/** Delete a run in two clicks: the first arms the button, the second within ARMED_MS deletes. */
+/** Delete in two clicks: the first arms the button, the second within ARMED_MS deletes. */
 import { onBeforeUnmount, ref } from 'vue'
-import { deleteRun } from '../api'
 
 const ARMED_MS = 4000
 
-const props = defineProps<{ id: string; disabled?: boolean }>()
-const emit = defineEmits<{ deleted: [] }>()
+const props = defineProps<{ remove: () => Promise<unknown>; what: string; disabled?: boolean; why?: string }>()
+const emit = defineEmits<{ deleted: []; failed: [message: string] }>()
 
 const armed = ref(false)
 const deleting = ref(false)
@@ -28,10 +27,11 @@ async function click() {
   disarm()
   deleting.value = true
   try {
-    await deleteRun(props.id)
+    await props.remove()
     emit('deleted')
   } catch (problem) {
     failed.value = problem instanceof Error ? problem.message : String(problem)
+    emit('failed', failed.value)
   } finally {
     deleting.value = false
   }
@@ -45,7 +45,7 @@ onBeforeUnmount(() => clearTimeout(timer))
     class="delete"
     :class="{ armed, failed: !!failed }"
     :disabled="disabled || deleting"
-    :title="failed || (disabled ? 'cancel the run first' : armed ? 'click again to delete the run and the files it made' : 'delete the run and the files it made')"
+    :title="failed || (disabled ? why : armed ? `click again to delete ${what}` : `delete ${what}`)"
     @click="click"
     @mouseleave="disarm"
     @blur="disarm"

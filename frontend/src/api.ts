@@ -879,6 +879,12 @@ export const checkModel = (role: string, value: string) => {
 }
 export const forgetModel = (role: string, value: string) =>
   json<Record<string, string[]>>('/api/models', send('DELETE', { role, value }))
+export type DownloadUse = { role: string; where: string }
+export type DownloadFile = { name: string; size: number; uses: DownloadUse[] }
+export type Download = { id: string; source: 'huggingface' | 'civitai' | 'url'; name: string; revision: string; size: number; files: DownloadFile[] }
+export const listDownloads = () => json<Download[]>('/api/downloads')
+export const deleteDownload = (id: string, files: string[] = []) => json<Download[]>('/api/downloads', send('DELETE', { id, files }))
+
 export type Account = { source: string; account: string; tail: string }
 export const listAccounts = () => json<Record<string, Account>>('/api/accounts')
 export const saveAccount = (service: string, token: string) =>
