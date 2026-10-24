@@ -20,8 +20,12 @@ ROLE_ORDER = {"body": 1, "view": 1, "object": 1, "environment": 1, "face": 2}
 
 
 def pictures(take: Take, index: int) -> tuple[str, ...]:
-    """One of the crops `compiler.references` would hold per member, at most five; on 2.3 at most four, and no
-    place, since the opening frame is its scene."""
+    """One of the crops `compiler.references` would hold per member, at most five; on 2.3 at most four, no
+    place, since the opening frame is its scene, and none at all when the shot opens on a frame."""
+    # 2.3 MSR beside a pinned opening frame cuts away after frame 0, the pseudo-video opening on that frame
+    # too; the frame alone held face, bikini and necklace through 8 s (2026-10-25, 10Eros v1.4 DMD).
+    if take.ltx == ltx.V23 and not compiler.unframed(take, index):
+        return ()
     held = compiler.references(take, index)
     cast = take.chunks[index].cast
     if take.ltx == ltx.V23:
