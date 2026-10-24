@@ -53,6 +53,7 @@ _LORA_BASE = {
 _LTX_LORAS = _LORA_STRICT = {"ltx-loras", "ltx23-loras", "ltx23-msr"}
 _LTX_DIT = "model.diffusion_model."
 _KEYFRAMES = _LTX_DIT + "keyframes_abs_pos_embedding"
+_PROJECTION = "text_embedding_projection."
 _FF_BIAS = re.compile(r"transformer_blocks\.\d+\.ff\.net\.(0\.proj|2)\.bias$")  # 2.3's, which 2.5 dropped
 _LORA_PARTS = (
     ".lora_A.weight",
@@ -176,6 +177,16 @@ def _against(role: str, found: hub.Header, reference: hub.Header) -> Fit:
         if mine and mine != reference.metadata.get("model_version", mine) and role != "ltx-model":
             summary = f"version {mine}: this field runs {reference.metadata['model_version']}"
         return Fit(BAD, summary, problems + notes, like=guess or "")
+    if (
+        role == "ltx-model"
+        and _KEYFRAMES not in found.tensors
+        and not any(n.startswith(_PROJECTION) for n in found.tensors)
+    ):
+        return Fit(
+            BAD,
+            "a 2.3 transformer alone: the text projection 2.3 keeps in its checkpoint is missing",
+            ["pick the full checkpoint of the same model, or a 2.3 text encoder that carries the projection"],
+        )
     refused = sorted(layer for layer, meta in quant.items() if not _runs(role, meta))
     if refused:
         formats = sorted({json.dumps(quant[layer], sort_keys=True) for layer in refused})
