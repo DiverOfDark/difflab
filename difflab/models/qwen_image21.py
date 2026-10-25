@@ -279,29 +279,43 @@ class Editor21:
         pipe.scheduler = FlowMatchEulerDiscreteScheduler.from_config({**base, **(TURBO_SCHEDULER if turbo else {})})
         sigmas = TURBO_SIGMAS if turbo else None
         steps = len(TURBO_SIGMAS) if turbo else steps
-        with ui.EditProgress(pipe.transformer, steps) as progress:
-            result = pipe(
-                image=images,
-                prompt=prompt,
-                negative_prompt=negative_prompt if cfg > 1 else None,
-                true_cfg_scale=cfg,
-                num_inference_steps=steps,
-                sigmas=sigmas,
-                height=height,
-                width=width,
-                # The condition images are resized to this area; the target's keeps them 1:1 with the output.
-                output_resolution=round(math.sqrt(width * height)),
-                generator=torch.Generator("cpu").manual_seed(seed),
-                callback_on_step_end=progress.on_step_end,
-                # Decoded below instead: inside the call the step-0 prefix KV cache is still held, and a 2 MP
-                # decode then asked for 2.13 GB more with 21.6 GB in use. Tiling fits but seams the sky every
-                # 192 px, its tile stride (2026-10-10).
-                output_type="latent",
-            )
-            latents = result.images
-            del result
-            torch.cuda.empty_cache()
-            return _decode(pipe, latents, height, width)
+        blocks = pipe.transformer.transformer_blocks
+
+        def run() -> torch.Tensor:
+            with ui.EditProgress(pipe.transformer, steps) as progress:
+                result = pipe(
+                    image=images,
+                    prompt=prompt,
+                    negative_prompt=negative_prompt if cfg > 1 else None,
+                    true_cfg_scale=cfg,
+                    num_inference_steps=steps,
+                    sigmas=sigmas,
+                    height=height,
+                    width=width,
+                    # The condition images are resized to this area; the target's keeps them 1:1 with the output.
+                    output_resolution=round(math.sqrt(width * height)),
+                    generator=torch.Generator("cpu").manual_seed(seed),
+                    callback_on_step_end=progress.on_step_end,
+                    # Decoded below instead: inside the call the step-0 prefix KV cache is still held, and a 2 MP
+                    # decode then asked for 2.13 GB more with 21.6 GB in use. Tiling fits but seams the sky every
+                    # 192 px, its tile stride (2026-10-10).
+                    output_type="latent",
+                )
+                latents: torch.Tensor = result.images
+                return latents
+
+        settled = offload.fit(blocks, config.EDIT21_RESERVE_BYTES)
+        ui.line(f"{settled}/{len(blocks)} transformer blocks resident")
+        try:
+            latents = run()
+        except torch.OutOfMemoryError:
+            if not offload.release():
+                raise
+            ui.note("out of memory with transformer blocks resident: editing again with every block streaming")
+            latents = run()
+        offload.release()
+        torch.cuda.empty_cache()
+        return _decode(pipe, latents, height, width)
 
     def unload(self) -> None:
         self._pipe = None
@@ -314,7 +328,11 @@ class Editor21:
         loras = [(str(source.fetch()), strength) for source, strength in self.loras]
         device = torch.device(self.device)
 
-        transformer = load_transformer(str(weights), loras).to(device)
+        transformer = load_transformer(str(weights), loras)
+        offload.stream_blocks(transformer.transformer_blocks, device)
+        for name, child in transformer.named_children():
+            if name != "transformer_blocks":
+                child.to(device)
         text_encoder = load_text_encoder(str(text_file))
         inner = cast(nn.Module, text_encoder.model)
         language_model = cast(nn.Module, inner.language_model)
