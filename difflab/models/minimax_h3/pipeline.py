@@ -289,7 +289,7 @@ def carry_of(video: torch.Tensor, audio: torch.Tensor, frames: int, audio_latent
     The window starts on a cycle's one-frame latent, so its steps are the ones the next clip's first
     steps are: copied, never decoded and encoded again. The sound goes on the audio grid, which agrees
     with the picture's only every three frames: placed at a fraction, H3 redrew it on the grid anyway
-    (production 18, a third of a latent: 268 samples late at 0.925 correlation, -0.56 at the cut).
+    (a third of a latent: 268 samples late at 0.925 correlation, -0.56 at the cut).
 
     So each soundtrack is moved back by what its sound landed late, and that adds up down a chain: the
     clip before's soundtrack was itself moved by `late`, while what is carried is its latent. Rounding

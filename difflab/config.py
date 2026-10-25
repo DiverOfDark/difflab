@@ -41,7 +41,7 @@ VLM_DRAFT_TOKENS = 4
 # The template's default is xhigh. Chat and free questions think at low; the director's JSON and every
 # ruling do not think at all (`direct.ask`), and the writers of prose a model draws from think at medium.
 # A thought that reaches VLM_THINK_TOKENS is closed there: asked for 60-80 words, it counted its draft
-# word by word past 4,096 tokens and never answered (production 16's opening, 2026-10-11).
+# word by word past 4,096 tokens and never answered (an opening frame, 2026-10-11).
 VLM_REASONING_EFFORT = "low"
 VLM_WRITING_EFFORT = "medium"
 VLM_THINK_TOKENS = 4096

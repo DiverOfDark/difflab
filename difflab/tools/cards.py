@@ -67,7 +67,7 @@ def _trait_problems(member: str, traits: Any) -> list[caption.Problem]:
     return out
 
 
-# Keys pinned: production 13's man came back as `{"traits [{": "part", ...}` on every seed, when ANY_JSON
+# Keys pinned: one person's card came back as `{"traits [{": "part", ...}` on every seed, when ANY_JSON
 # still forced ": " against the prompt's minified `"traits":[{`.
 _TEXT = {"type": "string"}
 TIDY_SCHEMA = {

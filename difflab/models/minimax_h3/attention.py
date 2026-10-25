@@ -1,7 +1,7 @@
 """comfy-kitchen's int8 attention for the H3 self-attention, replacing SDPA.
 
 Attention is ~75% of a step at full length, so this is the kernel that matters most. Measured on the
-3090 on real H3 Q/K/V (chunk 1 of a production 9 take at steps 1-3, 95849 packed rows, 56 heads of 128),
+3090 on real H3 Q/K/V (a take's first chunk at steps 1-3, 95849 packed rows, 56 heads of 128),
 per block, error as relative L2 against bf16 SDPA:
 
     SDPA (flash, bf16)                  4321 ms   1.00x   -

@@ -7,7 +7,7 @@ direction on disk. The module they live in is not hashed - only the names and th
 
 DIRECTOR_SURVEY_PIXELS = 400_000  # per photo when the VLM sees them all at once (~400 vision tokens each)
 DIRECTOR_PHOTO_PIXELS = 1024 * 1024  # per photo when it sees one: grounding, trait cards, the opening frame
-DIRECTOR_ID_LENGTH = 24  # letters in a member id ("man", "hookah", "shisha_lounge")
+DIRECTOR_ID_LENGTH = 24  # letters in a member id ("man", "ball", "living_room")
 DIRECTOR_REPAIRS = 2  # re-asks with the gate's issue list before giving up
 DIRECTOR_PLAN_REPAIRS = 3  # the plan answers to the most rules at once, and has needed two repairs on its own
 DIRECTOR_TOKENS = {"survey": 1024, "ground": 1024, "card": 2048, "opening": 512, "tidy": 2048, "plan": 8192}
@@ -64,7 +64,7 @@ DIRECTOR_OPENING_KEEP = 0.8
 # Outside DIRECTOR_ so the plan fingerprint does not move with it; `cut_crops` keys it in extend mode.
 # Within this ratio of the canvas's aspect an extended opening crops instead: the crop loses under a tenth.
 OPENING_EXTEND_BEYOND = 1.1
-# What a chunk may hold, in reference rows: (width/32) * (height/32) per picture. The hand-cut shisha
+# What a chunk may hold, in reference rows: (width/32) * (height/32) per picture. A hand-cut
 # cast used 1835 and 2579 and rendered at a 101k-row peak; ~115k did not fit.
 DIRECTOR_REFERENCE_ROWS = 3000
 DIRECTOR_WORDS = (350, 520)  # detailed_description: official 350-500, plus the compiler's fixed sentences
@@ -92,7 +92,7 @@ DIRECTOR_TAKE_SLACK = 0.1  # the take's length is a ceiling; the clips may run o
 # 2 s airlock (0.16 of a 12.25 s chunk).
 DIRECTOR_MAIN_BEAT_WINDOW = (0.15, 0.65)
 # How far each camera move pushes the framing in. Pushes add up along a chain, since each clip opens on the
-# last frame of the one before: production 13's push_in, hold, pan_right, push_in took the man's head to about 3x its
+# last frame of the one before: a push_in, hold, pan_right, push_in chain took a face to about 3x its
 # height by the end of shot 4, magnifying pixels H3 had drawn small, which is what read as soft and waxy.
 DIRECTOR_ZOOM = {"push_in": 1, "pull_out": -1, "reveal_left": -2, "reveal_right": -2}
 DIRECTOR_ZOOM_MAX = 1  # net pushes a chain may hold before it pulls out again

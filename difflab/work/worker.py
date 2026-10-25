@@ -125,7 +125,7 @@ class Worker(threading.Thread):
                 state, error = store.FAILED, f"{type(problem).__name__}: {problem}"
                 sink.emit(protocol.Error(text="".join(traceback.format_exc())[-6000:]))
             # A run's cancel taken while a job that never looks at it was in flight (composing a keyframe) ended
-            # with that job, and production 13's next seven clips rendered on (2026-10-05): the rest goes now.
+            # with that job, and the run's next seven clips rendered on (2026-10-05): the rest goes now.
             cancelled = ctx.cancel.is_set() and state in (store.DONE, store.SKIPPED)
             ctx.task_id = None
             with store.connect() as connection:
@@ -155,7 +155,7 @@ class Worker(threading.Thread):
             for note in made.pending_notes():
                 ui.note(note)
             # Once the run has ended, one attempt for everything its verdicts asked: queued after each failing
-            # verdict, production 14's eleven clips (2026-10-04) queued seven whole-chapter runs, each with only
+            # verdict, a chapter of eleven clips (2026-10-04) queued seven whole-chapter runs, each with only
             # the seeds re-rolled before it.
             for chapter_id, keyframes_only in made.pending_rerenders() if not remaining else []:
                 from difflab.screenplay import planner

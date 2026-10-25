@@ -123,8 +123,8 @@ def survey(
                 out.append(direct.problem(f"Picture {number} is labelled a {label.kind}: list it as a member of "
                                           f"kind {' or '.join(kinds)} in that picture's \"shows\""))  # fmt: skip
         # A member no picture shows is created from words alone (`cards.invent`) and drawn, an object the
-        # action uses included: production 13's jian (2026-10-05), left out as in no picture, came back a
-        # different length in every clip and a scabbard for a moment mid-guard.
+        # action uses included: a held prop (2026-10-05), left out as in no picture, came back a
+        # different length in every clip and as something else for a moment.
         return out
 
     images = [direct.shrink(frame, h3.DIRECTOR_SURVEY_PIXELS) for frame in frames]

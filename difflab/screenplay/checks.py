@@ -159,9 +159,9 @@ NUMBERED = re.compile(r"^\s*\d+[.)]\s+(.*)$", re.M)
 
 def actions_of(idea: str) -> str:
     """The part of an IDEA that tells events. A story the idea editor wrote opens with a paragraph on the
-    place and the first frame and ends on a Sound line; only its numbered beats happen. On production 10
-    the place's "sits", "falls" and "holds" were asked of clip 1 as events, and its main beat became the
-    desk sitting by the window."""
+    place and the first frame and ends on a Sound line; only its numbered beats happen. Once, the
+    place paragraph's verbs were asked of clip 1 as events, and its main beat became a piece of
+    furniture standing where it stood."""
     numbered = NUMBERED.findall(idea)
     if numbered:
         return "\n".join(numbered)

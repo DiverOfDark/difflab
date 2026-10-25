@@ -291,8 +291,8 @@ TAKE: at most {total:g} seconds, split into clips of {shortest:g} to {longest:g}
 CAMERA MOVES:
 {moves}"""
 
-# A garment the member changes into is a look, never a member: production 13 (2026-10-10) cast both robes
-# as objects, handed the green robe's picture to every clip after he took it off, and drew the blue one from
+# A garment the member changes into is a look, never a member: one plan (2026-10-10) cast two garments
+# as objects, handed the first one's picture to every clip after it came off, and drew the second from
 # words beside the photo of it that was given.
 PLAN_WARDROBE = """\
 WARDROBE (garments a member can change into, each shown in a picture the program hands over). A clip in which a member first puts one on makes a version with "name" exactly as listed here, and later puts it on again with "use"; a garment taken off returns the member to the version it had before ("use"), and is never cast:
@@ -692,7 +692,7 @@ MEMBER: {member}
 CAMERA: {move}
 CLOSING: {closing}"""
 
-# "moment": production 10's card said "closed eyes" from a sleeping photo, and the retention line kept them
+# "moment": one card said "closed eyes" from a sleeping photo, and the retention line kept them
 # closed in every shot. "held": the take moves a held thing, and a card that keeps it contradicts the hand
 # the opening names.
 RULING_TRAITS_SYSTEM = """\
@@ -721,12 +721,12 @@ TRAITS, one "traits" entry for each, in this order:
 # --- composing: a first frame from words, over a reference of the room ---------------------------------------
 COMPOSE_INSTRUCTION = """\
 Keep this room exactly as it is: its walls, furniture, lighting and colour. Change nothing about the camera. Add the people and things described, placed as described, in photographic detail: {scene}."""
-# With each person and animal handed over as its own picture. Said in words alone, production 13's man
-# (2026-10-04) came back in a bright costume-green robe with gold medallions over his dark embroidered one,
-# and a sect courtyard filled with monks no plan had asked for.
+# With each person and animal handed over as its own picture. Said in words alone, a person
+# (2026-10-04) came back in a bright costume garment over the one in their picture, and the place filled
+# with people no plan had asked for.
 COMPOSE_LIKENESS = "Everyone taken from a picture looks exactly as in that picture: the same face, hair and build, and the same clothes in every colour, pattern and fold, except what is said to be different now."
-# A full moon handed over under COMPOSE_LIKENESS alone came back as a woman in a fur suit, and a moon
-# over the sea with a woman in a floral dress before it (2026-10-17): the face and clothes asked for a person.
+# An object handed over under COMPOSE_LIKENESS alone came back as a person in a costume of it, or with a
+# person standing before it (2026-10-17): the face and clothes asked for a person.
 COMPOSE_LIKENESS_THING = "Each thing taken from a picture looks exactly as in that picture: the same shape, colours and surface; it is no person and wears nothing."
 COMPOSE_ALONE = "Nobody else is in the frame: no other people and no other animals."
 COMPOSE_NOTE = "Also: {note}."
@@ -761,16 +761,15 @@ COMPOSE_EMPTY_PLACE = """Remove every person and animal from this photograph of 
 # The opening photo whole, fitted into the canvas over a blurred stretch of itself (`cut_crops.padded`).
 COMPOSE_EXTEND_OPENING = """\
 The sharp photograph in the middle is part of a wider scene. Replace the blurred bands at its {sides} with the rest of that scene, continuing its walls, ground, furniture, light and perspective out to the edges. Keep everything in the sharp photograph exactly as it is: every person, face, pose and object, in the same place and size. No borders, frames or seams. One unretouched real photograph."""
-# Told in words, a robe's colour and embroidery overrode the picture it came with: production 13's retry
-# (2026-10-04), noted "the dark green one with gold floral embroidery", came back with gold flowers a
-# hand wide. A redo is pointed back at the picture instead.
+# Told in words, a robe's colour and embroidery overrode the picture it came with: a retry
+# (2026-10-04), noted by colour and pattern, came back with the pattern drawn many times larger. A redo is pointed back at the picture instead.
 COMPOSE_CLOTHES_NOTE = "the clothes, hair and face of {who} exactly as in their picture, adding nothing to them"
 # Over a photo of one member, when the place has no picture of its own: the member stays, the room goes.
 COMPOSE_KEEP_INSTRUCTION = """\
 Keep the {noun} exactly as it is in this photo: its face, colours, markings, fur and build. Replace everything around it - the ground, the background and the light - with the place described, and place everyone as described, as one unretouched real photograph in natural light: {scene}."""
 # A member no photograph shows, drawn alone over a blank grey plate as its reference picture. Named
 # COMPOSE_ so the director's fingerprint leaves them out: a change to them redraws, it does not re-plan.
-# Measured on production 4 (2026-09-27): without "not a render" the pigeon came out as a CG model; an
+# Measured 2026-09-27: without "not a render" an animal came out as a CG model; an
 # object not said to lie stood up on its legs; a place without its camera "far from the ground" was
 # shot from the asphalt, every pebble of it in the foreground, and at 1.6 m by number still was.
 COMPOSE_REFERENCE_INSTRUCTION = {
@@ -789,9 +788,9 @@ COMPOSE_REFERENCE_LOOK = (
 
 # --- the idea, rewritten into a story before any plan ---------------------------------------------------
 # Named IDEA_ so the director's fingerprint leaves them out: a change to them rewrites ideas, it does not
-# re-plan. Each rule is a failure of this pipeline on productions 4 and 5 (2026-09-26): the street taken
-# from a bed photo, the pigeon alive again after it was roasted, the cat ending every shot facing the
-# camera, "fires flame" rendered as a stream from its mouth.
+# re-plan. Each rule is a failure of this pipeline (2026-09-26): a place taken from the
+# wrong photo, an animal alive again after the story killed it, an animal ending every shot facing the
+# camera, a figure of speech rendered literally.
 IDEA_SYSTEM = """\
 You are the story editor of a live-action video. A planner turns your STORY into consecutive shots, one or more per beat, each as long as its action needs, and a video model renders each shot from the reference photographs, labelled Picture 1, Picture 2 and so on. The planner reads your words literally: what they do not say, it fills in from the photographs or leaves out. You receive the user's rough IDEA and the photographs, and you rewrite the IDEA into a STORY the planner renders well, as JSON.
 

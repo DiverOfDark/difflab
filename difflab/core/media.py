@@ -18,7 +18,7 @@ from difflab.core.imaging import load_image, load_video_frames, save_result
 from difflab.core.types import Clip, Frame
 
 # x264's default 23 on the join and on RIFE's retime, after chunks written at 16, halved a 4K finish's
-# fine detail (laplacian variance 37 -> 21 on production 13, 2026-10-06): every re-encode is a generation.
+# fine detail (laplacian variance 37 -> 21 2026-10-06): every re-encode is a generation.
 JOIN_CRF = 16
 
 
@@ -72,7 +72,7 @@ def color_gain(frame: Frame, toward: Frame, strength: float) -> torch.Tensor:
     """The per-channel gain that pulls `frame`'s channel means `strength` of the way to `toward`'s.
 
     A chain carries its own colour forward: every chunk opens on the one before, so a cast that enters
-    once is never corrected, only inherited. Measured over the five-chunk take of production 9, the red-minus-blue
+    once is never corrected, only inherited. Measured over a five-chunk take, the red-minus-blue
     spread of the handoff frames ran 15.5, 18.0, 20.7, 20.9, 23.9 - it rose at every single seam and
     fell at none, which no scene does by itself.
 
@@ -86,7 +86,7 @@ def color_gain(frame: Frame, toward: Frame, strength: float) -> torch.Tensor:
     return torch.pow(target / source, strength)
 
 
-# Measured on a take of production 9 (2026-10-04), five chunks: within each chunk a* rose by
+# Measured on a five-chunk take (2026-10-04): within each chunk a* rose by
 # 2-3 and the spread of a*, b* and L by about x1.15, and each chunk opened on the one before's colour,
 # so a* ran 2.4 (the photo) to 11.0 and chroma spread x2.3 by 38 s. A change of place is far larger than
 # one chunk's drift (a blue sky moves b* by tens), so a correction capped at drift's size leaves it alone.

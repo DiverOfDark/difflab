@@ -486,7 +486,7 @@ def held_to(video: torch.Tensor, carried: torch.Tensor) -> torch.Tensor:
     pinned to: per channel its mean and spread, then its fine detail.
 
     The two are the same frames, so whatever differs is H3's own drift, not the scene. Uncorrected, the
-    redrawn steps came back with 3.2-3.6% more high band at every join of production 18, and the next
+    redrawn steps came back with 3.2-3.6% more high band at every join of a chain, and the next
     shot carries that on: x1.16 after six shots. noEmbryo's Clip Refiner matches the same statistics to
     the first clip's, where the scene has moved on.
     """

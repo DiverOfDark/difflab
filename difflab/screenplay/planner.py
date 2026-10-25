@@ -344,7 +344,7 @@ def _queue_chapter(connection: Any, chapter_id: int, asked_by: str, keyframes_on
         if keyframe.source == store.CHAINED and previous is not None:
             store.set_made(connection, "keyframe", keyframe.id, store.QUEUED, current_job=previous)
         # Right after its clip, so a failing shot pauses the chain before the shots built on it are
-        # rendered (`made._judged`). Measured on production 9: the VLM loads in 11 s and judges in ~10 s,
+        # rendered (`made._judged`). Measured on a five-chunk take: the VLM loads in 11 s and judges in ~10 s,
         # and H3 reloads in ~9 s, beside 633 s for the clip.
         if judged:
             store.add_job(

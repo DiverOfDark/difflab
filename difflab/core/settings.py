@@ -217,7 +217,7 @@ class JudgeSettings(Settings):
         "a clip below the gate is rendered again on new seeds and the best take kept; off, it pauses the run",
         keyed=False,
     )
-    # 512 cut a clip's verdict off mid-string once it named strangers and fixes (production 14, 2026-10-04);
+    # 512 cut a clip's verdict off mid-string once it named strangers and fixes (2026-10-04);
     # describing every member and item before grading them writes about twice what a single score did.
     max_new_tokens: int = setting(
         3072, "answer length", "a cap, in tokens", low=64, high=4096, keyed=False, advanced=True
@@ -486,7 +486,7 @@ class Continuity(Settings):
     )
     # A chain inherits its own colour. Chunk k+1 opens on chunk k's pixels, so a cast that enters once is
     # carried forward rather than corrected, and the reference crops cannot undo it: they are semantic
-    # conditioning, while the opening frame is the pixels themselves. Measured over the five-chunk shisha
+    # conditioning, while the opening frame is the pixels themselves. Measured over a five-chunk
     # take, the red-minus-blue spread of the handoff frames ran 15.5, 18.0, 20.7, 20.9, 23.9 - up at every
     # seam, down at none, so the delivered take ends warmer and darker than the photograph it opened on.
     #
@@ -502,7 +502,7 @@ class Continuity(Settings):
         high=1,
     )
 
-    # The cause of the drift above, measured on production 9: each chunk inflates its own cast and
+    # The cause of the drift above, measured on a five-chunk take: each chunk inflates its own cast and
     # chroma as it goes, and the next opens on that. Held at the source, a chunk hands on the colour it
     # was given (`media.hold_colour`), capped so a real change of light or place survives.
     color_hold: float = setting(

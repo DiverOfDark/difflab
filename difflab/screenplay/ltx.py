@@ -23,7 +23,7 @@ def pictures(take: Take, index: int) -> tuple[str, ...]:
     """One of the crops `compiler.references` would hold per member, at most five; on 2.3 at most four, no
     place, since the opening frame is its scene, and none at all when the shot opens on a frame."""
     # 2.3 MSR beside a pinned opening frame cuts away after frame 0, the pseudo-video opening on that frame
-    # too; the frame alone held face, bikini and necklace through 8 s (2026-10-25, 10Eros v1.4 DMD).
+    # too; the frame alone held face, clothes and jewellery through 8 s (2026-10-25, a DMD-distilled 2.3).
     if take.ltx == ltx.V23 and not compiler.unframed(take, index):
         return ()
     held = compiler.references(take, index)
@@ -93,8 +93,8 @@ def compile_chunk(take: Take, index: int) -> Compiled:
         text = re.sub(r",\s*([,.;:])", r"\1", text)
         return f"{text[:1].upper()}{text[1:]}." if text else ""
 
-    # The arrangement is a list of what is where, not a sentence: production 1's begins "{alaska} a small dark
-    # shape high in the sky".
+    # The arrangement is a list of what is where, not a sentence: one begins "{bird} a small dark shape
+    # high in the sky".
     body = [sentence(f"At first: {named(compiler.opening(take, index))}")]
     if take.look:
         body.append(sentence(words.STYLE_LOOK.format(look=take.look.rstrip("."))))

@@ -277,7 +277,7 @@ def scenes(keyframes: list[store.Keyframe], shots: list[store.Shot]) -> tuple[bo
 
 def scened(take: Take, index: int) -> bool:
     """A chained chunk holds the chapter's opening still, the one clean picture of the scene as it is lit,
-    since its own first frame is the chunk before's last, softer and drifted at every join: production 13's chain
+    since its own first frame is the chunk before's last, softer and drifted at every join: one chain
     lost 80% of its Laplacian variance over four shots, and got it back only where a clean look picture
     joined the references. Never where the still would bring back someone off screen, another place, or the
     look someone in it has since changed out of."""
@@ -354,8 +354,8 @@ def references(take: Take, index: int) -> tuple[str, ...]:
         amended = set(ref.shows) & looked
         return not amended or (ref.role == "face" and amended == {ref.member})
 
-    # A picture of a place the chunk is not in brings that place back: the room photo, which also shows
-    # the cat, pulled production 10's sky chase back onto the desk.
+    # A picture of a place the chunk is not in brings that place back: a room photo that also
+    # showed a member pulled a chase set elsewhere back into that room.
     usable = [
         ref
         for ref in take.refs.values()

@@ -21,7 +21,7 @@ class VideoSettings(Settings):
     """MiniMax H3. The dev defaults are 2 s at 0.4 MP (~25 s of sampling); a full render is 15 s at
     0.8 MP (~15 min)."""
 
-    # Comfy's pruned ref2va with larryvrh's turbo v4 LoRA serves both tasks. Measured on clip 1 of production 9
+    # Comfy's pruned ref2va with larryvrh's turbo v4 LoRA serves both tasks. Measured on the first clip of a take
     # (2026-10-04), same seed and inputs, worst frame against the photo's mottle 1.11, a* 2.4, L spread 23.2:
     # this pair 1.65 / 4.1 / 24.1; a community hybrid with its own turbo fused in and no LoRA 1.29 / 3.0 /
     # 23.5, and 2.03 / 4.4 / 25.7 with the LoRA over it as well. The LoRA is what blotches and reddens a take,

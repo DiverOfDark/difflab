@@ -751,9 +751,9 @@ def run_draw_reference(inputs: dict[str, Any], settings: dict[str, Any]) -> dict
 def _place_from_story(member: store.Member, forced: bool = False) -> store.Member:
     """A place no photo of its own shows, its look written again from the story before it is drawn.
 
-    The look was tidied from a photo the place turned out not to be in: production 13's courtyard
-    (2026-10-04) was left one trait, "mountain sect courtyard", and the editor drew a Tibetan
-    monastery where the story asked for dark wood eaves, red banners and cherry blossom. A place
+    The look was tidied from a photo the place turned out not to be in: one place
+    (2026-10-04) was left a single trait, and the editor drew a different kind of place from the
+    one the story described. A place
     edited by hand keeps its words unless `forced`, which also writes them for a place a photo shows."""
     with store.connect() as connection:
         production = store.production(connection, member.production_id)
@@ -794,7 +794,7 @@ def run_judge(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any
     production_id, kind = int(inputs["production"]), str(inputs["kind"])
     cast = [str(m) for m in inputs.get("cast", [])]
     # A shot's place is in its arrangement, not rated as a member: asked for its likeness the judge left it
-    # out of its answer twice running and the verdict failed (production 14, 2026-10-04). A drawn place's own
+    # out of its answer twice running and the verdict failed (2026-10-04). A drawn place's own
     # picture is the place.
     framed = kind in ("clip", "keyframe")
     with store.connect() as connection:

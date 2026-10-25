@@ -16,7 +16,7 @@ from typing import NamedTuple
 
 import av
 
-# dBFS, the limiter's ceiling. It holds sample peaks; production 13's levelled chapter still measured -0.1 dBTP.
+# dBFS, the limiter's ceiling. It holds sample peaks; a levelled chapter still measured -0.1 dBTP.
 LIMIT = -1.5
 AUDIO_BITRATE = "192k"
 SILENT = -70.0  # LUFS, what ebur128 reports for a soundtrack of silence
@@ -87,9 +87,9 @@ def _level(video: Path, sound: Path, target: float, rate: int) -> float | None:
     """The soundtrack at `target` LUFS into `sound`, a limiter holding its peaks. Returns the level reached,
     None for silence, which is left as it is."""
     # A gain from a measured pass, not loudnorm: on H3's 32 kHz soundtracks loudnorm's own first pass read
-    # 0.9 LU hot (-11.4 against ebur128's -12.3 on production 13, 2026-10-09), and its dynamic mode, which it
+    # 0.9 LU hot (-11.4 against ebur128's -12.3 2026-10-09), and its dynamic mode, which it
     # falls into whenever a chapter's range is over its target, compresses the fights. The limiter takes
-    # loudness with the peaks (+3.5 dB of gain gave +1.4 LU on production 13), so the gain is raised by what
+    # loudness with the peaks (+3.5 dB of gain gave +1.4 LU), so the gain is raised by what
     # is still missing and applied again.
     level, peak = loudness(video)
     if level <= SILENT:

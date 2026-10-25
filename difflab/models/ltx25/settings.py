@@ -70,7 +70,7 @@ class LtxSettings(Settings):
         role="ltx23-msr",
     )
     # Licon trained the pseudo-video against no opening frame: one pinned at frame 0 beside it cut away after
-    # the first frame (2026-10-24, 10Eros v1.4 DMD, one subject).
+    # the first frame (2026-10-24, a DMD-distilled 2.3, one subject).
     open_on_photo_23: bool = setting(
         False,
         "2.3 MSR opens on the photo",

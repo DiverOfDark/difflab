@@ -19,7 +19,7 @@ from difflab.screenplay import settings, words
 SCOPE = "references:{production}"
 ASPECT = {"person": 2 / 3, "animal": 1.0, "object": 1.0}  # a whole standing figure; a bird or a dish
 UNPLANNED_ASPECT = 16 / 9  # a place drawn before any plan has fixed the canvas, and no aspect was given
-# The editor's own area rather than its 2 MP default. On production 4 (2026-09-27) 2 MP grew a pebbled
+# The editor's own area rather than its 2 MP default. Measured 2026-09-27: 2 MP grew a pebbled
 # texture over asphalt and fried skin, and sampled in 52 s where 1 MP took 35 s; a reference is at most
 # the canvas's 0.64 MP anyway.
 MEGAPIXELS = 1.0
