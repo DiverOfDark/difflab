@@ -198,7 +198,7 @@ const discard = () => {
         <span class="eyebrow">{{ production.story_kind || 'shots by hand' }}</span>
       </div>
       <div class="body">
-        <label class="field"><span class="eyebrow">title</span><input v-model="title" /></label>
+        <label class="field"><span class="eyebrow">title</span><input v-model="title" class="plain" /></label>
         <textarea
           v-if="production.story_kind === 'text'"
           v-model="story"
@@ -211,60 +211,23 @@ const discard = () => {
           <span class="note">{{ saved || (edited ? 'A changed story makes every prompt stale until the chapter is re-planned from it.' : '') }}</span>
           <button class="primary" :disabled="!edited || !!busy || !title.trim()" @click="saveStory">{{ busy === 'story' ? 'saving…' : 'Save' }}</button>
         </div>
-        <div class="facts mono">
-          <span v-for="c in production.chapters" :key="c.id">
-            <span class="dim">{{ String(c.position + 1).padStart(2, '0') }}</span> {{ c.title || 'chapter' }} · {{ c.shots.length }} shots
-          </span>
-        </div>
-      </div>
-    </section>
 
-    <IdeaPanel v-if="production.story_kind === 'text' && production.chapters.length === 1" :production="production" :busy="busy" :act="act" />
-
-    <section class="card">
-      <div class="head">
-        <h5>References</h5>
-        <span class="note">{{ plural(photos.length, 'photograph') }}{{ source ? ' · a source video' : '' }}</span>
-      </div>
-      <div class="body">
-        <video v-if="source" class="frame" :src="outputUrl(source)" controls muted preload="metadata" />
-        <div v-if="references.length" class="given">
-          <div v-for="r in references" :key="r.path" class="ref">
-            <a :href="outputUrl(r.path)" target="_blank" class="thumb" :style="{ backgroundImage: `url(${outputUrl(r.frames?.find((f) => f.kept)?.path ?? r.path)})` }">
-              <span v-if="r.frames" class="badge mono">MP4</span>
-            </a>
-            <span class="what">
-              <span class="mono">{{ name(r.path) }}{{ photos[0] === r.path || r.frames?.some((f) => f.path === photos[0]) ? ' · opens' : '' }}</span>
-              <span class="note">{{
-                r.frames
-                  ? `${r.frames.length} frames · ${r.frames.filter((f) => f.kept).length} kept sharp · also a motion reference${r.guess ? ` · ${r.guess}` : ''}`
-                  : r.guess || '—'
-              }}</span>
-            </span>
-            <span class="mono dim">{{ r.kind === 'video' ? 'motion ref' : r.kind || 'unmatched' }}</span>
-            <span class="mono">{{ r.entity || (r.kind === 'style' ? 'style' : '—') }}</span>
-          </div>
-        </div>
-        <div v-else class="photos">
-          <a v-for="(p, i) in photos" :key="p" :href="outputUrl(p)" target="_blank">
-            <img class="frame" :src="outputUrl(p)" alt="" />
-            <span class="mono">{{ i === 0 ? 'opens · ' : '' }}{{ name(p) }}</span>
-          </a>
-        </div>
         <div v-if="production.story_kind === 'text'" class="aspect ruled">
           <div class="saving">
-            <label class="field">
-              <span class="eyebrow">aspect · canvas {{ canvasNow ? `${canvasNow.width}×${canvasNow.height}` : 'not cut yet' }}</span>
-              <select v-model="aspect">
-                <option v-for="a in aspects" :key="a.label" :value="a.value">{{ a.label }}</option>
-              </select>
-            </label>
-            <label class="field" title="crop cuts the first photo to the canvas; extend keeps it whole and has the editor draw the sides">
-              <span class="eyebrow">fit</span>
-              <select v-model="fit">
-                <option v-for="f in FITS" :key="f.value" :value="f.value">{{ f.label }}</option>
-              </select>
-            </label>
+            <div class="three">
+              <label class="field">
+                <span class="eyebrow">aspect · canvas {{ canvasNow ? `${canvasNow.width}×${canvasNow.height}` : 'not cut yet' }}</span>
+                <select v-model="aspect">
+                  <option v-for="a in aspects" :key="a.label" :value="a.value">{{ a.label }}</option>
+                </select>
+              </label>
+              <label class="field" title="crop cuts the first photo to the canvas; extend keeps it whole and has the editor draw the sides">
+                <span class="eyebrow">fit</span>
+                <select v-model="fit">
+                  <option v-for="f in FITS" :key="f.value" :value="f.value">{{ f.label }}</option>
+                </select>
+              </label>
+            </div>
             <button class="primary" :disabled="!aspectChanged || !!busy" @click="saveAspect">{{ busy === 'aspect' ? 'saving…' : 'Change canvas' }}</button>
           </div>
           <span class="note">{{ aspectNote || (aspectChanged ? cost : fit === 'extend' ? 'The canvas every shot renders at: the first photo whole, its sides drawn out to this shape by the editor.' : 'The canvas every shot renders at, cut from the first photo at this shape.') }}</span>
@@ -277,30 +240,68 @@ const discard = () => {
             <template v-else-if="!firstShot">After the plan, compose shot 1's keyframe to have it drawn at the canvas size.</template>
           </p>
         </div>
+
+        <div class="facts mono ruled">
+          <span class="eyebrow">chapters</span>
+          <span v-for="c in production.chapters" :key="c.id">
+            <span class="dim">{{ String(c.position + 1).padStart(2, '0') }}</span> {{ c.title || 'chapter' }} · {{ c.shots.length }} shots
+          </span>
+        </div>
+
+        <div v-if="knobs.length" class="knobbed ruled">
+          <div class="knobs">
+            <label v-for="k in knobs" :key="k.name" class="field" :title="k.hint">
+              <span class="eyebrow">{{ k.label }}</span>
+              <select v-if="k.name === 'heading_level'" v-model.number="k.value">
+                <option v-for="n in 6" :key="n" :value="n">h{{ n }}{{ n > 1 ? ` · h1–h${n}` : '' }}</option>
+              </select>
+              <input v-else v-model.number="k.value" type="number" :min="k.low ?? undefined" :max="k.high ?? undefined" />
+            </label>
+          </div>
+          <div class="saving">
+            <span class="note">{{ knobNote || 'This production’s, over the machine’s.' }}</span>
+            <button :disabled="!!busy" @click="saveKnobs">{{ busy === 'knobs' ? 'saving…' : 'Save knobs' }}</button>
+          </div>
+        </div>
       </div>
     </section>
 
-    <section v-if="knobs.length" class="card">
-      <div class="head">
-        <h5>Knobs</h5>
-        <span class="note">this production's, over the machine's</span>
-      </div>
-      <div class="body">
-        <div>
-          <div v-for="k in knobs" :key="k.name" class="knob">
-            <div><span class="name">{{ k.label }}</span><span class="hint">{{ k.hint }}</span></div>
-            <select v-if="k.name === 'heading_level'" v-model.number="k.value">
-              <option v-for="n in 6" :key="n" :value="n">h{{ n }}</option>
-            </select>
-            <input v-else v-model.number="k.value" type="number" :min="k.low ?? undefined" :max="k.high ?? undefined" />
+    <div class="side">
+      <section class="card">
+        <div class="head">
+          <h5>References</h5>
+          <span class="note">{{ plural(photos.length, 'photograph') }}{{ source ? ' · a source video' : '' }}</span>
+        </div>
+        <div class="body">
+          <video v-if="source" class="frame" :src="outputUrl(source)" controls muted preload="metadata" />
+          <div v-if="references.length" class="given">
+            <div v-for="r in references" :key="r.path" class="ref">
+              <a :href="outputUrl(r.path)" target="_blank" class="thumb" :style="{ backgroundImage: `url(${outputUrl(r.frames?.find((f) => f.kept)?.path ?? r.path)})` }">
+                <span v-if="r.frames" class="badge mono">MP4</span>
+              </a>
+              <span class="what">
+                <span class="mono">{{ name(r.path) }}{{ photos[0] === r.path || r.frames?.some((f) => f.path === photos[0]) ? ' · opens' : '' }}</span>
+                <span class="note">{{
+                  r.frames
+                    ? `${r.frames.length} frames · ${r.frames.filter((f) => f.kept).length} kept sharp · also a motion reference${r.guess ? ` · ${r.guess}` : ''}`
+                    : r.guess || '—'
+                }}</span>
+              </span>
+              <span class="mono dim">{{ r.kind === 'video' ? 'motion ref' : r.kind || 'unmatched' }}</span>
+              <span class="mono">{{ r.entity || (r.kind === 'style' ? 'style' : '—') }}</span>
+            </div>
+          </div>
+          <div v-else class="photos">
+            <a v-for="(p, i) in photos" :key="p" :href="outputUrl(p)" target="_blank">
+              <img class="frame" :src="outputUrl(p)" alt="" />
+              <span class="mono">{{ i === 0 ? 'opens · ' : '' }}{{ name(p) }}</span>
+            </a>
           </div>
         </div>
-        <div class="saving">
-          <span class="note">{{ knobNote }}</span>
-          <button :disabled="!!busy" @click="saveKnobs">{{ busy === 'knobs' ? 'saving…' : 'Save knobs' }}</button>
-        </div>
-      </div>
-    </section>
+      </section>
+
+      <IdeaPanel v-if="production.story_kind === 'text' && production.chapters.length === 1" :production="production" :busy="busy" :act="act" />
+    </div>
 
     <footer class="foot">
       <span class="note">
@@ -332,6 +333,7 @@ const discard = () => {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
+  min-width: 0;
 }
 
 .ruled {
@@ -350,6 +352,31 @@ const discard = () => {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
+}
+
+.side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.three,
+.knobs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--space-2);
+  flex: 1;
+}
+
+.knobbed {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.card input.plain {
+  font-family: var(--font-body);
 }
 
 .foot {
