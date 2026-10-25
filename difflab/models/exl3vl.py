@@ -159,6 +159,41 @@ class Exl3VL:
         """`ask` over a whole conversation; `heard` is handed the thought and the answer so far as they arrive.
         `numbered` announces pictures even when there is one, so a conversation's prompt does not change under
         the cache once a second arrives; unset, only several are. `effort=None` answers without thinking."""
+
+        def asked() -> str:
+            return self._chat(
+                turns, max_new_tokens, temperature, top_p, top_k, seed, system, title, echo, as_json, schema,
+                steady, heard, numbered, effort,
+            )  # fmt: skip
+
+        try:
+            return asked()
+        except torch.OutOfMemoryError:
+            # Weights and a 64k cache leave ~0.4 GB of a 3090 once the desktop holds 3.4 GB: a clip judge ran
+            # out there, and the pages it stranded ran the next question out too (2026-10-25). A fresh load
+            # gives the card back whole.
+            ui.note("VLM out of memory: loading it again and asking once more")
+            self.unload()
+        return asked()
+
+    def _chat(
+        self,
+        turns: Sequence[Turn],
+        max_new_tokens: int,
+        temperature: float,
+        top_p: float,
+        top_k: int,
+        seed: int,
+        system: str | None,
+        title: str,
+        echo: bool,
+        as_json: bool,
+        schema: dict[str, Any] | None,
+        steady: int,
+        heard: Callable[[str, str], None] | None,
+        numbered: bool | None,
+        effort: str | None,
+    ) -> str:
         parts = self.load()
         shown = [part for turn in turns for part in turn.said if isinstance(part, Image.Image)]
         tokenizer = parts["tokenizer"]
@@ -199,6 +234,8 @@ class Exl3VL:
                         if chunk := result.get("text"):
                             said += chunk
                             show(said)
+                        if result.get("stage") == "error":
+                            raise result["error"]
                         if result.get("eos"):
                             for name, field in timed:
                                 numbers[name] += result[field]
