@@ -6,7 +6,9 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import math
 import mimetypes
+import re
 import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -29,14 +31,17 @@ PARTS = {
     "video_vlm": "write_video_prompt",
 }
 SETTLED = ("done", "failed", "cancelled", "stopped")
+GUIDE = Path(__file__).with_name("help.md")
+STOPWORDS = {"the", "and", "how", "what", "can", "for", "with", "this", "that", "into", "from", "does", "make"}
 
 INSTRUCTIONS = (
     "difflab renders on one GPU behind a queue. A make_* tool queues a run and returns its id at once; "
     "call `run` with wait_seconds to follow it. Photos and clips are paths the server holds: send yours "
-    "with `upload` first. `take_settings` lists every knob the `settings` argument accepts. A production "
-    "is the director: start_production, then `production` says each stage's phase and what needs review; "
-    "the tools that act return run ids to follow with `run`, and render, reroll_shot and finish say what "
-    "they cost until called with confirm: true."
+    "with `upload` first. Call `help` when you or the user are unsure how something is done. "
+    "`take_settings` lists every knob the `settings` argument accepts. A production is the director: "
+    "start_production, then `production` says each stage's phase and what needs review; the tools that "
+    "act return run ids to follow with `run`, and render, reroll_shot and finish say what they cost until "
+    "called with confirm: true."
 )
 
 _WORDS = {
@@ -138,6 +143,12 @@ TOOLS: list[dict[str, Any]] = [
         "inputSchema": {"type": "object", "properties": _RUN_ID, "required": ["run_id"]},
     },
     {
+        "name": "help",
+        "description": "How to do something in difflab, in the page and over these tools. No topic lists the "
+        "guide's sections; a topic in words returns the section that matches it best.",
+        "inputSchema": {"type": "object", "properties": {"topic": {"type": "string"}}},
+    },
+    {
         "name": "take_settings",
         "description": "Each settings part's fields, what they do, and the value this machine runs them at.",
         "inputSchema": {"type": "object", "properties": {}},
@@ -212,10 +223,12 @@ async def _call(
         "list_runs": _list_runs,
         "cancel_run": _cancel,
         "take_settings": _settings,
+        "help": _help,
     }
     if name not in calls:
         raise UnknownToolError(f"no tool {name!r}")
-    return [_json(await asyncio.to_thread(calls[name], given))]
+    answer = await asyncio.to_thread(calls[name], given)
+    return [{"type": "text", "text": answer} if isinstance(answer, str) else _json(answer)]
 
 
 def _json(data: Any) -> dict[str, Any]:
@@ -309,6 +322,33 @@ def _settings(_: dict[str, Any]) -> dict[str, Any]:
             ],
         }
     return out
+
+
+def _help(given: dict[str, Any]) -> str:
+    sections = [part.strip() for part in GUIDE.read_text().split("\n# ") if part.strip()]
+    sections = [part.removeprefix("# ") for part in sections]
+    asked = _words(str(given.get("topic") or ""))
+    if not asked:
+        return "Sections; call help with a topic:\n" + "\n".join(
+            f"- {head}: {summary}" for head, summary, *_ in (s.split("\n", 2) for s in sections)
+        )
+
+    parts = {s: [_words(p) for p in [*s.split("\n", 2), "", ""][:3]] for s in sections}
+    rare = {w: math.log(len(sections) / (1 + sum(w in set().union(*p) for p in parts.values()))) for w in asked}
+
+    def score(section: str) -> float:
+        head, summary, body = parts[section]
+        return sum(max(rare[w], 0.1) * (3 if w in head else 2 if w in summary else w in body) for w in asked)
+
+    ranked = sorted(sections, key=score, reverse=True)
+    if score(ranked[0]) == 0:
+        return "Nothing in the guide matches that. " + _help({})
+    others = [s.split("\n", 1)[0] for s in ranked[1:3] if score(s)]
+    return f"# {ranked[0]}" + (f"\n\nSee also: {'; '.join(others)}" if others else "")
+
+
+def _words(text: str) -> set[str]:
+    return {w.rstrip("s") for w in re.findall(r"[a-z0-9]+", text.lower()) if len(w) > 2 and w not in STOPWORDS}
 
 
 async def _follow(run_id: str, wait: float, base_url: str, gone: Callable[[], Awaitable[bool]]) -> list[dict[str, Any]]:
