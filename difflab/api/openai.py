@@ -17,6 +17,7 @@ from typing import Any
 from difflab import store
 from difflab.api import assets, runs
 from difflab.api import chats as chatting
+from difflab.models import exl3vl
 from difflab.store import chats
 from difflab.work import queue
 
@@ -26,9 +27,6 @@ KEEPALIVE = 15.0  # seconds of a stream with nothing to say, behind a render, be
 # The template takes xhigh, medium and low; OpenAI's names map onto them.
 EFFORTS = {"low": "low", "medium": "medium", "high": "xhigh", "xhigh": "xhigh", "none": None, "minimal": None}
 
-OPEN_CALL = "<tool_call>"
-CALL = re.compile(r"<tool_call>\s*<function=([^>\n]+)>(.*?)</function>\s*</tool_call>", re.S)
-PARAMETER = re.compile(r"<parameter=([^>\n]+)>\n?(.*?)\n?</parameter>", re.S)
 TOO_LONG = re.compile(r"the prompt is ([\d,]+) tokens and the VLM holds ([\d,]+)")
 
 
@@ -144,47 +142,15 @@ def _shaped(body: dict[str, Any]) -> dict[str, Any]:
 
 def calls(text: str, tools: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
     """The answer's words before its first tool call, and its calls as OpenAI writes them."""
-    found = list(CALL.finditer(text))
-    if not found:
-        return text, []
-    kinds = {tool["name"]: (tool.get("parameters") or {}).get("properties") or {} for tool in tools}
-    made = []
-    for match in found:
-        name = match.group(1).strip()
-        arguments = {
-            key.strip(): _typed(value, kinds.get(name, {}).get(key.strip(), {}))
-            for key, value in PARAMETER.findall(match.group(2))
+    words, made = exl3vl.tool_calls(text, tools)
+    return words, [
+        {
+            "id": f"call_{uuid.uuid4().hex[:24]}",
+            "type": "function",
+            "function": {"name": call["name"], "arguments": json.dumps(call["arguments"], ensure_ascii=False)},
         }
-        made.append(
-            {
-                "id": f"call_{uuid.uuid4().hex[:24]}",
-                "type": "function",
-                "function": {"name": name, "arguments": json.dumps(arguments, ensure_ascii=False)},
-            }
-        )
-    return text[: found[0].start()].rstrip(), made
-
-
-def _typed(value: str, schema: dict[str, Any]) -> Any:
-    """A string parameter as written; any other as the JSON it should be, or as written when it is not."""
-    if schema.get("type", "string") == "string":
-        return value
-    try:
-        return json.loads(value)
-    except json.JSONDecodeError:
-        return value
-
-
-def _shown(text: str, settled: bool) -> str:
-    """What of the answer so far can go out: nothing from a tool call on, nor what may be the start of one."""
-    if OPEN_CALL in text:
-        return text[: text.index(OPEN_CALL)].rstrip()
-    if settled:
-        return text
-    for cut in range(min(len(OPEN_CALL) - 1, len(text)), 0, -1):
-        if OPEN_CALL.startswith(text[-cut:]):
-            return text[:-cut]
-    return text
+        for call in made
+    ]
 
 
 @dataclass(frozen=True)
@@ -207,7 +173,7 @@ async def _follow(asked: Asked, gone: Callable[[], Awaitable[bool]]) -> AsyncIte
             else:
                 message = found
             more_thought = message.thinking[len(thought) :] if message.thinking.startswith(thought) else ""
-            shown = _shown(message.text, settled is not None)
+            shown = exl3vl.before_calls(message.text, settled is not None)
             if settled is not None and message.state == chats.DONE:
                 shown = calls(message.text, asked.tools)[0]
             more_words = shown[len(words) :] if shown.startswith(words) else ""

@@ -36,6 +36,11 @@ FINISH_MEGAPIXELS = 3840 * 2160 / 1e6  # what the ESRGAN enlarges it to
 # 64k (4 GiB) is for the clip judge's frame every half second (`judge.SAMPLED_EVERY`). Unquantized: a
 # quantized cache would move every ruling measured against this one.
 VLM_CONTEXT_TOKENS = 65536
+# The chat's own load (`tools/chat.py`), which rulings never use. At 8 bits a token is 34 KiB of cache and
+# 2.1 KiB of draft cache, and ExLlamaV3 stages the window as fp16 for a long prefill, 4 KiB a token more
+# (`Attention.autosplit_extra_measure`): 432 pages fill the 4.25 GiB the 64k fp16 cache and its draft do.
+CHAT_KV_BITS = 8
+CHAT_CONTEXT_TOKENS = 432 * 256
 # MTP proposals per step. Measured on the 3090 (tok/s, sampled at 0.7/0.8/20; a card call with one
 # photo, a survey with two, 2k tokens of prose): none 36 / 36 / 36, 2 drafts 71 / 75 / 67, 3 drafts
 # 80 / 88 / 74, 4 drafts 85 / 97 / 70, 5 drafts 96 / 114 / 68. JSON, which is all the director

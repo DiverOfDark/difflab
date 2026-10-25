@@ -831,7 +831,7 @@ def read_chat(chat_id: int) -> dict[str, Any]:
 
 @app.patch("/api/chats/{chat_id}")
 async def patch_chat(chat_id: int, request: Request) -> dict[str, Any]:
-    """`title`, `system` ('' is the default prompt)."""
+    """`title`, `system` ('' is the default prompt), `production` (the one its tools work on, or null)."""
     body = dict(await request.json())
     return _chatting(lambda: chats.update(chat_id, body))
 
@@ -858,6 +858,14 @@ def chat_again(chat_id: int) -> dict[str, Any]:
 def chat_rewind(chat_id: int, message_id: int) -> dict[str, Any]:
     """The chat as it was before that message."""
     return _chatting(lambda: chats.rewind(chat_id, message_id))
+
+
+@app.post("/api/chats/{chat_id}/allow/{message_id}")
+async def chat_allow(chat_id: int, message_id: int, request: Request) -> dict[str, Any]:
+    """`{"allowed": bool}`: the person's answer to a tool call that waits for it."""
+    body = dict(await request.json())
+    allowed = bool(body.get("allowed"))
+    return await asyncio.to_thread(_chatting, lambda: chats.allow(chat_id, message_id, allowed))
 
 
 @app.post("/api/chats/{chat_id}/stop")

@@ -539,6 +539,12 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         """,
         "CREATE INDEX chat_messages_by_chat ON chat_messages(chat_id, id)",
     ),
+    # A chat as an agent. `production_id` is the production its tools work on, NULL for none; `calls` is an
+    # answer's tool calls, `{"id", "name", "arguments"}` each, and on a `tool` message the one call it answers.
+    (
+        "ALTER TABLE chats ADD COLUMN production_id INTEGER REFERENCES productions(id) ON DELETE SET NULL",
+        "ALTER TABLE chat_messages ADD COLUMN calls TEXT NOT NULL DEFAULT '[]'",
+    ),
 )
 
 SCHEMA_VERSION = len(MIGRATIONS)

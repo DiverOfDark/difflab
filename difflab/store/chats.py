@@ -8,9 +8,10 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-USER, ASSISTANT = "user", "assistant"
+USER, ASSISTANT, TOOL = "user", "assistant", "tool"
 QUEUED, WRITING, DONE, STOPPED, FAILED = "queued", "writing", "done", "stopped", "failed"
 PENDING = (QUEUED, WRITING)
+ASKING = "asking"  # a tool call that waits for the person to allow it
 
 
 @dataclass(frozen=True)
@@ -20,10 +21,11 @@ class Chat:
     system: str
     created_at: float
     updated_at: float
+    production_id: int | None
 
     @classmethod
     def of(cls, row: sqlite3.Row) -> Chat:
-        return cls(row["id"], row["title"], row["system"], row["created_at"], row["updated_at"])
+        return cls(row["id"], row["title"], row["system"], row["created_at"], row["updated_at"], row["production_id"])
 
 
 @dataclass(frozen=True)
@@ -38,6 +40,7 @@ class Message:
     error: str
     run_id: str | None
     created_at: float
+    calls: list[dict[str, Any]]
 
     @classmethod
     def of(cls, row: sqlite3.Row) -> Message:
@@ -52,6 +55,7 @@ class Message:
             error=row["error"],
             run_id=row["run_id"],
             created_at=row["created_at"],
+            calls=list(json.loads(row["calls"])),
         )
 
     def data(self) -> dict[str, Any]:
@@ -65,6 +69,7 @@ class Message:
             "error": self.error,
             "run": self.run_id,
             "created": self.created_at,
+            "calls": self.calls,
         }
 
 
@@ -87,9 +92,9 @@ def chats(connection: sqlite3.Connection) -> list[Chat]:
     return [Chat.of(row) for row in connection.execute("SELECT * FROM chats ORDER BY updated_at DESC")]
 
 
-def update_chat(connection: sqlite3.Connection, chat_id: int, **fields: str) -> None:
+def update_chat(connection: sqlite3.Connection, chat_id: int, **fields: str | int | None) -> None:
     for name, value in fields.items():
-        if name not in ("title", "system"):
+        if name not in ("title", "system", "production_id"):
             raise ValueError(f"a chat has no {name}")
         connection.execute(f"UPDATE chats SET {name} = ? WHERE id = ?", (value, chat_id))
 
@@ -109,10 +114,19 @@ def add_message(
     text: str = "",
     media: list[str] | None = None,
     state: str = DONE,
+    calls: list[dict[str, Any]] | None = None,
 ) -> Message:
     cursor = connection.execute(
-        "INSERT INTO chat_messages (chat_id, role, text, media, state, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-        (chat_id, role, text, json.dumps(media or [], ensure_ascii=False), state, time.time()),
+        "INSERT INTO chat_messages (chat_id, role, text, media, state, created_at, calls) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            chat_id,
+            role,
+            text,
+            json.dumps(media or [], ensure_ascii=False),
+            state,
+            time.time(),
+            json.dumps(calls or [], ensure_ascii=False),
+        ),
     )
     touch(connection, chat_id)
     made = message(connection, int(cursor.lastrowid or 0))
@@ -132,11 +146,21 @@ def messages(connection: sqlite3.Connection, chat_id: int) -> list[Message]:
 
 def write(connection: sqlite3.Connection, message_id: int, **fields: Any) -> None:
     for name, value in fields.items():
-        if name not in ("text", "thinking", "state", "error", "run_id"):
+        if name not in ("text", "thinking", "state", "error", "run_id", "media", "calls"):
             raise ValueError(f"a message has no {name}")
+        if name in ("media", "calls"):
+            value = json.dumps(value, ensure_ascii=False)
         connection.execute(f"UPDATE chat_messages SET {name} = ? WHERE id = ?", (value, message_id))
 
 
 def delete_after(connection: sqlite3.Connection, chat_id: int, message_id: int) -> None:
     """The message and everything said after it."""
     connection.execute("DELETE FROM chat_messages WHERE chat_id = ? AND id >= ?", (chat_id, message_id))
+
+
+def following(connection: sqlite3.Connection) -> list[Message]:
+    """Every tool call waiting on a run, in any chat."""
+    rows = connection.execute(
+        "SELECT * FROM chat_messages WHERE role = ? AND state = ? AND run_id IS NOT NULL ORDER BY id", (TOOL, WRITING)
+    )
+    return [Message.of(row) for row in rows]

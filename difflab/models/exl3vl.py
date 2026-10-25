@@ -2,6 +2,8 @@
 
 import gc
 import hashlib
+import json
+import re
 from collections import OrderedDict
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -9,6 +11,7 @@ from typing import Any, NamedTuple
 
 import torch
 from exllamav3 import Cache, Config, Generator, Job, LLGuidanceFilter, Model, Tokenizer
+from exllamav3.cache import CacheLayer_quant
 from exllamav3.constants import PAGE_SIZE
 from exllamav3.generator.sampler import ArgmaxSampler, ComboSampler
 from exllamav3.tokenizer.mm_embedding import FIRST_MM_EMBEDDING_INDEX
@@ -30,6 +33,10 @@ IMAGE_SLOT = "<|vision_start|><|image_pad|><|vision_end|>"
 # me format the JSON on one line" wrote `{"traits [{": ...`, its `":[{"` masked out (2026-10-11).
 ANY_JSON = {"type": ["object", "array"], "x-guidance": {"whitespace_pattern": " ?"}}
 
+OPEN_CALL = "<tool_call>"
+CALL = re.compile(r"<tool_call>\s*<function=([^>\n]+)>(.*?)</function>\s*</tool_call>", re.S)
+PARAMETER = re.compile(r"<parameter=([^>\n]+)>\n?(.*?)\n?</parameter>", re.S)
+
 # Hashes of every full page any prompt has had since the server started, reloads included: how much the
 # disk cache could restore at most, against what it did.
 _PAGES_SEEN: set[bytes] = set()
@@ -46,8 +53,10 @@ class Turn(NamedTuple):
 class Exl3VL:
     """Resident from the first call until `unload`, like `QwenVL`, and asked the same way."""
 
-    def __init__(self, checkpoint: Checkpoint) -> None:
+    def __init__(self, checkpoint: Checkpoint, context: int = config.VLM_CONTEXT_TOKENS, kv_bits: int = 0) -> None:
+        """`kv_bits` quantizes the attention cache, 0 keeping it fp16."""
         self.checkpoint = checkpoint
+        self.context, self.kv_bits = context, kv_bits
         self._parts: dict[str, Any] | None = None
         self._embedded: OrderedDict[str, Any] = OrderedDict()
 
@@ -65,8 +74,11 @@ class Exl3VL:
         model = Model.from_config(exl_config)
         # One job at a time: every recurrent slot is 48 layers of linear-attention state, ~150 MB for
         # each draft position, and the default 16 slots do not fit beside the weights.
+        quant: dict[str, Any] = (
+            {"layer_type": CacheLayer_quant, "k_bits": self.kv_bits, "v_bits": self.kv_bits} if self.kv_bits else {}
+        )
         cache = Cache(
-            model, max_num_tokens=config.VLM_CONTEXT_TOKENS, max_batch_size=1, max_history=config.VLM_DRAFT_TOKENS
+            model, max_num_tokens=self.context, max_batch_size=1, max_history=config.VLM_DRAFT_TOKENS, **quant
         )
         model.load()
         drafts: dict[str, Any] = {}
@@ -74,7 +86,7 @@ class Exl3VL:
             mtp = Model.from_config(exl_config, component="mtp")
             drafts = {
                 "draft_model": mtp,
-                "draft_cache": Cache(mtp, max_num_tokens=config.VLM_CONTEXT_TOKENS, max_batch_size=1),
+                "draft_cache": Cache(mtp, max_num_tokens=self.context, max_batch_size=1, **quant),
                 "num_draft_tokens": config.VLM_DRAFT_TOKENS,
             }
             mtp.load()
@@ -158,17 +170,19 @@ class Exl3VL:
         effort: str | None = config.VLM_REASONING_EFFORT,
         tools: Sequence[dict[str, Any]] = (),
         usage: dict[str, int] | None = None,
+        kept: bool = False,
     ) -> str:
         """`ask` over a whole conversation; `heard` is handed the thought and the answer so far as they arrive.
         `numbered` announces pictures even when there is one, so a conversation's prompt does not change under
         the cache once a second arrives; unset, only several are. `effort=None` answers without thinking.
         `tools` are OpenAI function definitions, called in the template's own `<tool_call>` markup; `usage`
-        is filled with the prompt's and the answer's token counts."""
+        is filled with the prompt's and the answer's token counts. `kept` writes the whole prompt to disk, for
+        a conversation that goes on after something else has had the card."""
 
         def asked() -> str:
             return self._chat(
                 turns, max_new_tokens, temperature, top_p, top_k, seed, system, title, echo, as_json, schema,
-                steady, heard, numbered, effort, tools, usage,
+                steady, heard, numbered, effort, tools, usage, kept,
             )  # fmt: skip
 
         try:
@@ -200,6 +214,7 @@ class Exl3VL:
         effort: str | None,
         tools: Sequence[dict[str, Any]],
         usage: dict[str, int] | None,
+        kept: bool,
     ) -> str:
         parts = self.load()
         shown = [part for turn in turns for part in turn.said if isinstance(part, Image.Image)]
@@ -299,14 +314,16 @@ class Exl3VL:
                     ui.note(f"VLM opening not kept on disk: {missed}")
 
         ids, ends = tokenizer.encode(prompt, encode_special_tokens=True, embeddings=embeddings), []
-        if ids.shape[-1] >= config.VLM_CONTEXT_TOKENS:
-            raise ValueError(f"the prompt is {ids.shape[-1]:,} tokens and the VLM holds {config.VLM_CONTEXT_TOKENS:,}")
+        if ids.shape[-1] >= self.context:
+            raise ValueError(f"the prompt is {ids.shape[-1]:,} tokens and the VLM holds {self.context:,}")
         if system:
             ends.append(
                 tokenizer.encode(prompt[: prompt.index("<|im_start|>user")], encode_special_tokens=True).shape[-1]
             )
         if steady:
             ends.append(int((ids[0] == embeddings[steady - 1].last_index - 1).nonzero()[0]) + 1)
+        if kept:
+            ends.append(ids.shape[-1] - 2)  # the two tokens `keep` puts past its cut stay inside the prompt
 
         with ui.live_answer(title, echo) as show:
             keep(ids, ends)
@@ -370,3 +387,43 @@ def _seen_tokens(ids: torch.Tensor) -> int:
             matching = False
             _PAGES_SEEN.add(phash)
     return found
+
+
+def tool_calls(text: str, tools: Sequence[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
+    """The answer's words before its first tool call, and its calls as `{"name", "arguments": {...}}`, each
+    argument typed by its tool's schema."""
+    found = list(CALL.finditer(text))
+    if not found:
+        return text, []
+    kinds = {tool["name"]: (tool.get("parameters") or {}).get("properties") or {} for tool in tools}
+    made = []
+    for match in found:
+        name = match.group(1).strip()
+        arguments = {
+            key.strip(): _typed(value, kinds.get(name, {}).get(key.strip(), {}))
+            for key, value in PARAMETER.findall(match.group(2))
+        }
+        made.append({"name": name, "arguments": arguments})
+    return text[: found[0].start()].rstrip(), made
+
+
+def before_calls(text: str, settled: bool) -> str:
+    """What of an answer so far can be shown: nothing from a tool call on, nor what may be the start of one."""
+    if OPEN_CALL in text:
+        return text[: text.index(OPEN_CALL)].rstrip()
+    if settled:
+        return text
+    for cut in range(min(len(OPEN_CALL) - 1, len(text)), 0, -1):
+        if OPEN_CALL.startswith(text[-cut:]):
+            return text[:-cut]
+    return text
+
+
+def _typed(value: str, schema: dict[str, Any]) -> Any:
+    """A string parameter as written; any other as the JSON it should be, or as written when it is not."""
+    if schema.get("type", "string") == "string":
+        return value
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return value

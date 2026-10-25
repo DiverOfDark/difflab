@@ -55,6 +55,7 @@ class Worker(threading.Thread):
                 # `orig_argv`, not `argv`: under `-m` argv[0] is the module's file, which run as a
                 # script cannot import its own package.
                 os.execv(sys.executable, sys.orig_argv)
+            _advance_chats()
             if not self.step():
                 if time.time() - self.swept > config.CLEANUP_EVERY_HOURS * 3600:
                     self.swept = time.time()
@@ -187,6 +188,15 @@ class Worker(threading.Thread):
                         elif isinstance(command, protocol.Resume):
                             _set_run_state(ctx.run_id, store.RUNNING)
             time.sleep(STATS_EVERY)
+
+
+def _advance_chats() -> None:
+    from difflab.api import harness  # not at the top: the API imports the work package
+
+    try:
+        harness.advance()
+    except (OSError, sqlite3.Error, LookupError, ValueError) as problem:
+        print(f"difflab: a chat's tool calls could not move on ({problem})", flush=True)
 
 
 def _claim(connection: sqlite3.Connection) -> store.Job | None:

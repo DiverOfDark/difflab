@@ -113,7 +113,14 @@ def run_write_image_prompt(inputs: dict[str, Any], settings: dict[str, Any]) -> 
 
 def run_chat(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
     shaped = {name: inputs[name] for name in ("as_json", "schema", "effort", "conversation", "tools") if name in inputs}
-    return chat.reply(int(inputs["message"]), ChatSettings(**settings), **shaped)
+    if "conversation" in inputs:
+        return chat.reply(int(inputs["message"]), ChatSettings(**settings), **shaped)
+    from difflab.api import harness  # not at the top: the API imports the work package
+
+    offered, briefing = harness.prepare(int(inputs["message"]), bool(inputs.get("spent")))
+    said = chat.reply(int(inputs["message"]), ChatSettings(**settings), tools=offered, briefing=briefing, **shaped)
+    harness.after_reply(int(inputs["message"]), offered)
+    return said
 
 
 def run_create_image(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:

@@ -8,6 +8,7 @@ dependencies = [
     "accelerate>=1.15.0",
     "av>=18.1.0",
     "comfy-kitchen>=0.2.37",
+    "ddgs>=9.14.4",
     "diffusers>=0.40.0",
     "einops>=0.8.2",
     "exllamav3>=1.5.3",
