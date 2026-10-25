@@ -420,8 +420,10 @@ def update(production_id: int, **changes: Any) -> dict[str, int]:
     each member as {id} ("" gives it back to what the planner reads off the first photo); `aspect`, the
     canvas's width over height (None: the first photo's); `fit`, how the first photo meets it (FITS). A
     changed story, opening, aspect or fit makes every prompt, composed keyframe and clip stale until a
-    re-plan. `keep` spares it from the cleanup."""
-    unknown = set(changes) - {"title", "story", "opening", "aspect", "fit", "keep"}
+    re-plan. `engine` (ENGINES; "minimax-h3" is "") compiles every prompt again in the new engine's words
+    and makes every clip stale; keyframes stay, and a hand-written prompt stays as written (`pinned`).
+    `keep` spares it from the cleanup."""
+    unknown = set(changes) - {"title", "story", "opening", "aspect", "fit", "engine", "keep"}
     if unknown:
         raise ValueError(f"a production has no {', '.join(sorted(unknown))} to edit")
     moved = {"prompts": 0, "keyframes": 0, "clips": 0}
@@ -492,9 +494,43 @@ def update(production_id: int, **changes: Any) -> dict[str, int]:
             if fit != (now.manifest.get("fit") or FITS[0]):
                 store.update_production(connection, production_id, manifest={**now.manifest, "fit": fit})
                 replan = True
+        switched = False
+        if "engine" in changes:
+            engine = "" if changes["engine"] in (None, "", "minimax-h3") else str(changes["engine"])
+            if engine not in ENGINES:
+                raise ValueError(f"an engine of {' or '.join(e or 'minimax-h3' for e in ENGINES)}")
+            now = store.production(connection, production_id)
+            assert now is not None
+            if engine != str(now.manifest.get("engine") or ""):
+                manifest = {k: v for k, v in now.manifest.items() if k != "engine"}
+                store.update_production(
+                    connection, production_id, manifest={**manifest, **({"engine": engine} if engine else {})}
+                )
+                switched = True
         if replan:
             moved = _stale(connection, _shots_of(connection, production_id))
+        elif switched:
+            moved = _reengined(connection, production_id)
         moved["references"] = redraw
+    return moved
+
+
+def _reengined(connection: Any, production_id: int) -> dict[str, int]:
+    production = store.production(connection, production_id)
+    assert production is not None
+    moved = {"prompts": 0, "keyframes": 0, "clips": 0, "recompiled": 0, "pinned": 0}
+    for chapter in store.chapters_of(connection, production_id):
+        for shot in store.shots_of(connection, chapter.id):
+            prompt, clip = store.prompt_of(connection, shot.id), store.clip_of(connection, shot.id)
+            if prompt.text:
+                moved["pinned"] += prompt.pinned
+                recompile(connection, production, chapter, shot.id)
+                now = store.prompt_of(connection, shot.id)
+                moved["recompiled"] += not prompt.pinned and now.text != prompt.text
+                moved["prompts"] += now.state == store.STALE and prompt.state != store.STALE
+            if clip.artifact and clip.state != store.STALE:
+                store.set_made(connection, "clip", clip.id, store.STALE)
+                moved["clips"] += 1
     return moved
 
 

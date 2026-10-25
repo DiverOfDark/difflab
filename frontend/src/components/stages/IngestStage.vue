@@ -175,6 +175,33 @@ const saveAspect = () =>
       ? `Saved. ${stale.prompts} prompts, ${stale.clips} clips and ${stale.references ?? 0} drawn places went stale: re-plan the chapter.`
       : 'Saved.'
   })
+// --- the video engine ----------------------------------------------------------------------------
+type Engine = 'minimax-h3' | 'ltx-2.5'
+const givenEngine = computed<Engine>(() => (props.production?.manifest.engine === 'ltx-2.5' ? 'ltx-2.5' : 'minimax-h3'))
+const { draft: engine, reset: resetEngine } = useDraft(() => givenEngine.value)
+const engineNote = ref('')
+watch(
+  () => props.production?.id,
+  () => {
+    resetEngine()
+    engineNote.value = ''
+  },
+)
+const engineCost = computed(() => {
+  const prompts = allShots.value.filter((s) => s.prompt.text)
+  const clips = allShots.value.filter((s) => s.clip.artifact).length
+  const pinned = prompts.filter((s) => s.prompt.pinned).length
+  if (!prompts.length) return 'The first plan writes its prompts for this engine.'
+  const parts = [`${prompts.length - pinned} prompts compiled again`, `${clips} clips re-rendered`]
+  return `It costs: ${parts.join(', ')}; keyframes stay.` + (pinned ? ` ${pinned} hand-written prompts stay in the old engine's words.` : '')
+})
+const saveEngine = () =>
+  props.act('engine', async () => {
+    const { stale } = await patchProduction(props.production!.id, { engine: engine.value })
+    engineNote.value =
+      `Switched. ${stale.recompiled ?? 0} prompts compiled again, ${stale.clips} clips stale` +
+      (stale.pinned ? `; ${stale.pinned} hand-written prompts kept as written: rewrite them for the new engine.` : '.')
+  })
 const composeFirst = () => props.act('compose', () => patchShot(firstShot.value!.id, { keyframe: 'composed' }))
 
 const toggleKeep = () => props.act('keep', () => patchProduction(props.production!.id, { keep: !props.production!.keep }))
@@ -239,6 +266,20 @@ const discard = () => {
             </template>
             <template v-else-if="!firstShot">After the plan, compose shot 1's keyframe to have it drawn at the canvas size.</template>
           </p>
+        </div>
+
+        <div class="aspect ruled">
+          <div class="saving">
+            <label class="field" title="the video model every shot renders on">
+              <span class="eyebrow">engine</span>
+              <select v-model="engine">
+                <option value="minimax-h3">MiniMax H3</option>
+                <option value="ltx-2.5">LTX</option>
+              </select>
+            </label>
+            <button class="primary" :disabled="engine === givenEngine || !!busy" @click="saveEngine">{{ busy === 'engine' ? 'switching…' : 'Switch engine' }}</button>
+          </div>
+          <span class="note">{{ engineNote || (engine !== givenEngine ? engineCost : 'The video model every shot renders on.') }}</span>
         </div>
 
         <div class="facts mono ruled">

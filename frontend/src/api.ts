@@ -367,6 +367,9 @@ export interface Stale {
   clips: number
   /** Drawn places that will be drawn again at a new aspect. */
   references?: number
+  /** An engine switch: the prompts compiled again, and the hand-written ones it left in the old engine's words. */
+  recompiled?: number
+  pinned?: number
   /** 1 when turning plates on queued a run to draw the missing ones. */
   plating?: number
   /** The shots newly stale, and the chained shots after them that re-render because they open on a stale clip. */
