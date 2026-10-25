@@ -23,7 +23,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 
 from difflab import config
-from difflab.api import assets, chats, gallery, mcp, openai, runs
+from difflab.api import assets, chats, gallery, mcp, openai, runs, web
 from difflab.core import hub, profiling
 from difflab.core.settings import Continuity, IngestSettings
 from difflab.models.minimax_h3.settings import VideoSettings
@@ -958,6 +958,17 @@ async def upload(files: list[UploadFile]) -> list[dict[str, Any]]:
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
     return stored
+
+
+@app.post("/api/uploads/url")
+async def upload_from(request: Request) -> dict[str, Any]:
+    """`{"url"}`: a picture dragged in from another tab arrives as its address, not its bytes."""
+    url = str((await request.json()).get("url", ""))
+    try:
+        _, (path,) = await asyncio.to_thread(web.call, "fetch_image", {"url": url})
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from error
+    return assets.describe(Path(path))
 
 
 # Served from /uploads/, not /assets/: the built page puts its own bundles under /assets/, and a

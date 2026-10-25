@@ -7,7 +7,7 @@ Everything renders on one card behind one queue: a job waits its turn, and nothi
 The page has six tabs:
 - **Take**: one-off jobs from a form. A picture, one clip, or an upscale of a finished clip.
 - **Production**: films. A story and photos go in; five stages (Ingest, Bible, Shots, Render, Assemble) bring them out as a film.
-- **Chat**: talk to the VLM, with pictures.
+- **Chat**: talk to the VLM, which makes pictures and clips, finds references on the web and works on productions.
 - **Gallery**: every finished picture and video.
 - **Runs**: every job, queued, live or ended. A live render shows a preview after each sampling step.
 - **Settings**: models, LoRAs and knobs, for this machine or one production.
@@ -211,10 +211,32 @@ Models are deleted one by one under **Downloads**; results in the **Gallery**.
 
 Over MCP: none; clearing is done in the page.
 
+# Have the chat make pictures, clips and changes
+Ask in the Chat tab in plain words, and the model does the work with difflab's own tools.
+
+In the page:
+1. Open **Chat**, then **New chat**. To work on a film, pick it under **production** at the top right: the chat's
+   tools then work on that production without being told which.
+2. Ask: "make a picture of…", "a clip from this photo where…", "make shot 3 two seconds shorter", "find a reference
+   photo of … on the web". Attach photos with **＋**, by pasting, or by dropping them; a picture dragged from
+   another browser tab is fetched by its address.
+3. Each tool call is a card under the reply: the tool and its arguments, **result** to open what it returned, and
+   the picture or clip it made. A render in it says **waiting for the card** until it runs.
+4. Rendering a production's chapters, rerolling a shot, finishing, cancelling a run and deleting wait for you:
+   **Allow** or **Decline**. Sending a new message instead declines it.
+5. **Stop** cancels the reply and any render the chat queued; a run the chat was only following goes on.
+
+The model makes pictures and clips without asking, looks at each result and says what is wrong with it, and makes
+one again only when told to. One message allows 8 rounds of tool calls. Web search goes through the search engines'
+own pages; when they refuse, the chat gives a link to search in your browser, and you drop what you pick into it.
+
+Over MCP: the same tools, called by your own agent; `search_images`, `fetch_image` and `search_web` are the chat's only.
+
 # Use the VLM from other tools
 Chat with the VLM (talk to the model), or reach difflab from another program.
 
-- **Chat** tab: a conversation with the VLM, pictures included; its reply waits its turn on the card.
+- **Chat** tab: a conversation with the VLM, pictures included, that acts through difflab's tools; its reply waits
+  its turn on the card.
 - **OpenAI-compatible API** at `/v1/chat/completions` and `/v1/models`: streaming, tool calls and reasoning
   content. The API key is the server's token, when it has one.
 - **MCP** at `/mcp`: these tools. Same token, as a bearer header.

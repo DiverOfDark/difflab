@@ -1,25 +1,31 @@
 <script setup lang="ts">
-/** A chat with the VLM. Each reply is a run on the card, so it waits behind a render; the page polls it as it writes. */
+/** A chat with the VLM, which acts through difflab's tools. Each reply and each render it asks for is a run on the
+ *  card, so it waits behind others; the page polls while anything is in flight. */
 import DOMPurify from 'dompurify'
 import { marked } from 'marked'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   chatAgain,
+  chatAllow,
   chatRewind,
   chatStop,
   deleteChat,
   listChats,
+  listProductions,
+  outputUrl,
   patchChat,
   readChat,
   sayInChat,
   startChat,
   thumbUrl,
   upload,
+  uploadFrom,
   type Asset,
   type Chat,
   type ChatMessage,
   type ChatSummary,
+  type ProductionSummary,
 } from '../api'
 import { state } from '../store'
 
@@ -31,6 +37,7 @@ const props = defineProps<{ id?: number }>()
 const router = useRouter()
 
 const list = ref<ChatSummary[]>([])
+const productions = ref<ProductionSummary[]>([])
 const chat = ref<Chat | null>(null)
 const text = ref('')
 const attached = ref<Asset[]>([])
@@ -48,7 +55,8 @@ const pending = computed(() => chat.value?.messages.some((m) => m.state === 'que
 const last = computed(() => chat.value?.messages.at(-1) ?? null)
 const canSend = computed(() => !!chat.value && !pending.value && !busy.value && !uploading.value && (!!text.value.trim() || attached.value.length > 0))
 
-const fileUrl = (path: string) => `/uploads/${path.split('/').pop()}`
+// Absolute is an upload or a fetched picture, under assets/; relative is a render's, under output/.
+const fileUrl = (path: string) => (path.startsWith('/') ? `/uploads/${path.split('/').pop()}` : outputUrl(path))
 const nameOf = (path: string) => (path.split('/').pop() ?? path).replace(/^[0-9a-f]{16}-/, '')
 const words = (s: string) => s.trim().split(/\s+/).filter(Boolean).length
 const rendered = (s: string) => DOMPurify.sanitize(marked.parse(s, { async: false, gfm: true, breaks: true }))
@@ -94,6 +102,7 @@ watch(
     clearTimeout(timer)
     failure.value = ''
     await loadList()
+    if (!productions.value.length) productions.value = await listProductions().catch(() => [])
     if (id === undefined) {
       chat.value = null
       const newest = list.value[0]
@@ -159,9 +168,26 @@ function pasted(event: ClipboardEvent) {
   }
 }
 
-function dropped(event: DragEvent) {
+/** A picture dragged from another tab often carries only its address, which the server then fetches. */
+async function dropped(event: DragEvent) {
   dragging.value = false
-  attach([...(event.dataTransfer?.files ?? [])])
+  const files = [...(event.dataTransfer?.files ?? [])]
+  if (files.length) return attach(files)
+  const html = event.dataTransfer?.getData('text/html') ?? ''
+  const url =
+    new DOMParser().parseFromString(html, 'text/html').querySelector('img')?.src ||
+    (event.dataTransfer?.getData('text/uri-list') ?? '').split('\n').find((line) => line && !line.startsWith('#')) ||
+    ''
+  if (!/^https?:/.test(url)) return
+  uploading.value += 1
+  failure.value = ''
+  try {
+    attached.value = [...attached.value, await uploadFrom(url)]
+  } catch (error) {
+    failure.value = String(error instanceof Error ? error.message : error)
+  } finally {
+    uploading.value -= 1
+  }
 }
 
 async function send() {
@@ -209,6 +235,38 @@ async function edit(message: ChatMessage) {
   nextTick(() => box.value?.focus())
 }
 
+async function allow(message: ChatMessage, allowed: boolean) {
+  if (!chat.value) return
+  const id = chat.value.id
+  const found = await act(() => chatAllow(id, message.id, allowed))
+  if (found) show(found)
+}
+
+async function setProduction(event: Event) {
+  if (!chat.value) return
+  const chosen = (event.target as HTMLSelectElement).value
+  const id = chat.value.id
+  const found = await act(() => patchChat(id, { production: chosen ? Number(chosen) : null }))
+  if (found) show(found)
+}
+
+/** A call as one line: its tool and its arguments, long values cut. */
+function called(message: ChatMessage): string {
+  const call = message.calls[0]
+  if (!call) return ''
+  const args = Object.entries(call.arguments).map(([key, value]) => {
+    const said = typeof value === 'string' ? value : JSON.stringify(value)
+    return `${key}: ${said.length > 80 ? `${said.slice(0, 80)}…` : said}`
+  })
+  return args.join(' · ')
+}
+
+/** Where a tool call's run is: rendering now on the card, or waiting behind something else. */
+function rendering(message: ChatMessage): string {
+  if (message.calls[0]?.follows) return 'following the run'
+  return state.gpu?.run === message.run ? `${state.gpu?.state ?? 'running'} · ${state.gpu?.title ?? ''}` : 'waiting for the card'
+}
+
 async function rename(event: Event) {
   if (!chat.value) return
   const title = (event.target as HTMLInputElement).value.trim()
@@ -236,6 +294,7 @@ async function copy(message: ChatMessage) {
 
 /** What a reply in flight is doing, in the words the header uses for the card. */
 function waiting(message: ChatMessage): string {
+  if (message.state !== 'queued' && message.state !== 'writing') return ''
   if (message.state === 'queued') {
     const other = state.gpu?.run && state.gpu.run !== message.run ? state.gpu : null
     return other ? `waiting for the card · ${other.title}` : 'waiting for the card'
@@ -262,7 +321,16 @@ function waiting(message: ChatMessage): string {
 
     <section v-if="chat" class="main" :class="{ dragging }" @dragover.prevent="dragging = true" @dragleave.self="dragging = false" @drop.prevent="dropped">
       <header class="head">
-        <input class="title" :value="chat.title" placeholder="untitled" @change="rename" @keydown.enter="($event.target as HTMLInputElement).blur()" />
+        <div class="title-row">
+          <input class="title" :value="chat.title" placeholder="untitled" @change="rename" @keydown.enter="($event.target as HTMLInputElement).blur()" />
+          <label class="scope label" title="the production this chat's tools work on">
+            production
+            <select :value="chat.production ?? ''" :disabled="busy" @change="setProduction">
+              <option value="">none</option>
+              <option v-for="one in productions" :key="one.id" :value="one.id">{{ one.title || one.slug }}</option>
+            </select>
+          </label>
+        </div>
         <details class="system">
           <summary class="label">system prompt{{ chat.system ? ' · own' : '' }}</summary>
           <textarea rows="5" :value="chat.system || chat.default_system" @change="setSystem" />
@@ -272,9 +340,23 @@ function waiting(message: ChatMessage): string {
 
       <div ref="thread" class="thread">
         <p v-if="!chat.messages.length" class="muted empty">
-          Ask anything. Attach pictures or videos with the clip, by pasting, or by dropping them here — a video is shown to the model as a frame a second.
+          Ask anything, or ask for a picture or a clip: the model makes them itself, finds references on the web, and with a
+          production chosen above works on it. Attach pictures or videos with the clip, by pasting, or by dropping them here —
+          a video is shown to the model as a frame a second.
         </p>
         <article v-for="message in chat.messages" :key="message.id" class="message" :class="message.role">
+          <div v-if="message.role === 'tool'" class="call mono">
+            <span class="tool">{{ message.calls[0]?.name }}</span>
+            <span class="args muted">{{ called(message) }}</span>
+          </div>
+          <p v-if="message.role === 'tool' && message.state === 'writing'" class="status mono muted"><i class="dot running" />{{ rendering(message) }}</p>
+          <div v-if="message.state === 'asking'" class="ask">
+            <p>{{ message.text }}</p>
+            <div class="buttons">
+              <button class="primary" :disabled="busy" @click="allow(message, true)">Allow</button>
+              <button :disabled="busy" @click="allow(message, false)">Decline</button>
+            </div>
+          </div>
           <div v-if="message.media.length" class="media">
             <template v-for="path in message.media" :key="path">
               <video v-if="VIDEO.test(path)" :src="fileUrl(path)" controls preload="metadata" />
@@ -287,11 +369,15 @@ function waiting(message: ChatMessage): string {
             <div class="words muted">{{ message.thinking }}</div>
           </details>
           <div v-if="message.text && message.role === 'assistant'" class="words md" v-html="rendered(message.text)" />
-          <div v-else-if="message.text" class="words">{{ message.text }}</div>
-          <p v-if="waiting(message)" class="status mono muted"><i class="dot running" />{{ waiting(message) }}</p>
+          <details v-else-if="message.text && message.role === 'tool' && message.state !== 'asking'" class="result">
+            <summary class="label">result</summary>
+            <pre class="mono">{{ message.text }}</pre>
+          </details>
+          <div v-else-if="message.text && message.role === 'user'" class="words">{{ message.text }}</div>
+          <p v-if="message.role !== 'tool' && waiting(message)" class="status mono muted"><i class="dot running" />{{ waiting(message) }}</p>
           <p v-if="message.state === 'stopped'" class="status mono dim">stopped</p>
           <p v-if="message.state === 'failed'" class="band error">{{ message.error || 'failed' }}</p>
-          <div v-if="message.state !== 'queued' && message.state !== 'writing'" class="actions">
+          <div v-if="message.state !== 'queued' && message.state !== 'writing' && message.state !== 'asking'" class="actions">
             <button v-if="message.role === 'assistant' && message.text" class="quiet" @click="copy(message)">{{ copied === message.id ? 'copied' : 'copy' }}</button>
             <button v-if="message.role === 'assistant' && message === last" class="quiet" :disabled="pending || busy" @click="again">again</button>
             <button v-if="message.role === 'user'" class="quiet" :disabled="pending || busy" title="drop this and everything after it, and say it differently" @click="edit(message)">edit</button>
@@ -329,7 +415,7 @@ function waiting(message: ChatMessage): string {
 <style scoped>
 .chat-screen {
   display: grid;
-  grid-template-columns: 240px 1fr;
+  grid-template-columns: 240px minmax(0, 1fr);
   height: calc(100vh - 56px);
 }
 
@@ -424,6 +510,89 @@ function waiting(message: ChatMessage): string {
 .title:focus {
   border-color: var(--line);
   padding: 4px 8px;
+}
+
+.title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.title-row .title {
+  flex: 1;
+}
+
+.scope {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.scope select {
+  max-width: 220px;
+}
+
+.message.tool {
+  gap: 4px;
+  border-left: 2px solid var(--line);
+  padding-left: var(--space-1);
+}
+
+.message.tool .media {
+  justify-content: flex-start;
+}
+
+.call {
+  display: flex;
+  gap: 8px;
+  font-size: var(--text-xs);
+  align-items: baseline;
+  min-width: 0;
+}
+
+.call .tool {
+  color: var(--accent);
+}
+
+.call .args {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ask {
+  background: var(--bg-raised);
+  border-radius: var(--radius-card);
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ask p {
+  margin: 0;
+}
+
+.ask .buttons {
+  display: flex;
+  gap: 6px;
+}
+
+.result summary {
+  cursor: pointer;
+  font-size: var(--text-xs);
+}
+
+.result pre {
+  font-size: var(--text-xs);
+  max-height: 260px;
+  overflow: auto;
+  background: var(--bg-raised);
+  border-radius: var(--radius-input);
+  padding: 8px 12px;
+  margin: 4px 0 0;
+  white-space: pre-wrap;
 }
 
 .system summary {

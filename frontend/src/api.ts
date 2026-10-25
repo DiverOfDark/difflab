@@ -186,6 +186,8 @@ export async function upload(files: File[]): Promise<Asset[]> {
   for (const file of files) form.append('files', file)
   return json<Asset[]>('/api/uploads', { method: 'POST', body: form })
 }
+/** A picture by its address, fetched by the server: what a drag from another tab carries. */
+export const uploadFrom = (url: string) => json<Asset>('/api/uploads/url', post({ url }))
 
 export interface GalleryItem {
   id: number
@@ -907,20 +909,34 @@ export interface ChatSummary {
   title: string
   created: number
   updated: number
+  /** The production its tools work on, or null for none. */
+  production: number | null
 }
 
-/** An answer goes `queued` -> `writing` -> `done`, `stopped` or `failed`; `text` and `thinking` grow while it writes. */
+export interface ToolCall {
+  id: string
+  name: string
+  arguments: Record<string, unknown>
+  /** A `run` call only follows its run: stopping the chat leaves the run going. */
+  follows?: boolean
+}
+
+/** An answer goes `queued` -> `writing` -> `done`, `stopped` or `failed`; `text` and `thinking` grow while it writes.
+ *  A `tool` message answers one of the answer's `calls`: `writing` while its run renders, `asking` until the person
+ *  allows or declines it. */
 export interface ChatMessage {
   id: number
-  role: 'user' | 'assistant'
+  role: 'user' | 'assistant' | 'tool'
   text: string
   thinking: string
   /** Uploaded paths: pictures, videos (the VLM sees a frame a second), sounds (it cannot hear them). */
   media: string[]
-  state: 'queued' | 'writing' | 'done' | 'stopped' | 'failed'
+  state: 'queued' | 'writing' | 'asking' | 'done' | 'stopped' | 'failed'
   error: string
   run: string | null
   created: number
+  /** An answer's tool calls; on a tool message, the one it answers. */
+  calls: ToolCall[]
 }
 
 export interface Chat extends ChatSummary {
@@ -934,7 +950,10 @@ const chatUrl = (id: number, rest = '') => `/api/chats/${id}${rest}`
 export const listChats = () => json<ChatSummary[]>('/api/chats')
 export const startChat = () => json<Chat>('/api/chats', { method: 'POST' })
 export const readChat = (id: number) => json<Chat>(chatUrl(id))
-export const patchChat = (id: number, body: { title?: string; system?: string }) => json<Chat>(chatUrl(id), send('PATCH', body))
+export const patchChat = (id: number, body: { title?: string; system?: string; production?: number | null }) =>
+  json<Chat>(chatUrl(id), send('PATCH', body))
+export const chatAllow = (id: number, message: number, allowed: boolean) =>
+  json<Chat>(chatUrl(id, `/allow/${message}`), post({ allowed }))
 export const deleteChat = (id: number) => json<unknown>(chatUrl(id), { method: 'DELETE' })
 export const sayInChat = (id: number, text: string, media: string[]) => json<Chat>(chatUrl(id, '/messages'), post({ text, media }))
 export const chatAgain = (id: number) => json<Chat>(chatUrl(id, '/again'), { method: 'POST' })
