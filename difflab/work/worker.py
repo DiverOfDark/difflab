@@ -48,12 +48,14 @@ class Worker(threading.Thread):
         _settle_orphans()
         threading.Thread(target=self._watch, name="difflab-worker-watch", daemon=True).start()
         while not self.stopping.is_set():
+            if RESTART.is_set():
+                # Between jobs, not at an idle queue: a judge's retries and the next run kept the queue busy
+                # for hours and every one of them ran on the old code (2026-10-25). Queued jobs wait in the DB.
+                print("difflab: restarting between jobs", flush=True)
+                # `orig_argv`, not `argv`: under `-m` argv[0] is the module's file, which run as a
+                # script cannot import its own package.
+                os.execv(sys.executable, sys.orig_argv)
             if not self.step():
-                if RESTART.is_set():
-                    print("difflab: restarting, the queue is idle", flush=True)
-                    # `orig_argv`, not `argv`: under `-m` argv[0] is the module's file, which run as a
-                    # script cannot import its own package.
-                    os.execv(sys.executable, sys.orig_argv)
                 if time.time() - self.swept > config.CLEANUP_EVERY_HOURS * 3600:
                     self.swept = time.time()
                     try:

@@ -983,11 +983,11 @@ async def command(run_id: str, request: Request) -> dict[str, bool]:
 
 @app.post("/api/restart")
 def restart() -> dict[str, str]:
-    """The server restarts on its code as it is now, once no job is running: a job in flight finishes first."""
+    """The server restarts on its code as it is now after the job in flight, before the next is claimed."""
     from difflab.work import worker
 
     worker.RESTART.set()
-    return {"restart": "when the queue is idle"}
+    return {"restart": "after the job in flight"}
 
 
 @app.post("/api/pod/heartbeat")
