@@ -44,6 +44,11 @@ VLM_CONTEXT_TOKENS = 65536
 # of the 40.6k first differed at character 485 of 601, one word for another.
 CHAT_KV_BITS = 8
 CHAT_CONTEXT_TOKENS = 432 * 256
+# A tool round adds 1.8-2.3k tokens (a search with its sheet, a fetch, a picture or a five-frame clip with its run's
+# summary) and one message allows 8 of them: past 70% a chat is summarised before its next reply, the newest two
+# messages from the person and what followed them kept as said.
+CHAT_COMPACT_TOKENS = CHAT_CONTEXT_TOKENS * 7 // 10
+CHAT_KEPT_TURNS = 2
 # MTP proposals per step. Measured on the 3090 (tok/s, sampled at 0.7/0.8/20; a card call with one
 # photo, a survey with two, 2k tokens of prose): none 36 / 36 / 36, 2 drafts 71 / 75 / 67, 3 drafts
 # 80 / 88 / 74, 4 drafts 85 / 97 / 70, 5 drafts 96 / 114 / 68. JSON, which is all the director

@@ -878,6 +878,12 @@ def chat_rewind(chat_id: int, message_id: int) -> dict[str, Any]:
     return _chatting(lambda: chats.rewind(chat_id, message_id))
 
 
+@app.post("/api/chats/{chat_id}/compact")
+def chat_compact(chat_id: int) -> dict[str, Any]:
+    """The next reply summarises the chat first."""
+    return _chatting(lambda: chats.compact(chat_id))
+
+
 @app.post("/api/chats/{chat_id}/allow/{message_id}")
 async def chat_allow(chat_id: int, message_id: int, request: Request) -> dict[str, Any]:
     """`{"allowed": bool}`: the person's answer to a tool call that waits for it."""

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,7 @@ from difflab.tools.direct import shrink
 VIDEO = {".mp4", ".mov", ".mkv", ".webm"}
 WRITE_EVERY = 0.25  # seconds between writes of the reply so far; the page polls at about this rate
 PICTURED_KEPT = 4  # messages whose pictures stay shown once a chat outgrows the context
+SUMMARY_TOKENS = 1500  # the summary a compaction writes is asked for in 400 words
 
 
 def reply(
@@ -57,21 +59,23 @@ def reply(
             with store.connect() as connection:
                 chats.write(connection, message_id, thinking=thought, text=exl3vl.before_calls(words, False))
 
-    def asked(turns: list[Turn]) -> str:
+    def asked(turns: list[Turn], summarising: bool = False) -> str:
         return _vlm(settings, chatting=True).chat(
             turns,
-            kept=conversation is None,
+            kept=conversation is None and not summarising,
             system=system,
-            title="reply",
+            title="summary" if summarising else "reply",
             echo=False,
             numbered=True,
-            heard=heard,
-            as_json=as_json,
-            schema=schema,
+            heard=None if summarising else heard,
+            as_json=as_json and not summarising,
+            schema=None if summarising else schema,
+            # The template puts the effort in the system prompt's first line: summarised unthinking, an 18k-token
+            # chat matched only the 6.7k opening a call without thinking had cached (2026-10-26).
             effort=effort,
             tools=tools or (),
-            usage=usage,
-            **settings.generation(),
+            usage={} if summarising else usage,
+            **settings.generation() | ({"max_new_tokens": SUMMARY_TOKENS} if summarising else {}),
         )
 
     try:
@@ -84,17 +88,11 @@ def reply(
                 ]
             )  # fmt: skip
         else:
-            # Over the context, the pictures of all but the newest messages go before anything said does.
-            pictured = [one.id for one in said if one.media]
-            cuts = [0] + [pictured[-kept] for kept in (PICTURED_KEPT, 1) if kept < len(pictured)]
-            for at, cut in enumerate(cuts):
-                try:
-                    text = asked(_turns(said, cut))
-                    break
-                except ValueError as problem:
-                    if not str(problem).startswith("the prompt is") or at == len(cuts) - 1:
-                        raise
-                    ui.note("the chat is over the VLM's context: the pictures of older messages are named only")
+            if _due(chat, said):
+                with store.connect() as connection:
+                    chats.write(connection, message_id, thinking="Summarising the chat so far, to make room.")
+                chat = _compact(chat, said, lambda turns: asked(turns, summarising=True))
+            text = _fitting([one for one in said if one.id > chat.summary_through], asked, _opening(chat))
     except BaseException as problem:
         state = chats.STOPPED if isinstance(problem, context.Cancelled) else chats.FAILED
         with store.connect() as connection:
@@ -102,9 +100,55 @@ def reply(
             chats.write(connection, message_id, state=state, error=error)
         raise
     with store.connect() as connection:
-        chats.write(connection, message_id, text=text, state=chats.DONE)
+        chats.write(connection, message_id, text=text, state=chats.DONE, tokens=usage.get("prompt_tokens", 0))
         chats.touch(connection, answer.chat_id)
     return {"text": text, "usage": usage}
+
+
+def _due(chat: chats.Chat, said: list[chats.Message]) -> bool:
+    """Asked for, or the last answer was written from a prompt past `config.CHAT_COMPACT_TOKENS`."""
+    last = next((one.tokens for one in reversed(said) if one.role == chats.ASSISTANT and one.tokens), 0)
+    return chat.compact_next or last >= config.CHAT_COMPACT_TOKENS
+
+
+def _compact(chat: chats.Chat, said: list[chats.Message], summarise: Callable[[list[Turn]], str]) -> chats.Chat:
+    """The chat summarised up to its newest `config.CHAT_KEPT_TURNS` messages from the person, which stay as said."""
+    spoke = [one.id for one in said if one.role == chats.USER]
+    kept = config.CHAT_KEPT_TURNS if len(spoke) > config.CHAT_KEPT_TURNS else 1
+    through = spoke[-kept] - 1 if spoke else 0
+    if through > chat.summary_through:
+        shown = [one for one in said if one.id > chat.summary_through]
+        summary = exl3vl.before_calls(
+            _fitting(shown, summarise, _opening(chat), [Turn(chats.USER, [prompts.CHAT_COMPACT_PROMPT])]), True
+        )
+        changes: dict[str, str | int] = {"summary": summary.strip(), "summary_through": through, "compact_next": 0}
+    else:
+        changes = {"compact_next": 0}
+    with store.connect() as connection:
+        chats.update_chat(connection, chat.id, **changes)
+        found = chats.chat(connection, chat.id)
+    assert found is not None
+    return found
+
+
+def _opening(chat: chats.Chat) -> list[Turn]:
+    return [Turn(chats.USER, [f"{prompts.CHAT_SUMMARY_LEAD}\n\n{chat.summary}"])] if chat.summary else []
+
+
+def _fitting(
+    said: list[chats.Message], ask: Callable[[list[Turn]], str], before: list[Turn], after: list[Turn] | None = None
+) -> str:
+    """Over the context, the pictures of all but the newest messages go before anything said does."""
+    pictured = [one.id for one in said if one.media]
+    cuts = [0] + [pictured[-kept] for kept in (PICTURED_KEPT, 1) if kept < len(pictured)]
+    for at, cut in enumerate(cuts):
+        try:
+            return ask([*before, *_turns(said, cut), *(after or [])])
+        except ValueError as problem:
+            if not str(problem).startswith("the prompt is") or at == len(cuts) - 1:
+                raise
+            ui.note("the chat is over the VLM's context: the pictures of older messages are named only")
+    raise AssertionError("unreachable")
 
 
 def _turns(said: list[chats.Message], pictured_from: int) -> list[Turn]:

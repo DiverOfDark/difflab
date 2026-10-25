@@ -225,6 +225,10 @@ In the page:
 4. Rendering a production's chapters, rerolling a shot, finishing, cancelling a run and deleting wait for you:
    **Allow** or **Decline**. Sending a new message instead declines it.
 5. **Stop** cancels the reply and any render the chat queued; a run the chat was only following goes on.
+6. **context** under the title is how full the model's memory of the chat is. Past the mark, the next reply first
+   summarises the chat, keeping your newest two messages and what followed them as they were; **compact** asks for
+   that now, for example before changing subject. Older messages stay on the page, dimmed above a divider that
+   holds the summary, and the model can still see an old picture again by its path.
 
 The model makes pictures and clips without asking, looks at each result and says what is wrong with it, and makes
 one again only when told to. One message allows 8 rounds of tool calls. Web search goes through the search engines'

@@ -937,9 +937,18 @@ export interface ChatMessage {
   created: number
   /** An answer's tool calls; on a tool message, the one it answers. */
   calls: ToolCall[]
+  /** The prompt an answer was written from, in tokens. */
+  tokens: number
 }
 
 export interface Chat extends ChatSummary {
+  /** What the model has instead of every message up to `summary_through`; '' when the chat was never compacted. */
+  summary: string
+  summary_through: number
+  /** The next reply summarises the chat first. */
+  compact_next: boolean
+  /** The newest answer's prompt against the chat's context; past `compacts_at` the next reply compacts. */
+  context: { used: number; total: number; compacts_at: number }
   /** '' is `default_system`. */
   system: string
   default_system: string
@@ -952,6 +961,7 @@ export const startChat = () => json<Chat>('/api/chats', { method: 'POST' })
 export const readChat = (id: number) => json<Chat>(chatUrl(id))
 export const patchChat = (id: number, body: { title?: string; system?: string; production?: number | null }) =>
   json<Chat>(chatUrl(id), send('PATCH', body))
+export const chatCompact = (id: number) => json<Chat>(chatUrl(id, '/compact'), { method: 'POST' })
 export const chatAllow = (id: number, message: number, allowed: boolean) =>
   json<Chat>(chatUrl(id, `/allow/${message}`), post({ allowed }))
 export const deleteChat = (id: number) => json<unknown>(chatUrl(id), { method: 'DELETE' })

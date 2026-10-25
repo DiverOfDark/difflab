@@ -515,6 +515,14 @@ Renders, rerolls, finishing and deleting wait for the user to allow them; say wh
 - References from the web: search_images shows a numbered sheet; fetch_image keeps the ones worth using.
 - `help` explains how difflab does something when you are unsure.
 Answer in a few sentences once the work is done."""
+# The last message of a compaction (`tools/chat.py`), after the whole chat as the model has it.
+CHAT_COMPACT_PROMPT = """\
+The chat is about to be cut short to make room. Write the summary you will continue from instead of everything \
+above; the newest two messages from the user and what followed them stay as they are. Keep, in plain text and at \
+most 400 words: what the user wants and every preference or correction they gave; each file worth using again, by \
+its path, with what it shows; the production, shot, member and run ids touched and what was changed; and what is \
+still open. Leave out greetings, and anything already done that nothing depends on. Call no tools."""
+CHAT_SUMMARY_LEAD = "Earlier in this chat, summarised; its pictures are named by path, and `look` shows one again:"
 CHAT_TOOLS_SPENT = (
     "You have called tools as many times as one message allows: answer with what you have, and say what is left."
 )

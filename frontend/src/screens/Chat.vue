@@ -8,6 +8,7 @@ import { useRouter } from 'vue-router'
 import {
   chatAgain,
   chatAllow,
+  chatCompact,
   chatRewind,
   chatStop,
   deleteChat,
@@ -53,6 +54,11 @@ let timer: ReturnType<typeof setTimeout> | undefined
 
 const pending = computed(() => chat.value?.messages.some((m) => m.state === 'queued' || m.state === 'writing') ?? false)
 const last = computed(() => chat.value?.messages.at(-1) ?? null)
+/** The newest message the summary stands in for: the divider goes after it. */
+const summarisedUpTo = computed(() =>
+  Math.max(0, ...(chat.value?.messages.filter((m) => m.id <= (chat.value?.summary_through ?? 0)).map((m) => m.id) ?? [])),
+)
+const thousands = (n: number) => `${Math.round(n / 1000)}k`
 const canSend = computed(() => !!chat.value && !pending.value && !busy.value && !uploading.value && (!!text.value.trim() || attached.value.length > 0))
 
 // Absolute is an upload or a fetched picture, under assets/; relative is a render's, under output/.
@@ -235,6 +241,13 @@ async function edit(message: ChatMessage) {
   nextTick(() => box.value?.focus())
 }
 
+async function compact() {
+  if (!chat.value) return
+  const id = chat.value.id
+  const found = await act(() => chatCompact(id))
+  if (found) show(found)
+}
+
 async function allow(message: ChatMessage, allowed: boolean) {
   if (!chat.value) return
   const id = chat.value.id
@@ -331,6 +344,12 @@ function waiting(message: ChatMessage): string {
             </select>
           </label>
         </div>
+        <div class="fill mono muted" title="the newest reply's prompt against what the model holds; past the mark it summarises the chat first">
+          <span>context {{ thousands(chat.context.used) }} / {{ thousands(chat.context.total) }}</span>
+          <span class="meter"><i :style="{ width: `${Math.min(100, (100 * chat.context.used) / chat.context.total)}%` }" /><b :style="{ left: `${(100 * chat.context.compacts_at) / chat.context.total}%` }" /></span>
+          <span v-if="chat.compact_next">summarises before the next reply</span>
+          <button v-else class="quiet" :disabled="busy || pending || !chat.messages.length" title="the next reply summarises the chat first, keeping its newest messages" @click="compact">compact</button>
+        </div>
         <details class="system">
           <summary class="label">system prompt{{ chat.system ? ' · own' : '' }}</summary>
           <textarea rows="5" :value="chat.system || chat.default_system" @change="setSystem" />
@@ -344,7 +363,8 @@ function waiting(message: ChatMessage): string {
           production chosen above works on it. Attach pictures or videos with the clip, by pasting, or by dropping them here —
           a video is shown to the model as a frame a second.
         </p>
-        <article v-for="message in chat.messages" :key="message.id" class="message" :class="message.role">
+        <template v-for="message in chat.messages" :key="message.id">
+        <article class="message" :class="[message.role, { summarised: message.id <= chat.summary_through }]">
           <div v-if="message.role === 'tool'" class="call mono">
             <span class="tool">{{ message.calls[0]?.name }}</span>
             <span class="args muted">{{ called(message) }}</span>
@@ -384,6 +404,11 @@ function waiting(message: ChatMessage): string {
             <RouterLink v-if="message.run" class="run mono" :to="`/runs/${message.run}`">run</RouterLink>
           </div>
         </article>
+        <details v-if="chat.summary && message.id === summarisedUpTo" class="divider">
+          <summary class="label">the model has a summary of the messages above · {{ words(chat.summary) }} words</summary>
+          <div class="words muted">{{ chat.summary }}</div>
+        </details>
+        </template>
       </div>
 
       <p v-if="failure" class="band error">{{ failure }}</p>
@@ -510,6 +535,54 @@ function waiting(message: ChatMessage): string {
 .title:focus {
   border-color: var(--line);
   padding: 4px 8px;
+}
+
+.fill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-xs);
+}
+
+.meter {
+  position: relative;
+  width: 120px;
+  height: 4px;
+  background: var(--bg-raised);
+  border-radius: 2px;
+}
+
+.meter i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--accent);
+  border-radius: 2px;
+}
+
+.meter b {
+  position: absolute;
+  top: -3px;
+  width: 1px;
+  height: 10px;
+  background: var(--text-secondary);
+}
+
+.message.summarised {
+  opacity: 0.5;
+}
+
+.divider {
+  border-top: 1px dashed var(--line);
+  padding-top: var(--space-1);
+}
+
+.divider summary {
+  cursor: pointer;
+}
+
+.divider .words {
+  font-size: var(--text-sm);
+  margin-top: 4px;
 }
 
 .title-row {

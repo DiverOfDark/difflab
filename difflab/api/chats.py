@@ -43,6 +43,14 @@ def one(chat_id: int) -> dict[str, Any] | None:
         **_summary(found),
         "system": found.system,
         "production": found.production_id,
+        "summary": found.summary,
+        "summary_through": found.summary_through,
+        "compact_next": found.compact_next,
+        "context": {
+            "used": next((m.tokens for m in reversed(said) if m.tokens and m.id > found.summary_through), 0),
+            "total": config.CHAT_CONTEXT_TOKENS,
+            "compacts_at": config.CHAT_COMPACT_TOKENS,
+        },
         "default_system": prompts.CHAT_SYSTEM_PROMPT,
         "messages": [message.data() for message in said],
     }
@@ -50,7 +58,7 @@ def one(chat_id: int) -> dict[str, Any] | None:
 
 def update(chat_id: int, fields: dict[str, Any]) -> dict[str, Any]:
     """`title`, `system`, and `production`: the production its tools work on, or null for none."""
-    changes: dict[str, str | int | None] = {name: str(value) for name, value in fields.items() if name != "production"}
+    changes: dict[str, str | int | None] = {name: str(fields[name]) for name in ("title", "system") if name in fields}
     if "production" in fields:
         given = fields["production"]
         changes["production_id"] = None if given in (None, "") else int(given)
@@ -119,6 +127,15 @@ def stop(chat_id: int) -> None:
         if message.state in (chats.QUEUED, chats.ASKING) or message.role == chats.TOOL:
             with store.connect() as connection:
                 chats.write(connection, message.id, state=chats.STOPPED)
+
+
+def compact(chat_id: int) -> dict[str, Any]:
+    """The next reply summarises the chat first, keeping its newest messages as said."""
+    with store.connect() as connection:
+        if chats.chat(connection, chat_id) is None:
+            raise LookupError("no such chat")
+        chats.update_chat(connection, chat_id, compact_next=1)
+    return _found(chat_id)
 
 
 def allow(chat_id: int, message_id: int, allowed: bool) -> dict[str, Any]:

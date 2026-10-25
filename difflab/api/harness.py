@@ -11,9 +11,10 @@ import mimetypes
 import sqlite3
 import time
 import uuid
+from pathlib import Path
 from typing import Any
 
-from difflab import prompts, store
+from difflab import config, prompts, store
 from difflab.api import assets, director, mcp, runs, web
 from difflab.models import exl3vl
 from difflab.store import chats
@@ -27,13 +28,19 @@ ASKED = frozenset(
 )
 HIDDEN = ("upload", "list_productions")  # `upload` in every chat, `list_productions` in one about a production
 # "The person did not allow it." read as a hiccup: the model called the same reroll again (2026-10-25).
+LOOK = {
+    "name": "look",
+    "description": "A picture or clip the server holds, shown to you again by its path: one named in the chat's "
+    "summary, or any a tool returned.",
+    "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]},
+}
 DECLINED = "The person declined this call. Do not make it again: ask them what they want instead."
 
 
 def tools(chat: chats.Chat) -> list[dict[str, Any]]:
     """In a fixed order, so the disk cache keeps matching the system prompt they are part of."""
     listed = []
-    for tool in [*mcp.TOOLS, *director.TOOLS, *web.TOOLS]:
+    for tool in [*mcp.TOOLS, *director.TOOLS, *web.TOOLS, LOOK]:
         if tool["name"] == "upload" or (chat.production_id is not None and tool["name"] in HIDDEN):
             continue
         schema = tool["inputSchema"]
@@ -144,7 +151,9 @@ def _run(message: chats.Message, allowed: bool = False) -> None:
             wait = float(given.pop("wait_seconds", 0) or 0)
             _follow(message, str(given["run_id"]), wait)
             return
-        if name in web.NAMES:
+        if name == "look":
+            text, media = _look(str(given["path"]))
+        elif name in web.NAMES:
             text, media = web.call(name, given)
         else:
             text, media = _read(asyncio.run(mcp._call(name, given, "", _staying)))
@@ -184,6 +193,16 @@ def _answer_run(message: chats.Message) -> None:
     media = [a["path"] for a in found["artifacts"] if a["kind"] in ("image", "video")][-MADE_MOST:]
     text = json.dumps(summary | {"files": media}, ensure_ascii=False, indent=1)
     _write(message.id, state=chats.DONE, text=text, media=media)
+
+
+def _look(name: str) -> tuple[str, list[str]]:
+    path = Path(name) if Path(name).is_absolute() else config.OUTPUT_DIR / name
+    roots = (config.OUTPUT_DIR.resolve(), (config.PROJECT_DIR / "sources").resolve())
+    if not path.is_file() or not any(path.resolve().is_relative_to(root) for root in roots):
+        raise LookupError(f"no picture or clip at {name}")
+    if path.suffix.lower() not in assets.KINDS:
+        raise ValueError(f"{name} is not a picture or a clip")
+    return name, [name]
 
 
 def _cost(name: str, given: dict[str, Any]) -> str:

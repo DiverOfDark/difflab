@@ -545,6 +545,14 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         "ALTER TABLE chats ADD COLUMN production_id INTEGER REFERENCES productions(id) ON DELETE SET NULL",
         "ALTER TABLE chat_messages ADD COLUMN calls TEXT NOT NULL DEFAULT '[]'",
     ),
+    # A chat compacted: `summary` stands in for every message up to `summary_through`, and `compact_next` asks the
+    # next reply to write one first. An answer's `tokens` is the prompt it was written from.
+    (
+        "ALTER TABLE chats ADD COLUMN summary TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE chats ADD COLUMN summary_through INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE chats ADD COLUMN compact_next INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE chat_messages ADD COLUMN tokens INTEGER NOT NULL DEFAULT 0",
+    ),
 )
 
 SCHEMA_VERSION = len(MIGRATIONS)
