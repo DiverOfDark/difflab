@@ -25,7 +25,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 
 from difflab import config
-from difflab.api import assets, chats, gallery, openai, runs
+from difflab.api import assets, chats, gallery, mcp, openai, runs
 from difflab.core import hub, profiling
 from difflab.core.settings import Continuity, IngestSettings
 from difflab.models.minimax_h3.settings import VideoSettings
@@ -927,6 +927,28 @@ async def openai_chat(request: Request) -> Any:
 def _openai_error(status: int, message: str) -> JSONResponse:
     kind = "invalid_request_error" if status == 400 else "server_error"
     return JSONResponse({"error": {"message": message, "type": kind}}, status_code=status)
+
+
+# --- MCP ---------------------------------------------------------------------------------------
+@app.post("/mcp")
+async def mcp_post(request: Request) -> Response:
+    """The Take tab's jobs as MCP tools; the bearer token is the server's, when it has one."""
+    try:
+        body = await request.json()
+    except ValueError:
+        return JSONResponse({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "not JSON"}}, 400)
+    base = str(request.base_url)
+    if isinstance(body, list):
+        answers = [a for m in body if (a := await mcp.answer(m, base, request.is_disconnected)) is not None]
+        return JSONResponse(answers) if answers else Response(status_code=202)
+    answered = await mcp.answer(body, base, request.is_disconnected)
+    return JSONResponse(answered) if answered is not None else Response(status_code=202)
+
+
+@app.get("/mcp")
+def mcp_get() -> Response:
+    """No stream for the server to speak first on: it never does."""
+    return Response(status_code=405, headers={"Allow": "POST"})
 
 
 # --- uploads -----------------------------------------------------------------------------------
