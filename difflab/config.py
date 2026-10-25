@@ -21,10 +21,10 @@ CANVAS_ALIGN = 32
 # across 25 edits run with every block streaming (2026-10-10/11), 7.41 GB in the VAE decode against
 # 4.4-6.3 GB while denoising. CUDA context and VAE weights included, so it errs high by those.
 EDIT_RESERVE_BYTES = int(7.5 * 1024**3)
-# The same for Qwen-Image 2.1, from one failure rather than a sweep: fully resident (7.3 GB int8), a 2 MP edit
-# with a donor ran out 548 MB short at 18.1 GB allocated beside a 3.4 GB desktop (2026-10-25), ~9.3 GB of it
-# beyond what is held before the call; a margin on top, and the all-streaming retry for the rest.
-EDIT21_RESERVE_BYTES = int(10.5 * 1024**3)
+# The same for Qwen-Image 2.1. A 2 MP edit with a donor held 8.4 GB before the call (26 of 32 blocks resident
+# at 10.5 GiB) and still ran out; streaming every block it peaked at 18.5 GB beside a 3.4 GB desktop
+# (2026-10-25). Taken from that one edit, not a sweep: the all-streaming retry covers what it misses.
+EDIT21_RESERVE_BYTES = 12 * 1024**3
 
 FINISH_FPS = 60  # what RIFE retimes a finished chapter to; H3 draws 24
 FINISH_MEGAPIXELS = 3840 * 2160 / 1e6  # what the ESRGAN enlarges it to

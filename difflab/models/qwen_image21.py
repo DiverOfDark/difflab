@@ -317,6 +317,7 @@ class Editor21:
             latents = None
         if latents is None:
             ui.note("out of memory with transformer blocks resident: editing again with every block streaming")
+            torch.cuda.reset_peak_memory_stats()
             latents = run()
         ui.line(f"peak {torch.cuda.max_memory_allocated() / 1024**3:.1f} GB")
         offload.release()
