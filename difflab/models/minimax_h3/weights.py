@@ -62,6 +62,7 @@ class QuantSpec:
     weight: torch.Tensor  # int8 [N, K]
     scale: torch.Tensor  # fp32 [N, 1]
     meta: dict[str, object]
+    bias: torch.Tensor | None = None
 
 
 @dataclass
@@ -154,9 +155,13 @@ def load_checkpoint(path: str | Path) -> H3Checkpoint:
         for key in keys:
             owner = next((layer for layer in quant_layers if key.startswith(f"{layer}.")), None)
             if owner is not None:
-                # A quantized layer carries exactly weight/scale/metadata. Anything else (a bias, say)
-                # would be dropped silently, so refuse rather than load a subtly wrong model.
-                if key.removeprefix(f"{owner}.") not in quant_suffixes:
+                suffix = key.removeprefix(f"{owner}.")
+                # Some checkpoints quantize condition_proj and both final_layer outputs with their biases.
+                # A fused layer's bias would need splitting with it; refuse that rather than drop it.
+                target = _target_prefix(f"{owner}.weight")
+                if suffix == "bias" and target is not None and target[0] in result.quant:
+                    result.quant[target[0]].bias = f.get_tensor(key)
+                elif suffix not in quant_suffixes:
                     raise KeyError(f"unexpected tensor under quantized layer {owner}: {key}")
                 continue
             tensor = f.get_tensor(key)
@@ -245,7 +250,7 @@ def swap_quantized_linears(model: nn.Module, specs: dict[str, QuantSpec]) -> int
         parent_path, _, name = path.rpartition(".")
         parent = model.get_submodule(parent_path)
         existing = getattr(parent, name)
-        bias = getattr(existing, "bias", None)
+        bias = spec.bias if spec.bias is not None else getattr(existing, "bias", None)
         if bias is not None and bias.is_meta:
             bias = None
         setattr(parent, name, ConvRotLinear(spec.weight, spec.scale, bias))
