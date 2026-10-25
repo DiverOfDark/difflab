@@ -162,18 +162,32 @@ def sample(
     settled = offload.fit(blocks, config.SAMPLE_RESERVE + rows * config.SAMPLE_RESERVE_PER_ROW)
     ui.line(f"{settled}/{len(blocks)} DiT blocks resident for {rows} rows")
     previewer = previews.for_ltx(settings)
-    with ui.sampling("Sampling", len(sigmas) - 1, len(blocks)) as tick:
-        hooks = [block.register_forward_hook(lambda *_: tick()) for block in blocks]
+
+    def run() -> tuple[torch.Tensor, torch.Tensor]:
+        with ui.sampling("Sampling", len(sigmas) - 1, len(blocks)) as tick:
+            hooks = [block.register_forward_hook(lambda *_: tick()) for block in blocks]
+            try:
+                return pipeline.sample(
+                    dit, conditioning, geometry, settings.seed, sigmas, opening, guides, settings.reference_strength,
+                    previewer, landing,
+                )  # fmt: skip
+            finally:
+                for hook in hooks:
+                    hook.remove()
+
+    try:
         try:
-            return pipeline.sample(
-                dit, conditioning, geometry, settings.seed, sigmas, opening, guides, settings.reference_strength,
-                previewer, landing,
-            )  # fmt: skip
-        finally:
-            for hook in hooks:
-                hook.remove()
-            if previewer is not None:
-                previewer.close()
+            return run()
+        except torch.OutOfMemoryError:
+            # 27 of 48 blocks resident at 21,160 rows still ran out at step 6 with the desktop holding ~3.3 GB
+            # (2026-10-25); retried outside the handler so its traceback frees the activations.
+            if not offload.release():
+                raise
+        ui.note("out of memory with DiT blocks resident: sampling again with every block streaming")
+        return run()
+    finally:
+        if previewer is not None:
+            previewer.close()
 
 
 def decode(video: torch.Tensor, audio: torch.Tensor, settings: LtxSettings, prompt: str) -> Clip:
