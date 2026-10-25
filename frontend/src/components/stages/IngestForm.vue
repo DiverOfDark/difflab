@@ -15,6 +15,7 @@ import {
   type RefKind,
   type Timings,
 } from '../../api'
+import IdeaPanel, { type Draft } from '../IdeaPanel.vue'
 import { ASPECTS, CLIP_MIN, FITS, SHOT_MAX, chaptersOf, length, pad, parseLength, parseRange, type Fit } from '../../production'
 
 const props = defineProps<{
@@ -65,7 +66,7 @@ const untitled = computed(() => chapters.value.map((c, i) => ({ ...c, n: i + 1 }
 const splitNote = computed(() => {
   if (!chapters.value.length) return 'Add a story to see how it splits.'
   if (chapters.value.length === 1 && chapters.value[0].headed && !chapters.value[0].title)
-    return 'One chapter, planned whole. Once begun, the director can rewrite it into a story it renders well.'
+    return 'One chapter, planned whole: the director can rewrite it into a story it renders well.'
   const loose = untitled.value.length
     ? ` ${untitled.value.length === chapters.value.length ? 'No heading' : `Chapter${untitled.value.length > 1 ? 's' : ''} ${untitled.value.map((c) => pad(c.n, 2)).join(', ')} ha${untitled.value.length > 1 ? 've' : 's'} no heading`}: split every 600 words.`
     : ''
@@ -186,6 +187,14 @@ const setKind = (row: Row, kind: RefKind) => {
   row.touched = true
 }
 const remove = (row: Row) => (rows.value = rows.value.filter((r) => r !== row))
+
+/** What the director rewrites a one-chapter story from, before the production exists. */
+const draft = computed<Draft>(() => ({
+  story: text.value,
+  photos: rows.value.filter((r) => r.kind !== 'style').map(pictureOf).filter((p): p is string => !!p),
+  take_seconds: chapterSeconds.value[0] ?? targetSeconds.value,
+  seconds: range.value?.[1] ?? 0,
+}))
 
 // --- the estimate -----------------------------------------------------------------------------
 const timings = ref<Timings>({})
@@ -392,55 +401,59 @@ const onPick = (event: Event, take: (files: File[]) => void) => {
       </div>
     </section>
 
-    <section v-if="storyKind === 'text'" class="card">
-      <div class="head">
-        <h5>References</h5>
-        <span class="note">a photograph or a video at least · they override the story</span>
-      </div>
-      <div class="body">
-        <div
-          class="drop"
-          :class="{ over: dragging }"
-          @click="refInput?.click()"
-          @dragover.prevent="dragging = true"
-          @dragleave="dragging = false"
-          @drop.prevent="onDrop($event, addRefs)"
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
-          <span>{{ uploading ? 'uploading…' : 'Drop photos, videos or style images' }}</span>
-          <span class="mono dim">a face becomes a character · a place a location · a look the style · a video also a motion reference</span>
-          <input ref="refInput" type="file" accept="image/*,video/*" multiple hidden @change="onPick($event, addRefs)" />
+    <div v-if="storyKind === 'text'" class="side">
+      <section class="card">
+        <div class="head">
+          <h5>References</h5>
+          <span class="note">a photograph or a video at least · they override the story</span>
         </div>
-        <div v-if="rows.length" class="refs">
-          <div class="ref heading mono"><span /><span>FILE</span><span>KIND</span><span>ENTITY</span><span /></div>
-          <div v-for="row in rows" :key="row.path" class="ref">
-            <div class="thumb" :style="row.thumb ? { backgroundImage: `url(${row.thumb})` } : {}" :class="row.kind">
-              <span v-if="row.video" class="badge mono">MP4</span>
-            </div>
-            <span class="what" :title="framesTitle(row)">
-              <span class="mono name">{{ row.name }}</span>
-              <span class="guess">{{ guessOf(row) }}</span>
-            </span>
-            <select :value="row.kind" class="mono" @change="setKind(row, ($event.target as HTMLSelectElement).value as RefKind)">
-              <template v-if="!row.video">
-                <option value="character">character</option>
-                <option value="location">location</option>
-                <option value="prop">prop</option>
-                <option value="style">style</option>
-              </template>
-              <option v-else value="video">motion ref</option>
-            </select>
-            <input v-model="row.entity" class="mono" :placeholder="row.kind === 'style' ? 'style' : 'name or leave for the bible'" />
-            <button class="x" title="remove" @click="remove(row)">×</button>
+        <div class="body">
+          <div
+            class="drop"
+            :class="{ over: dragging }"
+            @click="refInput?.click()"
+            @dragover.prevent="dragging = true"
+            @dragleave="dragging = false"
+            @drop.prevent="onDrop($event, addRefs)"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
+            <span>{{ uploading ? 'uploading…' : 'Drop photos, videos or style images' }}</span>
+            <span class="mono dim">a face becomes a character · a place a location · a look the style · a video also a motion reference</span>
+            <input ref="refInput" type="file" accept="image/*,video/*" multiple hidden @change="onPick($event, addRefs)" />
           </div>
+          <div v-if="rows.length" class="refs">
+            <div class="ref heading mono"><span /><span>FILE</span><span>KIND</span><span>ENTITY</span><span /></div>
+            <div v-for="row in rows" :key="row.path" class="ref">
+              <div class="thumb" :style="row.thumb ? { backgroundImage: `url(${row.thumb})` } : {}" :class="row.kind">
+                <span v-if="row.video" class="badge mono">MP4</span>
+              </div>
+              <span class="what" :title="framesTitle(row)">
+                <span class="mono name">{{ row.name }}</span>
+                <span class="guess">{{ guessOf(row) }}</span>
+              </span>
+              <select :value="row.kind" class="mono" @change="setKind(row, ($event.target as HTMLSelectElement).value as RefKind)">
+                <template v-if="!row.video">
+                  <option value="character">character</option>
+                  <option value="location">location</option>
+                  <option value="prop">prop</option>
+                  <option value="style">style</option>
+                </template>
+                <option v-else value="video">motion ref</option>
+              </select>
+              <input v-model="row.entity" class="mono" :placeholder="row.kind === 'style' ? 'style' : 'name or leave for the bible'" />
+              <button class="x" title="remove" @click="remove(row)">×</button>
+            </div>
+          </div>
+          <p class="note">
+            Qwen-VL describes each upload and the description goes into the bible, so shots match what the picture shows, not what the text says. The
+            same file uploaded twice is one reference; photos of one face are merged by a ruling. A video's sharp frames are photographs of its entity,
+            and the clip is kept as its motion reference. The first location, or the first photograph, is where chapter 1 opens.
+          </p>
         </div>
-        <p class="note">
-          Qwen-VL describes each upload and the description goes into the bible, so shots match what the picture shows, not what the text says. The
-          same file uploaded twice is one reference; photos of one face are merged by a ruling. A video's sharp frames are photographs of its entity,
-          and the clip is kept as its motion reference. The first location, or the first photograph, is where chapter 1 opens.
-        </p>
-      </div>
-    </section>
+      </section>
+
+      <IdeaPanel v-if="chapters.length <= 1" :draft="draft" :busy="busy" :act="act" @use="(s) => (text = s)" />
+    </div>
 
     <section class="card go">
       <div class="estimate mono">
@@ -645,6 +658,13 @@ const onPick = (event: Event, take: (files: File[]) => void) => {
   color: var(--text-secondary);
   font-family: var(--font-mono);
   font-size: var(--text-xs);
+}
+
+.side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
 }
 
 .go {

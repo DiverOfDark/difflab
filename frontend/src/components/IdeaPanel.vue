@@ -1,14 +1,24 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
-import { adoptIdea, improveIdea, listIdeas, type IdeaRound, type Production } from '../api'
+import { adoptIdea, draftIdea, improveIdea, listIdeas, readRun, type IdeaRound, type Production } from '../api'
 import { ago } from '../production'
 
+/** A story not yet begun: what the director is given, before there is a production to hold its rounds. */
+export interface Draft {
+  story: string
+  photos: string[]
+  take_seconds: number
+  seconds: number
+}
+
 const props = defineProps<{
-  production: Production
+  production?: Production | null
+  draft?: Draft
   busy: string
   act: (name: string, what: () => Promise<unknown>) => Promise<void>
 }>()
+const emit = defineEmits<{ use: [story: string] }>()
 
 const rounds = ref<IdeaRound[]>([])
 const picked = ref<number | null>(null)
@@ -17,61 +27,103 @@ const view = ref<'story' | 'current' | 'previous'>('story')
 const note = ref('')
 
 watch(
-  () => props.production.ideas,
+  () => props.production?.ideas,
   (given) => {
+    if (!props.production) return
     rounds.value = given ?? []
     if (picked.value === null || !rounds.value.some((r) => r.round === picked.value)) picked.value = rounds.value.at(-1)?.round ?? null
   },
   { immediate: true },
 )
 
+const story = computed(() => props.production?.story ?? props.draft?.story ?? '')
 const LIVE = new Set(['queued', 'running', 'blocked'])
 const live = computed(() => rounds.value.find((r) => LIVE.has(r.state)))
 const shown = computed(() => rounds.value.find((r) => r.round === picked.value))
 const revised = computed(() => rounds.value.find((r) => r.round === shown.value?.revises))
-const inUse = (r: IdeaRound) => !!r.story && r.story.trim() === props.production.story.trim()
-const source = computed(() => rounds.value.at(-1)?.source ?? props.production.story)
+const inUse = (r: IdeaRound) => !!r.story && r.story.trim() === story.value.trim()
+const source = computed(() => rounds.value.at(-1)?.source ?? story.value)
 /** The story was written by hand since: neither the idea the rounds start from nor one of them. */
-const handWritten = computed(
-  () => rounds.value.length > 0 && props.production.story.trim() !== source.value.trim() && !rounds.value.some(inUse),
-)
+const handWritten = computed(() => rounds.value.length > 0 && story.value.trim() !== source.value.trim() && !rounds.value.some(inUse))
+const ready = computed(() => !!story.value.trim() && (!!props.production || !!props.draft?.photos.length))
+
+/** A draft round's state and answer, read off its run's one job. */
+async function readDraft(round: IdeaRound): Promise<IdeaRound> {
+  const job = (await readRun(round.run).catch(() => null))?.jobs[0]
+  if (!job) return round
+  const out = job.outputs as { story?: string; changes?: string[]; questions?: string[] }
+  return {
+    ...round,
+    state: job.state,
+    error: job.error,
+    story: out.story ?? '',
+    changes: out.changes ?? [],
+    questions: out.questions ?? [],
+    seconds: job.started && job.ended ? Math.round(job.ended - job.started) : null,
+  }
+}
 
 // A round is one VLM job of about a minute; the production read polls every 8 s, which is too slow to watch.
 const now = ref(Date.now())
 const poll = window.setInterval(async () => {
   now.value = Date.now()
   if (!live.value) return
-  const fresh = await listIdeas(props.production.id).catch(() => null)
+  const was = live.value.round
+  const fresh = props.production
+    ? await listIdeas(props.production.id).catch(() => null)
+    : await Promise.all(rounds.value.map((r) => (LIVE.has(r.state) ? readDraft(r) : r)))
   if (!fresh) return
-  const was = live.value?.round
   rounds.value = fresh
-  if (was !== undefined && !fresh.some((r) => LIVE.has(r.state))) {
+  if (!fresh.some((r) => LIVE.has(r.state))) {
     picked.value = was
     view.value = 'story'
-    await props.act('idea done', async () => {})
+    if (props.production) await props.act('idea done', async () => {})
   }
 }, 1500)
 onUnmounted(() => clearInterval(poll))
 const running = computed(() => (live.value ? Math.max(0, Math.round(now.value / 1000 - live.value.created)) : 0))
 
-const ask = (body: { feedback?: string; from_round?: number; idea?: string }) =>
+type Ask = { feedback?: string; from_round?: number; idea?: string }
+
+async function askDraft(body: Ask) {
+  const d = props.draft!
+  const previous = rounds.value.find((r) => r.round === body.from_round)
+  const round = (rounds.value.at(-1)?.round ?? 0) + 1
+  const idea = body.idea ?? previous?.source ?? source.value
+  const { run } = await draftIdea({ ...d, idea, round, feedback: body.feedback, previous: previous?.story })
+  rounds.value.push({
+    ...{ round, source: idea, feedback: previous ? (body.feedback ?? '') : '', revises: previous?.round ?? null, story: '' },
+    ...{ changes: [], questions: [], run, state: 'queued', error: '', seconds: null, adopted: false, created: Date.now() / 1000 },
+  })
+}
+
+const ask = (body: Ask) =>
   props.act('improve', async () => {
     note.value = ''
-    await improveIdea(props.production.id, body)
-    rounds.value = await listIdeas(props.production.id)
+    if (props.production) {
+      await improveIdea(props.production.id, body)
+      rounds.value = await listIdeas(props.production.id)
+    } else await askDraft(body)
     picked.value = rounds.value.at(-1)?.round ?? null
   })
 const improve = () => ask({})
 const again = () => ask({ feedback: feedback.value, from_round: picked.value! })
-const rewriteCurrent = () => ask({ idea: props.production.story })
-const adopt = () =>
-  props.act('adopt', async () => {
-    const { stale } = await adoptIdea(props.production.id, picked.value!)
-    const shots = props.production.chapters.reduce((s, c) => s + c.shots.length, 0)
+const rewriteCurrent = () => ask({ idea: story.value })
+const adopt = () => {
+  const p = props.production
+  if (!p) {
+    emit('use', shown.value!.story)
+    note.value = `Round ${picked.value} is in the story box now.`
+    return
+  }
+  return props.act('adopt', async () => {
+    const { stale } = await adoptIdea(p.id, picked.value!)
+    const shots = p.chapters.reduce((s, c) => s + c.shots.length, 0)
     note.value = shots
       ? `Round ${picked.value} is the story now. ${stale.prompts} prompts and ${stale.clips} clips went stale: re-plan the chapter to plan it from these words.`
       : `Round ${picked.value} is the story now. Plan the chapter to see it as shots.`
   })
+}
 
 watch(picked, () => {
   feedback.value = ''
@@ -116,7 +168,7 @@ function diff(before: string, after: string): Piece[] {
 const pieces = computed<Piece[]>(() => {
   const r = shown.value
   if (!r?.story) return []
-  if (view.value === 'current') return diff(props.production.story, r.story)
+  if (view.value === 'current') return diff(story.value, r.story)
   if (view.value === 'previous' && revised.value) return diff(revised.value.story, r.story)
   return [{ kind: 'same', text: r.story }]
 })
@@ -141,7 +193,8 @@ const pieces = computed<Piece[]>(() => {
           sound line. You read it, say what to change, ask again, and use the version you like. Nothing changes until you do.
         </p>
         <div class="buttons">
-          <button class="primary" :disabled="!!busy || !production.story.trim()" @click="improve">{{ busy === 'improve' ? 'queueing…' : 'Improve' }}</button>
+          <button class="primary" :disabled="!!busy || !ready" @click="improve">{{ busy === 'improve' ? 'queueing…' : 'Improve' }}</button>
+          <span v-if="!ready" class="note">{{ story.trim() ? 'needs a photograph: the director writes the story around it' : 'needs a story' }}</span>
         </div>
       </template>
 

@@ -146,6 +146,25 @@ async def improve_idea(production_id: int, request: Request) -> dict[str, Any]:
     return {"run": run}
 
 
+@app.post("/api/ideas")
+async def draft_idea(request: Request) -> dict[str, Any]:
+    """A round for a story not yet begun: `idea`, `photos`, `take_seconds`, `seconds`; `previous` with `feedback`
+    revises a round, whose number is `round`."""
+    body = await request.json()
+    try:
+        run = ideas.draft(
+            str(body.get("idea") or ""), [str(p) for p in body.get("photos") or []],
+            float(body.get("take_seconds") or 0), float(body.get("seconds") or 0),
+            str(body.get("feedback") or ""), str(body.get("previous") or ""),
+            int(body.get("round") or 1),
+        )  # fmt: skip
+    except ValueError as problem:
+        raise HTTPException(400, str(problem)) from problem
+    except (sqlite3.Error, OSError) as problem:
+        raise HTTPException(500, f"the run could not be queued ({problem})") from problem
+    return {"run": run}
+
+
 @app.post("/api/productions/{production_id}/ideas/{round_}/adopt")
 def adopt_idea(production_id: int, round_: int) -> dict[str, Any]:
     """The round's story becomes the production's; `stale` says how much a re-plan now has to redo."""

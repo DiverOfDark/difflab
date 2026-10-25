@@ -69,6 +69,37 @@ def improve(
     return run_id
 
 
+def draft(
+    idea: str, photos: list[str], take_seconds: float, seconds: float, feedback: str = "", previous: str = "",
+    round_: int = 1, asked_by: str = "person",
+) -> str:  # fmt: skip
+    """A round for a story not yet begun: the same job, its answer kept only in its run."""
+    feedback = " ".join(feedback.split())
+    if not idea.strip():
+        raise ValueError("an idea to improve, in your own words")
+    if previous and not feedback:
+        raise ValueError("say what to change: the feedback is what the revision is made from")
+    found = [store.relative(store.under_output(p)) for p in photos]
+    if not found or not all(store.under_output(p).is_file() for p in found):
+        raise ValueError("a photograph under output/: the director writes the story around it")
+    if take_seconds <= 0 or seconds <= 0:
+        raise ValueError("how long the film is and how long a shot runs")
+    with store.connect() as connection, store.transaction(connection):
+        run_id = store.next_run_id(connection, datetime.now().strftime("%Y-%m-%d-%H%M%S"))
+        store.add_run(
+            connection, run_id, title=f"new production · idea round {round_}", asked_by=asked_by, scope="idea:draft",
+            spec={"round": round_, "items": [f"round {round_}"]},
+        )  # fmt: skip
+        store.add_job(
+            connection, run_id, "refine_idea",
+            {"round": round_, "idea": idea, "photos": found, "take_seconds": round(take_seconds, 1),
+             "seconds": round(seconds, 2), "previous": previous, "feedback": feedback},
+            label=f"revise round {round_ - 1}" if previous else f"rewrite the idea, round {round_}",
+            settings=settings.for_job("refine_idea"),
+        )  # fmt: skip
+    return run_id
+
+
 def live_run(connection: Any, production_id: int) -> store.Run | None:
     scope = SCOPE.format(production=production_id)
     return next(

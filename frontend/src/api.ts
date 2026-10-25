@@ -815,6 +815,9 @@ export const listIdeas = (id: number) => json<IdeaRound[]>(`/api/productions/${i
 /** `from_round` with `feedback` revises that round; without, a new rewrite of `idea` or of the rounds' own idea. */
 export const improveIdea = (id: number, body: { feedback?: string; from_round?: number; idea?: string }) =>
   json<{ run: string }>(`/api/productions/${id}/ideas`, post(body))
+/** A round for a story not yet begun; its answer is the run's one job's outputs. */
+export const draftIdea = (body: { idea: string; photos: string[]; take_seconds: number; seconds: number; feedback?: string; previous?: string; round: number }) =>
+  json<{ run: string }>('/api/ideas', post(body))
 export const adoptIdea = (id: number, round: number) =>
   json<Production & { stale: Stale }>(`/api/productions/${id}/ideas/${round}/adopt`, post({}))
 

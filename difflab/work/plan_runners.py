@@ -934,7 +934,7 @@ def run_compile_shot(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[s
 
 
 def run_refine_idea(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
-    production_id, round_ = int(inputs["production"]), int(inputs["round"])
+    round_ = int(inputs["round"])
     frames = [_frame(p) for p in inputs["photos"]]
     with _take({"take": round_}):  # every round samples anew; the same round asked again is cached
         draft = refine_idea.refine(
@@ -942,8 +942,11 @@ def run_refine_idea(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[st
             str(inputs.get("previous") or ""), str(inputs.get("feedback") or ""),
         )  # fmt: skip
     story = draft.story()
-    with store.connect() as connection, store.transaction(connection):
-        store.write_idea(connection, production_id, round_, story, list(draft.changes), list(draft.questions))
+    if "production" in inputs:  # a story not yet begun keeps its rounds in the page (`ideas.draft`)
+        with store.connect() as connection, store.transaction(connection):
+            store.write_idea(
+                connection, int(inputs["production"]), round_, story, list(draft.changes), list(draft.questions)
+            )
     return {"story": story, "changes": list(draft.changes), "questions": list(draft.questions)}
 
 
