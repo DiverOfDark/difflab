@@ -113,8 +113,10 @@ const sampled = computed<{ seed: number; megapixels: number } | null>(() => {
 
 const model = computed(() => {
   const found = jobs.value.find((j) => typeof j.settings?.checkpoint === 'string')
-  const checkpoint = found ? String(found.settings.checkpoint) : ''
-  return checkpoint.split('@')[0].split('/').pop() ?? ''
+  if (!found) return ''
+  // On qwen-image-2.1 the AIO `checkpoint` is still recorded but unused.
+  if (found.settings.engine === 'qwen-image-2.1') return String(found.settings.model_21).split(':').pop()!.replace(/\.safetensors$/, '')
+  return String(found.settings.checkpoint).split('@')[0].split('/').pop() ?? ''
 })
 
 const textFacts = computed<[string, string][]>(() => [
