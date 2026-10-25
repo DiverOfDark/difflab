@@ -199,9 +199,8 @@ class JudgeSettings(Settings):
     """The VLM as a continuity supervisor over every keyframe, clip and drawn reference."""
 
     checkpoint: str = setting(VLM, "model", "a Hugging Face repo at a pinned commit", role="vlm")
-    # Measured on production 9's five clips (2026-10-04): 0.60-0.85, the same before and after its colour
-    # was fixed, and 0.6 for two clips that show their shots. Above that, a retake re-renders
-    # good clips; this catches a broken one. Never 0: every render is judged.
+    # The score is the worst grade, 0, 0.5 or 1: at 0.5 a small flaw passes and anything wrong is made
+    # again. Never 0: every render is judged.
     gate: float = setting(0.5, "gate", "the score a keyframe or clip needs before it is made again", low=0.1, high=1.0)
     retries: int = setting(
         2,
@@ -218,9 +217,10 @@ class JudgeSettings(Settings):
         "a clip below the gate is rendered again on new seeds and the best take kept; off, it pauses the run",
         keyed=False,
     )
-    # 512 cut a clip's verdict off mid-string once it named strangers and fixes (production 14, 2026-10-04).
+    # 512 cut a clip's verdict off mid-string once it named strangers and fixes (production 14, 2026-10-04);
+    # describing every member and item before grading them writes about twice what a single score did.
     max_new_tokens: int = setting(
-        1536, "answer length", "a cap, in tokens", low=64, high=4096, keyed=False, advanced=True
+        3072, "answer length", "a cap, in tokens", low=64, high=4096, keyed=False, advanced=True
     )
 
 

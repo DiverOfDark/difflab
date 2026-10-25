@@ -21,8 +21,8 @@ SAMPLED_EVERY = 0.5
 
 @dataclass(frozen=True)
 class Verdict:
-    score: float  # 0..1: how well it shows the shot and its cast
-    cast: dict[str, float]  # each member's likeness, 0..1, by slug; 0 when absent
+    score: float  # the worst grade of any item or member: 0, 0.5 or 1
+    cast: dict[str, float]  # each member's grade by slug; 0 when absent
     issues: list[str]
     notes: str
     fixes: list[str] = field(default_factory=list)  # what a redo is told: never looks, which come from pictures
@@ -37,6 +37,7 @@ class Verdict:
 
 # Judged alone against their own words, and redrawn from the verdict's fixes (`made._picture_judged`).
 PICTURES = ("look picture", "reference picture")
+GRADES = (0, 0.5, 1)
 
 
 def judge(
@@ -63,36 +64,41 @@ def judge(
     expected = {card.id for card in cast}
 
     def parse(data: Any) -> Verdict:
-        likeness = {str(m["id"]): float(m["likeness"]) for m in data.get("cast", [])}
+        members = {str(m["id"]): m for m in data.get("cast", [])}
+        grades = {slug: _grade(m) if m.get("present", True) else 0.0 for slug, m in members.items()}
+        items = data.get("items", [])
         strangers = [f"not in the shot: {s}" for s in map(str, data.get("strangers", [])) if s.strip()]
         restyle = [
-            str(m["id"])
-            for m in data.get("cast", [])
-            if m.get("outfit") is False and str(m["id"]) in given and str(m["id"]) not in (turned or {})
-        ]
-        changed = [f"{member}: clothes differ from their photo" for member in restyle]
-        score = float(data["score"])
+            slug for slug, m in members.items()
+            if m.get("outfit") is False and slug in given and slug not in (turned or {})
+        ]  # fmt: skip
+        score = min([_grade(i) for i in items] + [grades.get(m, 0.0) for m in expected], default=1.0)
         # Held in code as well as asked: the model rounds its own rule. Not on a clip, whose every retake
         # costs minutes of render; a keyframe's retry costs seconds (`made._judged`).
-        if (strangers or changed) and kind != "clip":
-            score = min(score, 0.4)
+        if (strangers or restyle) and kind != "clip":
+            score = 0.0
+        issues = [f"{i.get('item', '')}: {i.get('seen', '')}" for i in items if _grade(i) < 1]
+        issues += [
+            f"{slug}: " + ("not in the shot" if not m.get("present", True) else str(m.get("seen", "")))
+            for slug, m in members.items() if slug in expected and grades[slug] < 1
+        ]  # fmt: skip
         return Verdict(
             score,
-            {member: likeness.get(member, 0.0) for member in expected},
-            [str(issue) for issue in data.get("issues", [])] + strangers + changed,
+            {member: grades.get(member, 0.0) for member in expected},
+            issues + strangers + [f"{member}: clothes differ from their photo" for member in restyle],
             str(data.get("notes", "")),
             [str(fix) for fix in data.get("fixes", [])] + [f"remove {s}" for s in data.get("strangers", []) if s],
             restyle,
         )
 
     def gate(data: Any) -> list[caption.Problem]:
-        verdict = parse(data)
-        out = [] if 0.0 <= verdict.score <= 1.0 else [direct.problem('"score" is a number from 0 to 1')]
-        out += [
-            direct.problem(f'{m}: "likeness" is a number from 0 to 1')
-            for m, v in verdict.cast.items()
-            if not 0 <= v <= 1
-        ]
+        out = [
+            direct.problem(f'{where}: "grade" is 0, 0.5 or 1')
+            for where, entry in [*((f"item {n}", i) for n, i in enumerate(data.get("items", []), 1)),
+                                 *((str(m.get("id")), m) for m in data.get("cast", []))]
+            if entry.get("grade") not in GRADES
+        ]  # fmt: skip
+        out += [direct.problem('"items" lists the things the shot asks for')] if not data.get("items") else []
         missing = expected - {str(m.get("id")) for m in data.get("cast", [])}
         out += [direct.problem(f'"cast" has an entry for {m}') for m in sorted(missing)]
         return out
@@ -162,6 +168,12 @@ def revise(frames: list[Frame], prompt: str, verdict: Verdict) -> str:
         settle=False,
     )  # fmt: skip
     return written(data)
+
+
+def _grade(entry: dict[str, Any]) -> float:
+    """A grade the repairs never made one of `GRADES` counts as a failure, not a pass."""
+    grade = entry.get("grade")
+    return float(grade) if grade in GRADES else 0.0
 
 
 def _replaced(text: str, name: str, new: str) -> str:

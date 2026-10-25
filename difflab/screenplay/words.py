@@ -520,11 +520,15 @@ THE PHOTOGRAPH SHOWS: {shows}"""
 
 # --- judging: a keyframe or a clip against the shot it was made for ---------------------------------------
 JUDGE_SYSTEM = """\
-You are a continuity supervisor on a film set. You are shown a still, or a few frames of a clip in order, and told what the shot was meant to show and who is in it, with how each of them looks; after the frames may come the cast's own reference photos, one per member, named in WHO IS IN IT. You judge only what you can see. Score 1 when the picture shows the shot as described with every listed member present and looking exactly as described and as in their reference photo; score 0 when it shows something else, someone missing, or a member unrecognisable. Score in between for a picture that mostly shows it: name every mismatch you see as an issue, in a few words each.
+You are a continuity supervisor on a film set. You are shown a still, or a few frames of a clip in order, and told what the shot was meant to show and who is in it, with how each of them looks; before the frames may come the cast's own reference photos, one per member, named in WHO IS IN IT. You judge only what you can see.
+
+Describe before you judge. First write what the pictures show as if you had not read the description: each person and animal, where it stands against the others and against fixed things in the place, what it wears, holds and does. Then describe each listed member as seen: garment and its colours, hair, face, build, where they are. Then split the purpose and the arrangement into the separate things they ask for, one item each (who stands where, what is held, what happens, the place, the light), and for each write what the pictures show for it before you grade it.
+
+Grade every item and every member 1, 0.5 or 0: 1 when the pictures show it as described and, for a member, as in their reference photo; 0.5 for a small flaw (a missing accessory, a pose or position slightly off, a detail of embroidery); 0 when it is wrong, missing or contradicted (a member absent or unrecognisable, the action not happening, the wrong place, people swapped). What the pictures do not show is not shown: never grade it as right. The worst grade is the verdict, so never let the rest being right soften a grade you have found.
 
 A clip moves: it opens on the pose the shot before ended in, its action carries it across the frames, and the arrangement is its last frame. Judge whether the action happens over the clip and ends as arranged; never fault an early frame for not yet showing the end.
 
-Two failures cap the score at 0.4, whatever else is right: any person or animal in the frame who is not listed, and a member wearing a different garment or colour from their reference photo. Name each as an issue a painter could fix ("remove the monks behind him", "the robe must be the dark green one with black embroidery from his photo")."""
+Any person or animal in the frame who is not listed goes in "strangers", and a member wearing a different garment or colour from their reference photo gets "outfit": false. Name each fix so a painter could make it ("remove the monks behind him", "the robe must be the dark green one with black embroidery from his photo")."""
 
 JUDGE_USER = """\
 {references}This is a {kind}: {count} picture(s), in order.
@@ -536,7 +540,7 @@ Arrangement: {arrangement}
 WHO IS IN IT
 {cast}
 
-Answer JSON: {{"score": 0.0-1.0, "cast": [{{"id": "<id>", "present": true|false, "likeness": 0.0-1.0, "outfit": true|false}}, ...], "strangers": ["a few words for each person or animal not listed"], "issues": ["..."], "fixes": ["..."], "notes": "one sentence"}}. One "cast" entry per listed member; "outfit" is false only when a garment is a different garment or a different colour from the one in their photo (a bright robe with gold medallions for a dark embroidered one) and WHO IS IN IT does not say it has changed; a missing accessory, a detail of embroidery or the way the hair is worn is an issue, not a changed outfit. {fixes}"""
+Answer JSON, its fields in this order: {{"seen": "what the pictures show, in a few sentences", "cast": [{{"id": "<id>", "seen": "how they appear", "present": true|false, "outfit": true|false, "grade": 0|0.5|1}}, ...], "strangers": ["a few words for each person or animal not listed"], "items": [{{"item": "one thing the shot asks for", "seen": "what the pictures show for it", "grade": 0|0.5|1}}, ...], "fixes": ["..."], "notes": "one sentence"}}. One "cast" entry per listed member; "outfit" is false only when a garment is a different garment or a different colour from the one in their photo (a bright robe with gold medallions for a dark embroidered one) and WHO IS IN IT does not say it has changed; a missing accessory, a detail of embroidery or the way the hair is worn is a 0.5, not a changed outfit. {fixes}"""
 JUDGE_FORM = (
     "; it is the {was} of its reference photo turned into this, so only what these words name comes from that photo,"
     " and no {was} is left anywhere: a {was} still shown beside, behind or under it fails the picture"
