@@ -12,7 +12,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
-from difflab.api import assets, runs
+from difflab.api import assets, director, runs
 from difflab.screenplay import settings
 from difflab.work import queue
 from difflab.work.quick import Job
@@ -33,7 +33,10 @@ SETTLED = ("done", "failed", "cancelled", "stopped")
 INSTRUCTIONS = (
     "difflab renders on one GPU behind a queue. A make_* tool queues a run and returns its id at once; "
     "call `run` with wait_seconds to follow it. Photos and clips are paths the server holds: send yours "
-    "with `upload` first. `take_settings` lists every knob the `settings` argument accepts."
+    "with `upload` first. `take_settings` lists every knob the `settings` argument accepts. A production "
+    "is the director: start_production, then `production` says each stage's phase and what needs review; "
+    "the tools that act return run ids to follow with `run`, and render, reroll_shot and finish say what "
+    "they cost until called with confirm: true."
 )
 
 _WORDS = {
@@ -171,7 +174,7 @@ async def answer(message: Any, base_url: str, gone: Callable[[], Awaitable[bool]
     if method == "ping":
         return _result(ask_id, {})
     if method == "tools/list":
-        return _result(ask_id, {"tools": TOOLS})
+        return _result(ask_id, {"tools": TOOLS + director.TOOLS})
     if method == "tools/call":
         name, given = params.get("name"), params.get("arguments") or {}
         try:
@@ -197,6 +200,8 @@ def _error(ask_id: Any, code: int, message: str) -> dict[str, Any]:
 async def _call(
     name: str, given: dict[str, Any], base_url: str, gone: Callable[[], Awaitable[bool]]
 ) -> list[dict[str, Any]]:
+    if name in director.NAMES:
+        return await director.call(name, given, base_url)
     if name == "run":
         return await _follow(str(given["run_id"]), float(given.get("wait_seconds") or 0), base_url, gone)
     calls: dict[str, Callable[[dict[str, Any]], Any]] = {
