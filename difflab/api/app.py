@@ -13,10 +13,8 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import hmac
-import json
 import sqlite3
-import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -43,7 +41,6 @@ from difflab.screenplay import (
     rendering,
     settings,
 )
-from difflab.store.chats import PENDING
 from difflab.work import cleanup, queue, watchdog
 from difflab.work.quick import Job
 
@@ -885,48 +882,17 @@ def openai_models() -> dict[str, Any]:
 
 
 @app.post("/v1/chat/completions")
-async def openai_chat(request: Request) -> Any:
-    """Chat completions on the VLM, streamed or not; the API key is the server's token, when it has one."""
+async def openai_chat(request: Request) -> Response:
+    """Chat completions on the VLM, tools and all; the API key is the server's token, when it has one."""
     body = dict(await request.json())
     try:
-        chat_id, answer_id = await asyncio.to_thread(openai.ask, body)
+        asked = await asyncio.to_thread(openai.ask, body)
     except openai.RequestError as problem:
-        return _openai_error(400, str(problem))
-    made = f"chatcmpl-{uuid.uuid4().hex}"
-    replies = openai.follow(chat_id, answer_id, request.is_disconnected)
+        return JSONResponse({"error": {"message": str(problem), "type": "invalid_request_error"}}, status_code=400)
     if body.get("stream"):
-
-        async def streamed() -> AsyncIterator[str]:
-            yield openai.chunk(made, {"role": "assistant", "content": ""})
-            async for thought, words, found in replies:
-                if thought:
-                    yield openai.chunk(made, {"reasoning_content": thought})
-                if words:
-                    yield openai.chunk(made, {"content": words})
-                if found.state not in PENDING:
-                    failed = openai.failure(found)
-                    if failed:
-                        yield f"data: {json.dumps({'error': {'message': failed, 'type': 'server_error'}})}\n\n"
-                    else:
-                        yield openai.chunk(made, {}, "stop")
-            yield "data: [DONE]\n\n"
-
-        return StreamingResponse(streamed(), media_type="text/event-stream")
-    thought = words = ""
-    found = None
-    async for more_thought, more_words, row in replies:
-        thought, words, found = thought + more_thought, words + more_words, row
-    if found is None or found.state in PENDING:
-        return _openai_error(499, "the client went away")
-    failed = openai.failure(found)
-    if failed:
-        return _openai_error(500, failed)
-    return openai.completion(made, thought, words)
-
-
-def _openai_error(status: int, message: str) -> JSONResponse:
-    kind = "invalid_request_error" if status == 400 else "server_error"
-    return JSONResponse({"error": {"message": message, "type": kind}}, status_code=status)
+        return StreamingResponse(openai.stream(asked, request.is_disconnected), media_type="text/event-stream")
+    status, answer = await openai.complete(asked, request.is_disconnected)
+    return JSONResponse(answer, status_code=status)
 
 
 # --- MCP ---------------------------------------------------------------------------------------

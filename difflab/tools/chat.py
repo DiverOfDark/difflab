@@ -29,7 +29,11 @@ def reply(
     as_json: bool = False,
     schema: dict[str, Any] | None = None,
     effort: str | None = config.VLM_REASONING_EFFORT,
-) -> dict[str, str]:
+    conversation: list[dict[str, Any]] | None = None,
+    tools: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """`conversation` stands in for the chat's own messages: `{"role", "text", "media", "thought", "calls"}`
+    each, as the OpenAI endpoint hands them over with the tools they may call."""
     with store.connect() as connection:
         answer = chats.message(connection, message_id)
         if answer is None:
@@ -38,11 +42,20 @@ def reply(
         said = [one for one in chats.messages(connection, answer.chat_id) if one.id < message_id]
         chats.write(connection, message_id, state=chats.WRITING, text="", thinking="", error="")
     assert chat is not None
-    turns = [
-        Turn(one.role, [*_shown(one.media), one.text], one.thinking)
-        for one in said
-        if one.role == chats.USER or (one.state == chats.DONE and one.text)
-    ]
+    if conversation is None:
+        turns = [
+            Turn(one.role, [*_shown(one.media), one.text], one.thinking)
+            for one in said
+            if one.role == chats.USER or (one.state == chats.DONE and one.text)
+        ]
+    else:
+        turns = [
+            Turn(
+                one["role"], [*_shown(one.get("media", [])), one["text"]], one.get("thought", ""), one.get("calls", [])
+            )
+            for one in conversation
+        ]
+    usage: dict[str, int] = {}
     last = 0.0
 
     def heard(thought: str, words: str) -> None:
@@ -63,6 +76,8 @@ def reply(
             as_json=as_json,
             schema=schema,
             effort=effort,
+            tools=tools or (),
+            usage=usage,
             **settings.generation(),
         )
     except BaseException as problem:
@@ -74,7 +89,7 @@ def reply(
     with store.connect() as connection:
         chats.write(connection, message_id, text=text, state=chats.DONE)
         chats.touch(connection, answer.chat_id)
-    return {"text": text}
+    return {"text": text, "usage": usage}
 
 
 def _shown(media: list[str]) -> list[str | Image.Image]:

@@ -36,10 +36,11 @@ _PAGES_SEEN: set[bytes] = set()
 
 
 class Turn(NamedTuple):
-    role: str  # "user" or "assistant"
+    role: str  # "user", "assistant" or "tool"
     said: Sequence[str | Image.Image]
     # An answer's own thinking, given back as it was written so the prompt still matches the cached pages.
     thought: str = ""
+    calls: Sequence[dict[str, Any]] = ()  # an answer's tool calls, `{"name", "arguments": {...}}`
 
 
 class Exl3VL:
@@ -155,15 +156,19 @@ class Exl3VL:
         heard: Callable[[str, str], None] | None = None,
         numbered: bool | None = None,
         effort: str | None = config.VLM_REASONING_EFFORT,
+        tools: Sequence[dict[str, Any]] = (),
+        usage: dict[str, int] | None = None,
     ) -> str:
         """`ask` over a whole conversation; `heard` is handed the thought and the answer so far as they arrive.
         `numbered` announces pictures even when there is one, so a conversation's prompt does not change under
-        the cache once a second arrives; unset, only several are. `effort=None` answers without thinking."""
+        the cache once a second arrives; unset, only several are. `effort=None` answers without thinking.
+        `tools` are OpenAI function definitions, called in the template's own `<tool_call>` markup; `usage`
+        is filled with the prompt's and the answer's token counts."""
 
         def asked() -> str:
             return self._chat(
                 turns, max_new_tokens, temperature, top_p, top_k, seed, system, title, echo, as_json, schema,
-                steady, heard, numbered, effort,
+                steady, heard, numbered, effort, tools, usage,
             )  # fmt: skip
 
         try:
@@ -193,6 +198,8 @@ class Exl3VL:
         heard: Callable[[str, str], None] | None,
         numbered: bool | None,
         effort: str | None,
+        tools: Sequence[dict[str, Any]],
+        usage: dict[str, int] | None,
     ) -> str:
         parts = self.load()
         shown = [part for turn in turns for part in turn.said if isinstance(part, Image.Image)]
@@ -205,9 +212,13 @@ class Exl3VL:
                 {"type": "image"} if isinstance(part, Image.Image) else {"type": "text", "text": part}
                 for part in turn.said
             ]
-            messages.append({"role": turn.role, "content": content, "reasoning_content": turn.thought})
+            message: dict[str, Any] = {"role": turn.role, "content": content, "reasoning_content": turn.thought}
+            if turn.calls:
+                message["tool_calls"] = [{"function": call} for call in turn.calls]
+            messages.append(message)
         prompt = parts["template"].apply_chat_template(
             messages,
+            tools=list(tools) or None,
             tokenize=False,
             add_generation_prompt=True,
             enable_thinking=effort is not None,
@@ -318,6 +329,8 @@ class Exl3VL:
             shape = [LLGuidanceFilter(tokenizer, eos_after_completed=True, json_schema=masked)] if as_json else None
             answer = run(prompt, max_new_tokens, parts["stops"], shape, answering)
             show(answer.strip(), **{name: round(value, 2) for name, value in numbers.items()})
+        if usage is not None:
+            usage.update(prompt_tokens=int(ids.shape[-1]), completion_tokens=int(numbers["new_tokens"]))
         return answer.strip()
 
     def _embedding(self, parts: dict[str, Any], image: Image.Image, seen: str) -> Any:
