@@ -20,3 +20,11 @@ What survives a trim, always: a measured number and what produced it; anything t
 cache-key or fingerprint consequence; a licence or hardware limit; the reason a workaround exists.
 What goes: restatement, narration of control flow, history of what the code used to be, and any
 sentence a competent reader would produce themselves from the next five lines.
+
+## What never goes into comments or commit messages
+
+The user's own work stays out of the repository's prose. Never name a non-default model, checkpoint or
+LoRA the user happens to run, and never name or describe a production, project, take, shot, run, keyframe
+or its content. Say what kind of thing triggered the change instead: "a checkpoint with bf16 blocks among
+int8 ones", "a 15 s shot at 21,160 rows", "a chained shot". Measured numbers stay; whose work produced them
+does not. Default models the code ships with may be named.
