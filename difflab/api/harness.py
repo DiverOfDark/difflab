@@ -26,7 +26,6 @@ FOLLOWED = ("make_picture", "make_clip", "upscale")  # answered with what their 
 ASKED = frozenset(
     {name for name, route in director.BY_NAME.items() if route.costly or route.method == "DELETE"} | {"cancel_run"}
 )
-HIDDEN = ("upload", "list_productions")  # `upload` in every chat, `list_productions` in one about a production
 # "The person did not allow it." read as a hiccup: the model called the same reroll again (2026-10-25).
 LOOK = {
     "name": "look",
@@ -37,20 +36,16 @@ LOOK = {
 DECLINED = "The person declined this call. Do not make it again: ask them what they want instead."
 
 
-def tools(chat: chats.Chat) -> list[dict[str, Any]]:
-    """In a fixed order, so the disk cache keeps matching the system prompt they are part of."""
+def tools() -> list[dict[str, Any]]:
+    """In a fixed order, so the disk cache keeps matching the system prompt they are part of. Without `upload`, which
+    the model cannot feed, and `confirm`, which the person gives instead."""
     listed = []
     for tool in [*mcp.TOOLS, *director.TOOLS, *web.TOOLS, LOOK]:
-        if tool["name"] == "upload" or (chat.production_id is not None and tool["name"] in HIDDEN):
+        if tool["name"] == "upload":
             continue
         schema = tool["inputSchema"]
-        dropped = {"confirm"} | ({"production_id"} if chat.production_id is not None else set())
-        if dropped & set(schema.get("properties", {})):
-            schema = {
-                **schema,
-                "properties": {k: v for k, v in schema["properties"].items() if k not in dropped},
-                "required": [k for k in schema.get("required", []) if k not in dropped],
-            }
+        if "confirm" in schema.get("properties", {}):
+            schema = {**schema, "properties": {k: v for k, v in schema["properties"].items() if k != "confirm"}}
         listed.append({"name": tool["name"], "description": tool["description"], "parameters": schema})
     return listed
 
@@ -59,18 +54,11 @@ def prepare(message_id: int, spent: bool) -> tuple[list[dict[str, Any]], str]:
     """The tools a reply may call and what the system prompt is told about them; none once `spent`."""
     with store.connect() as connection:
         answer = chats.message(connection, message_id)
-        chat = chats.chat(connection, answer.chat_id) if answer else None
-        made = store.production(connection, chat.production_id) if chat and chat.production_id else None
-    if chat is None:
+    if answer is None:
         raise LookupError(f"no chat message {message_id}: the chat was deleted")
     if spent:
         return [], prompts.CHAT_TOOLS_SPENT
-    about = (
-        f"\n\nThis chat works on production {made.id}, {made.title!r}: its tools take it without being told."
-        if made
-        else ""
-    )
-    return tools(chat), prompts.CHAT_TOOLS_PROMPT + about
+    return tools(), prompts.CHAT_TOOLS_PROMPT
 
 
 def after_reply(message_id: int, offered: list[dict[str, Any]]) -> None:
@@ -137,10 +125,6 @@ def decline(connection: sqlite3.Connection, chat_id: int) -> None:
 def _run(message: chats.Message, allowed: bool = False) -> None:
     call = message.calls[0]
     name, given = call["name"], dict(call["arguments"])
-    with store.connect() as connection:
-        chat = chats.chat(connection, message.chat_id)
-    if chat is not None and chat.production_id is not None:
-        given.setdefault("production_id", chat.production_id)
     try:
         if name in ASKED and not allowed:
             _write(message.id, state=chats.ASKING, text=_cost(name, given))

@@ -215,8 +215,7 @@ Over MCP: none; clearing is done in the page.
 Ask in the Chat tab in plain words, and the model does the work with difflab's own tools.
 
 In the page:
-1. Open **Chat**, then **New chat**. To work on a film, pick it under **production** at the top right: the chat's
-   tools then work on that production without being told which.
+1. Open **Chat**, then **New chat**. To work on a film, name it in your message, by its title or its number.
 2. Ask: "make a picture of…", "a clip from this photo where…", "make shot 3 two seconds shorter", "find a reference
    photo of … on the web". Attach photos with **＋**, by pasting, or by dropping them; a picture dragged from
    another browser tab is fetched by its address.

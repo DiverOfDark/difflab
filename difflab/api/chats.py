@@ -42,7 +42,6 @@ def one(chat_id: int) -> dict[str, Any] | None:
     return {
         **_summary(found),
         "system": found.system,
-        "production": found.production_id,
         "summary": found.summary,
         "summary_through": found.summary_through,
         "compact_next": found.compact_next,
@@ -57,18 +56,10 @@ def one(chat_id: int) -> dict[str, Any] | None:
 
 
 def update(chat_id: int, fields: dict[str, Any]) -> dict[str, Any]:
-    """`title`, `system`, and `production`: the production its tools work on, or null for none."""
-    changes: dict[str, str | int | None] = {name: str(fields[name]) for name in ("title", "system") if name in fields}
-    if "production" in fields:
-        given = fields["production"]
-        changes["production_id"] = None if given in (None, "") else int(given)
     with store.connect() as connection:
-        if (
-            changes.get("production_id") is not None
-            and store.production(connection, int(changes["production_id"] or 0)) is None
-        ):
-            raise LookupError("no such production")
-        chats.update_chat(connection, chat_id, **changes)
+        chats.update_chat(
+            connection, chat_id, **{name: str(fields[name]) for name in ("title", "system") if name in fields}
+        )
     return _found(chat_id)
 
 
@@ -173,7 +164,6 @@ def _summary(chat: chats.Chat) -> dict[str, Any]:
         "title": chat.title,
         "created": chat.created_at,
         "updated": chat.updated_at,
-        "production": chat.production_id,
     }
 
 

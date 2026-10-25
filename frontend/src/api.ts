@@ -909,8 +909,6 @@ export interface ChatSummary {
   title: string
   created: number
   updated: number
-  /** The production its tools work on, or null for none. */
-  production: number | null
 }
 
 export interface ToolCall {
@@ -959,8 +957,7 @@ const chatUrl = (id: number, rest = '') => `/api/chats/${id}${rest}`
 export const listChats = () => json<ChatSummary[]>('/api/chats')
 export const startChat = () => json<Chat>('/api/chats', { method: 'POST' })
 export const readChat = (id: number) => json<Chat>(chatUrl(id))
-export const patchChat = (id: number, body: { title?: string; system?: string; production?: number | null }) =>
-  json<Chat>(chatUrl(id), send('PATCH', body))
+export const patchChat = (id: number, body: { title?: string; system?: string }) => json<Chat>(chatUrl(id), send('PATCH', body))
 export const chatCompact = (id: number) => json<Chat>(chatUrl(id, '/compact'), { method: 'POST' })
 export const chatAllow = (id: number, message: number, allowed: boolean) =>
   json<Chat>(chatUrl(id, `/allow/${message}`), post({ allowed }))

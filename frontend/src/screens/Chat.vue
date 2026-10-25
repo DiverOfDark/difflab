@@ -13,7 +13,6 @@ import {
   chatStop,
   deleteChat,
   listChats,
-  listProductions,
   outputUrl,
   patchChat,
   readChat,
@@ -26,7 +25,6 @@ import {
   type Chat,
   type ChatMessage,
   type ChatSummary,
-  type ProductionSummary,
 } from '../api'
 import { state } from '../store'
 
@@ -38,7 +36,6 @@ const props = defineProps<{ id?: number }>()
 const router = useRouter()
 
 const list = ref<ChatSummary[]>([])
-const productions = ref<ProductionSummary[]>([])
 const chat = ref<Chat | null>(null)
 const text = ref('')
 const attached = ref<Asset[]>([])
@@ -108,7 +105,6 @@ watch(
     clearTimeout(timer)
     failure.value = ''
     await loadList()
-    if (!productions.value.length) productions.value = await listProductions().catch(() => [])
     if (id === undefined) {
       chat.value = null
       const newest = list.value[0]
@@ -255,14 +251,6 @@ async function allow(message: ChatMessage, allowed: boolean) {
   if (found) show(found)
 }
 
-async function setProduction(event: Event) {
-  if (!chat.value) return
-  const chosen = (event.target as HTMLSelectElement).value
-  const id = chat.value.id
-  const found = await act(() => patchChat(id, { production: chosen ? Number(chosen) : null }))
-  if (found) show(found)
-}
-
 /** A call as one line: its tool and its arguments, long values cut. */
 function called(message: ChatMessage): string {
   const call = message.calls[0]
@@ -334,16 +322,7 @@ function waiting(message: ChatMessage): string {
 
     <section v-if="chat" class="main" :class="{ dragging }" @dragover.prevent="dragging = true" @dragleave.self="dragging = false" @drop.prevent="dropped">
       <header class="head">
-        <div class="title-row">
-          <input class="title" :value="chat.title" placeholder="untitled" @change="rename" @keydown.enter="($event.target as HTMLInputElement).blur()" />
-          <label class="scope label" title="the production this chat's tools work on">
-            production
-            <select :value="chat.production ?? ''" :disabled="busy" @change="setProduction">
-              <option value="">none</option>
-              <option v-for="one in productions" :key="one.id" :value="one.id">{{ one.title || one.slug }}</option>
-            </select>
-          </label>
-        </div>
+        <input class="title" :value="chat.title" placeholder="untitled" @change="rename" @keydown.enter="($event.target as HTMLInputElement).blur()" />
         <div class="fill mono muted" title="the newest reply's prompt against what the model holds; past the mark it summarises the chat first">
           <span>context {{ thousands(chat.context.used) }} / {{ thousands(chat.context.total) }}</span>
           <span class="meter"><i :style="{ width: `${Math.min(100, (100 * chat.context.used) / chat.context.total)}%` }" /><b :style="{ left: `${(100 * chat.context.compacts_at) / chat.context.total}%` }" /></span>
@@ -359,8 +338,8 @@ function waiting(message: ChatMessage): string {
 
       <div ref="thread" class="thread">
         <p v-if="!chat.messages.length" class="muted empty">
-          Ask anything, or ask for a picture or a clip: the model makes them itself, finds references on the web, and with a
-          production chosen above works on it. Attach pictures or videos with the clip, by pasting, or by dropping them here —
+          Ask anything, or ask for a picture or a clip: the model makes them itself, finds references on the web, and works on a
+          production you name. Attach pictures or videos with the clip, by pasting, or by dropping them here —
           a video is shown to the model as a frame a second.
         </p>
         <template v-for="message in chat.messages" :key="message.id">
@@ -583,27 +562,6 @@ function waiting(message: ChatMessage): string {
 .divider .words {
   font-size: var(--text-sm);
   margin-top: 4px;
-}
-
-.title-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.title-row .title {
-  flex: 1;
-}
-
-.scope {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  white-space: nowrap;
-}
-
-.scope select {
-  max-width: 220px;
 }
 
 .message.tool {

@@ -849,7 +849,7 @@ def read_chat(chat_id: int) -> dict[str, Any]:
 
 @app.patch("/api/chats/{chat_id}")
 async def patch_chat(chat_id: int, request: Request) -> dict[str, Any]:
-    """`title`, `system` ('' is the default prompt), `production` (the one its tools work on, or null)."""
+    """`title`, `system` ('' is the default prompt)."""
     body = dict(await request.json())
     return _chatting(lambda: chats.update(chat_id, body))
 

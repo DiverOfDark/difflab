@@ -21,7 +21,6 @@ class Chat:
     system: str
     created_at: float
     updated_at: float
-    production_id: int | None
     summary: str
     summary_through: int
     compact_next: bool
@@ -34,7 +33,6 @@ class Chat:
             row["system"],
             row["created_at"],
             row["updated_at"],
-            row["production_id"],
             row["summary"],
             row["summary_through"],
             bool(row["compact_next"]),
@@ -110,7 +108,7 @@ def chats(connection: sqlite3.Connection) -> list[Chat]:
 
 def update_chat(connection: sqlite3.Connection, chat_id: int, **fields: str | int | None) -> None:
     for name, value in fields.items():
-        if name not in ("title", "system", "production_id", "summary", "summary_through", "compact_next"):
+        if name not in ("title", "system", "summary", "summary_through", "compact_next"):
             raise ValueError(f"a chat has no {name}")
         connection.execute(f"UPDATE chats SET {name} = ? WHERE id = ?", (value, chat_id))
 
