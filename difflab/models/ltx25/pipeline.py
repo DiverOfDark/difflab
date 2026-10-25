@@ -72,10 +72,11 @@ def frame_count(duration: float) -> int:
     return (frames - 1 + config.FRAME_CYCLE - 1) // config.FRAME_CYCLE * config.FRAME_CYCLE + 1
 
 
-def encode_prompt(
-    gemma: nn.Module, connectors: LTX2TextConnectors, tokenizer: PreTrainedTokenizerBase, prompt: str
-) -> Conditioning:
-    device = next(connectors.parameters()).device
+def hidden_states(
+    gemma: nn.Module, tokenizer: PreTrainedTokenizerBase, prompt: str
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Every layer's hidden states, stacked, and the attention mask."""
+    device = next(gemma.parameters()).device
     tokenizer.padding_side = "left"
     tokens = tokenizer(
         [prompt.strip()],
@@ -87,8 +88,12 @@ def encode_prompt(
     )
     mask = tokens.attention_mask.to(device)
     hidden = gemma(input_ids=tokens.input_ids.to(device), attention_mask=mask, output_hidden_states=True).hidden_states
-    stacked = torch.stack(hidden, dim=-1).flatten(2, 3).to(torch.bfloat16)
-    video, audio, connector_mask = connectors(stacked, mask, padding_side="left")
+    return torch.stack(hidden, dim=-1).flatten(2, 3).to(torch.bfloat16), mask
+
+
+def connect(connectors: LTX2TextConnectors, stacked: torch.Tensor, mask: torch.Tensor) -> Conditioning:
+    device = next(connectors.parameters()).device
+    video, audio, connector_mask = connectors(stacked.to(device), mask.to(device), padding_side="left")
     return Conditioning(video, audio, connector_mask)
 
 

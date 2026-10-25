@@ -126,12 +126,19 @@ def condition(
 def encode(prompt: str, settings: LtxSettings, version: str = config.V25) -> pipeline.Conditioning:
     ui.stage("encoding")
     gemma = models.registry.acquire(_text_encoder_spec(settings, version))
-    connectors = models.registry.acquire(_connectors_spec(settings, version))
+    connectors_spec = _connectors_spec(settings, version)
+    connectors = models.registry.acquire(connectors_spec)
     tokenizer = AutoTokenizer.from_pretrained(
         config.GEMMA3.fetch() if version == config.V23 else config.LAYOUT.fetch() / "tokenizer"
     )
     with ui.step("Encoding prompt") as detail, torch.no_grad():
-        conditioning = pipeline.encode_prompt(gemma, connectors, tokenizer, prompt)
+        stacked, mask = pipeline.hidden_states(gemma, tokenizer, prompt)
+        del gemma
+        # Gemma 3 (18.9 GB with the connectors) left them 368 MB short once the desktop held 3.4 GB of the card
+        # (2026-10-25); the DiT evicts Gemma next anyway, so giving the connectors its room costs no reload.
+        conditioning: pipeline.Conditioning = models.registry.roomy(
+            connectors_spec, lambda: pipeline.connect(connectors, stacked, mask)
+        )
         detail(f"{len(tokenizer(prompt).input_ids)} tokens")
     return conditioning
 
