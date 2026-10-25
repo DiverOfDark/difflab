@@ -305,14 +305,20 @@ class Editor21:
                 return latents
 
         settled = offload.fit(blocks, config.EDIT21_RESERVE_BYTES)
-        ui.line(f"{settled}/{len(blocks)} transformer blocks resident")
+        held = torch.cuda.memory_allocated() / 1024**3
+        ui.line(f"{settled}/{len(blocks)} transformer blocks resident, {held:.1f} GB held")
+        torch.cuda.reset_peak_memory_stats()
         try:
             latents = run()
         except torch.OutOfMemoryError:
+            # Retried outside the handler, so its traceback lets go of the first attempt's activations.
             if not offload.release():
                 raise
+            latents = None
+        if latents is None:
             ui.note("out of memory with transformer blocks resident: editing again with every block streaming")
             latents = run()
+        ui.line(f"peak {torch.cuda.max_memory_allocated() / 1024**3:.1f} GB")
         offload.release()
         torch.cuda.empty_cache()
         return _decode(pipe, latents, height, width)

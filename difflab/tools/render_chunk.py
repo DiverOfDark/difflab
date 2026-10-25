@@ -277,13 +277,18 @@ def sample(
                     hook.remove()
 
     try:
+        sampled: tuple[torch.Tensor, torch.Tensor] | None
         try:
-            video, audio = run(resident=True)
+            sampled = run(resident=True)
         except torch.OutOfMemoryError:
+            # Retried outside the handler, so its traceback lets go of the first attempt's activations.
             if not offload.release():
                 raise
+            sampled = None
+        if sampled is None:
             ui.note("out of memory with DiT blocks resident: sampling again with every block streaming")
-            video, audio = run(resident=False)
+            sampled = run(resident=False)
+        video, audio = sampled
     finally:
         if previewer is not None:
             previewer.close()

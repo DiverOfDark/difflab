@@ -70,8 +70,11 @@ class Editor:
         try:
             result = run()
         except torch.OutOfMemoryError:
+            # Retried outside the handler, so its traceback lets go of the first attempt's activations.
             if not offload.release():
                 raise
+            result = None
+        if result is None:
             ui.note("out of memory with transformer blocks resident: editing again with every block streaming")
             result = run()
         edited: Image.Image = result.images[0]
