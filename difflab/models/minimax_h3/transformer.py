@@ -246,6 +246,9 @@ def load(
         with init_empty_weights():
             model = MiniMaxH3Transformer3DModel()  # defaults already match this checkpoint's shapes
         weights.swap_quantized_linears(model, checkpoint.quant)
+        # diffusers casts the text to context_embedder's first float tensor - an int8 layer's fp32 scale - and
+        # the text sets the trunk's dtype: a checkpoint with bf16 blocks among int8 ones refused the fp32 (2026-10-25).
+        model.context_embedder.register_forward_pre_hook(lambda _, args: (args[0].to(torch.bfloat16),))
 
         silu_grid = _read_silu_grid(grid_file)
         if checkpoint.adaln_t_table is None:
