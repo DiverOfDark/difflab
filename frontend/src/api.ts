@@ -890,6 +890,10 @@ export type DownloadFile = { name: string; size: number; uses: DownloadUse[] }
 export type Download = { id: string; source: 'huggingface' | 'civitai' | 'url'; name: string; revision: string; size: number; files: DownloadFile[] }
 export const listDownloads = () => json<Download[]>('/api/downloads')
 export const deleteDownload = (id: string, files: string[] = []) => json<Download[]>('/api/downloads', send('DELETE', { id, files }))
+export type DiskRow = { id: 'models' | 'results' | 'made' | 'steps' | 'vlm' | 'logs' | 'records' | 'other'; bytes: number; free: number; names?: string[] }
+export type Disk = { rows: DiskRow[]; pending: string[]; vlm_budget: number; blob_budget: number }
+export const readDisk = () => json<Disk>('/api/disk')
+export const clearDisk = (what: string) => json<Disk>('/api/disk/clear', send('POST', { what }))
 
 export type Account = { source: string; account: string; tail: string }
 export const listAccounts = () => json<Record<string, Account>>('/api/accounts')

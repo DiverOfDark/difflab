@@ -6,6 +6,7 @@
  */
 import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import Disk from '../components/Disk.vue'
 import Downloads from '../components/Downloads.vue'
 import LoraList from '../components/LoraList.vue'
 import ModelPicker from '../components/ModelPicker.vue'
@@ -296,7 +297,7 @@ const describe = (f: SettingField) =>
       </p>
 
       <nav class="tabs">
-        <button v-for="t in tabs" :key="t.key" class="tab" :class="{ on: tab !== 'accounts' && tab !== 'downloads' && current.key === t.key }" @click="tab = t.key">
+        <button v-for="t in tabs" :key="t.key" class="tab" :class="{ on: !['accounts', 'downloads', 'disk'].includes(tab) && current.key === t.key }" @click="tab = t.key">
           <span>{{ t.title }}</span>
           <i v-if="t.changed" class="unsaved" title="unsaved changes" />
           <span v-if="t.here" class="count" :title="`${t.here} set ${scope === 'machine' ? 'for this machine' : 'for this production'}`">{{ t.here }}</span>
@@ -307,6 +308,9 @@ const describe = (f: SettingField) =>
         <button class="tab" :class="{ on: tab === 'downloads' }" @click="tab = 'downloads'">
           <span>Downloads</span>
         </button>
+        <button class="tab" :class="{ on: tab === 'disk' }" @click="tab = 'disk'">
+          <span>Disk</span>
+        </button>
       </nav>
 
       <label class="toggle"><input v-model="advanced" type="checkbox" /> Advanced{{ advanced ? '' : ` (${hidden} more)` }}</label>
@@ -315,6 +319,7 @@ const describe = (f: SettingField) =>
     <section class="pane">
       <div class="body">
         <Downloads v-if="tab === 'downloads'" @failed="(m) => (failure = m)" />
+        <Disk v-else-if="tab === 'disk'" @failed="(m) => (failure = m)" @models="tab = 'downloads'" />
         <section v-else-if="tab === 'accounts'" class="card">
           <div class="head"><h5>Accounts</h5><span class="note">tokens for downloading models; kept on this machine, never shown again</span></div>
           <div class="rows">

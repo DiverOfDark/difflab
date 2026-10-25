@@ -13,6 +13,7 @@ import os
 import re
 import shutil
 import sqlite3
+import threading
 import time
 from collections.abc import Sized
 from dataclasses import dataclass, field
@@ -99,6 +100,24 @@ def _blobs(kept: set[str], swept: Swept, dry: bool) -> set[str]:
     """Past their age, then the least recently used until the rest fits the budget. A token's files go
     together: a cache entry is its `.png` and `.tail.pt` both, or neither."""
     cutoff = time.time() - config.BLOB_KEEP_DAYS * 86400
+    entries = _groups(kept)
+    held = sum(entry[1] for entry in entries)
+    gone: set[str] = set()
+    for used, size, files, names, pinned in entries:
+        if pinned or (used > cutoff and held <= config.BLOB_KEEP_GB * 1024**3):
+            continue
+        held -= size
+        swept.files += len(files)
+        swept.bytes += size
+        gone.update(names)
+        if not dry:
+            for path in files:
+                path.unlink(missing_ok=True)
+    return gone
+
+
+def _groups(kept: set[str]) -> list[tuple[float, int, list[Path], list[str], bool]]:
+    """(last used, bytes, files, names, pinned) per token, least recently used first."""
     groups: dict[tuple[Path, str], list[Path]] = {}
     for folder in BLOBS.iterdir() if BLOBS.exists() else ():
         if not folder.is_dir() or folder.name in config.BLOB_KEEP_TOOLS:
@@ -113,20 +132,7 @@ def _blobs(kept: set[str], swept: Swept, dry: bool) -> set[str]:
         stats = [path.stat() for path in files]
         used = max(stat.st_mtime for stat in stats)
         entries.append((used, sum(stat.st_size for stat in stats), files, names, any(n in kept for n in names)))
-    entries.sort(key=lambda entry: entry[0])
-    held = sum(entry[1] for entry in entries)
-    gone: set[str] = set()
-    for used, size, files, names, pinned in entries:
-        if pinned or (used > cutoff and held <= config.BLOB_KEEP_GB * 1024**3):
-            continue
-        held -= size
-        swept.files += len(files)
-        swept.bytes += size
-        gone.update(names)
-        if not dry:
-            for path in files:
-                path.unlink(missing_ok=True)
-    return gone
+    return sorted(entries, key=lambda entry: entry[0])
 
 
 def touch(*named: object) -> None:
@@ -282,3 +288,146 @@ def delete_results(artifact_ids: list[int]) -> Deleted:
                 deleted.bytes += file.stat().st_size
                 file.unlink()
     return deleted
+
+
+# --- the Settings page's Disk tab ----------------------------------------------------------------------
+LOGS = config.OUTPUT_DIR / "logs"
+LIVE_LOG = "serve.log"  # still open: unlinked, its space comes back only when the server restarts
+PROFILES = config.OUTPUT_DIR / "profiles"
+_RESULTS = ("images", "videos", "assets")
+_RECORDS = ("runs", "backups", config.POD_ENDED.name)
+_KNOWN = {BLOBS.name, config.VLM_DISK_CACHE_DIR.name, LOGS.name, PROFILES.name, *_RESULTS, *_RECORDS}
+# What a production, a gallery entry or a run not yet settled would lose: clearing the step cache keeps these.
+_SHOWN = (
+    *_GIVEN,
+    "SELECT pictures FROM prompts",
+    *(f"SELECT artifact FROM {table}" for table in MADE_TABLES.values()),
+    "SELECT path FROM artifacts",
+)
+
+
+def _bytes(*paths: Path) -> int:
+    total = 0
+    for path in paths:
+        if path.is_file():
+            total += path.stat().st_blocks * 512
+        elif path.is_dir():
+            total += sum(f.stat().st_blocks * 512 for f in path.rglob("*") if f.is_file() and not f.is_symlink())
+    return total
+
+
+def _shown() -> set[str]:
+    named: set[str] = set()
+    with store.connect() as connection:
+        for query in _SHOWN:
+            for (value,) in connection.execute(query, store.SETTLED if "?" in query else ()):
+                named.update(_BLOB_PATH.findall(value or ""))
+    return named
+
+
+def _old_logs() -> list[Path]:
+    found = [*LOGS.glob("*")] if LOGS.is_dir() else []
+    return [path for path in found if path.is_file() and path.name != LIVE_LOG] + (
+        [*PROFILES.rglob("*")] if PROFILES.is_dir() else []
+    )
+
+
+def usage() -> dict[str, object]:
+    """Every kind of file difflab keeps, with its size and how much a clear would free."""
+    from huggingface_hub import scan_cache_dir
+    from huggingface_hub.constants import HF_HUB_CACHE
+
+    from difflab.core import hub
+
+    blobs = _groups(_shown())
+    step_free = sum(entry[1] for entry in blobs if not entry[4])
+    kept_tools = _bytes(*(BLOBS / tool for tool in config.BLOB_KEEP_TOOLS))
+    out = config.OUTPUT_DIR
+    other = [p for p in out.iterdir() if p.name not in _KNOWN and not p.name.startswith(store.DB_PATH.name)]
+    legacy = config.PROJECT_DIR / "cache"
+    other += [legacy] if legacy.is_dir() else []
+    logs = _bytes(LOGS, PROFILES)
+    rows = [
+        {"id": "models", "bytes": scan_cache_dir(HF_HUB_CACHE).size_on_disk + _bytes(hub.URL_CACHE), "free": 0},
+        {"id": "results", "bytes": _bytes(*(out / name for name in _RESULTS)), "free": 0},
+        {"id": "made", "bytes": sum(entry[1] for entry in blobs if entry[4]) + kept_tools, "free": 0},
+        {"id": "steps", "bytes": step_free, "free": step_free},
+        {"id": "vlm", "bytes": _bytes(config.VLM_DISK_CACHE_DIR), "free": _bytes(config.VLM_DISK_CACHE_DIR)},
+        {"id": "logs", "bytes": logs, "free": logs - _bytes(LOGS / LIVE_LOG)},
+        {
+            "id": "records",
+            "bytes": _bytes(*out.glob(f"{store.DB_PATH.name}*"), *(out / n for n in _RECORDS)),
+            "free": 0,
+        },
+        {
+            "id": "other",
+            "bytes": _bytes(*other),
+            "free": 0,
+            "names": sorted(str(p.relative_to(config.PROJECT_DIR)) for p in other),
+        },
+    ]
+    return {
+        "rows": rows,
+        "pending": asked(),
+        "vlm_budget": config.VLM_DISK_CACHE_BYTES,
+        "blob_budget": config.BLOB_KEEP_GB * 1024**3,
+    }
+
+
+def _clear_steps() -> int:
+    """Every cached step nothing shown names; a render that needs one makes it again."""
+    freed = 0
+    for _, size, files, _, pinned in _groups(_shown()):
+        if not pinned:
+            freed += size
+            for path in files:
+                path.unlink(missing_ok=True)
+    return freed
+
+
+def _clear_vlm() -> int:
+    from difflab.tools import ask_vlm
+
+    freed = _bytes(config.VLM_DISK_CACHE_DIR)
+    ask_vlm.evict()  # its open index would still list the checkpoints taken from under it
+    shutil.rmtree(config.VLM_DISK_CACHE_DIR, ignore_errors=True)
+    return freed
+
+
+def _clear_logs() -> int:
+    doomed = [path for path in _old_logs() if path.is_file()]
+    freed = _bytes(*doomed)
+    for path in doomed:
+        path.unlink(missing_ok=True)
+    return freed
+
+
+CLEARS = {"steps": _clear_steps, "vlm": _clear_vlm, "logs": _clear_logs}
+_asked: dict[str, threading.Event] = {}
+_lock = threading.Lock()
+
+
+def ask(what: str) -> threading.Event:
+    """Cleared by the worker before it claims its next job; set once done."""
+    if what not in CLEARS:
+        raise KeyError(what)
+    with _lock:
+        return _asked.setdefault(what, threading.Event())
+
+
+def asked() -> list[str]:
+    with _lock:
+        return sorted(_asked)
+
+
+def clear_asked() -> None:
+    """Only from the worker's thread with nothing claimed, as `sweep`."""
+    with _lock:
+        todo = dict(_asked)
+    for what, done in todo.items():
+        try:
+            print(f"cleanup: {what} cleared, {CLEARS[what]() / 1024**3:.1f} G", flush=True)
+        finally:
+            with _lock:
+                _asked.pop(what, None)
+            done.set()

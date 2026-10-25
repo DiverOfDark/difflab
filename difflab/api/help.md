@@ -200,6 +200,17 @@ files are saved on the same page. Each change shows what it would make stale bef
 Over MCP: `take_settings` lists every field of the Take jobs with this machine's value; a single job can override
 any of them through its `settings` argument. Saving machine or production settings is done in the page.
 
+# Free disk space
+See what takes space besides the models, and clear the caches.
+
+In the page: **Settings**, then **Disk**. Each row is one kind of file with its size: **Models**, **Results**,
+**Production shots**, **Step cache**, **VLM prompt cache**, **Logs and profiles**, **Database and run records**
+and **Other**. **clear**, then **free … ?** to confirm, empties the step cache (renders nothing shown points at),
+the VLM prompt cache, or the old logs. A clear waits for the job in flight and says **after this job** until then.
+Models are deleted one by one under **Downloads**; results in the **Gallery**.
+
+Over MCP: none; clearing is done in the page.
+
 # Use the VLM from other tools
 Chat with the VLM (talk to the model), or reach difflab from another program.
 

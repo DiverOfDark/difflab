@@ -46,6 +46,7 @@ from difflab.work.quick import Job
 
 STATIC = Path(__file__).parent / "static"  # the built Vue app, when there is one
 COOKIE = "difflab_token"
+CLEAR_WAIT = 30.0
 
 app = FastAPI(title="difflab", docs_url=None, redoc_url=None)
 
@@ -779,6 +780,23 @@ async def delete_download(request: Request) -> list[dict[str, Any]]:
     except KeyError as problem:
         raise HTTPException(404, f"nothing downloaded as {problem}") from problem
     return await asyncio.to_thread(downloads.listing)
+
+
+@app.get("/api/disk")
+async def disk() -> dict[str, Any]:
+    return await asyncio.to_thread(cleanup.usage)
+
+
+@app.post("/api/disk/clear")
+async def clear_disk(request: Request) -> dict[str, Any]:
+    """`{"what": "steps" | "vlm" | "logs"}`: done by the worker before its next job, so a render in flight
+    finishes first; answers once done, or after CLEAR_WAIT with it still in `pending`."""
+    try:
+        done = cleanup.ask(str((await request.json()).get("what", "")))
+    except KeyError as problem:
+        raise HTTPException(404, f"nothing to clear as {problem}") from problem
+    await asyncio.to_thread(done.wait, CLEAR_WAIT)
+    return await asyncio.to_thread(cleanup.usage)
 
 
 @app.get("/api/accounts")

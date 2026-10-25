@@ -56,6 +56,10 @@ class Worker(threading.Thread):
                 # script cannot import its own package.
                 os.execv(sys.executable, sys.orig_argv)
             _advance_chats()
+            try:
+                cleanup.clear_asked()
+            except (OSError, sqlite3.Error) as problem:
+                print(f"difflab: clearing stopped ({problem})", flush=True)
             if not self.step():
                 if time.time() - self.swept > config.CLEANUP_EVERY_HOURS * 3600:
                     self.swept = time.time()
