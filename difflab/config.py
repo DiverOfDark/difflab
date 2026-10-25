@@ -39,6 +39,9 @@ VLM_CONTEXT_TOKENS = 65536
 # The chat's own load (`tools/chat.py`), which rulings never use. At 8 bits a token is 34 KiB of cache and
 # 2.1 KiB of draft cache, and ExLlamaV3 stages the window as fp16 for a long prefill, 4 KiB a token more
 # (`Attention.autosplit_extra_measure`): 432 pages fill the 4.25 GiB the 64k fp16 cache and its draft do.
+# Loaded, 17.8 GB against the fp16 load's 18.2. Greedy and unthinking against fp16 (2026-10-26): two tool
+# choices, two facts hidden at 40.6k tokens and an 80-word picture description came out identical; a summary
+# of the 40.6k first differed at character 485 of 601, one word for another.
 CHAT_KV_BITS = 8
 CHAT_CONTEXT_TOKENS = 432 * 256
 # MTP proposals per step. Measured on the 3090 (tok/s, sampled at 0.7/0.8/20; a card call with one
