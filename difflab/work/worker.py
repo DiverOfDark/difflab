@@ -247,9 +247,11 @@ def _apply_waiting(connection: sqlite3.Connection, run: store.Run) -> None:
 
 
 def _settle_orphans() -> None:
-    """One worker per process, so a run still `running` at start was left by a process that died - the
-    OOM reaper, a kill - and nothing will ever end it. Its job in flight is failed, the rest cancelled;
-    queued runs are untouched and taken in turn."""
+    """One worker per process, so a job still `running` at start was left by a process that died - the
+    OOM reaper, a kill - and nothing will ever end it. It is failed and the rest of its run cancelled. A
+    run `running` with no job in flight was left between two jobs, by `POST /api/restart`: its next job is
+    taken in turn, like a queued run's. Failed for it, a restart cut two production runs short of their
+    shot plans (2026-10-26)."""
     why = "the worker died before this ended"
     try:
         with store.connect() as connection, store.transaction(connection):
@@ -258,9 +260,11 @@ def _settle_orphans() -> None:
                     _end_if_settled(connection, run.id)
                 if run.state != store.RUNNING:
                     continue
-                for job in store.jobs_of(connection, run.id):
-                    if job.state == store.RUNNING:
-                        store.end_job(connection, job.id, store.FAILED, error=why)
+                cut = [job for job in store.jobs_of(connection, run.id) if job.state == store.RUNNING]
+                if not cut:
+                    continue
+                for job in cut:
+                    store.end_job(connection, job.id, store.FAILED, error=why)
                 _cancel_rest(connection, run.id, why)
                 store.end_run(connection, run.id, ok=False, error=why)
                 print(f"difflab: run {run.id} was left running by a dead process and is now failed", flush=True)

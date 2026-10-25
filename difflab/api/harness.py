@@ -20,7 +20,9 @@ from difflab.models import exl3vl
 from difflab.store import chats
 from difflab.work import queue
 
-ROUNDS = 8  # answers with tool calls after one message from the person, before one has to do without
+# Answers with tool calls after one message from the person, before one has to do without: a production set up from
+# an idea took 10 (draft, follow, start, read, follow, plan, follow...), and 8 cut it off (2026-10-26).
+ROUNDS = 20
 MADE_MOST = 6  # of a run's files, the newest handed back as its result
 FOLLOWED = ("make_picture", "make_clip", "upscale")  # answered with what their run makes
 ASKED = frozenset(
@@ -33,6 +35,7 @@ LOOK = {
     "summary, or any a tool returned.",
     "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]},
 }
+SPENT = "*Stopped after {} rounds of tool calls for one message: say “go on” to continue.*"
 DECLINED = "The person declined this call. Do not make it again: ask them what they want instead."
 
 
@@ -62,12 +65,17 @@ def prepare(message_id: int, spent: bool) -> tuple[list[dict[str, Any]], str]:
 
 
 def after_reply(message_id: int, offered: list[dict[str, Any]]) -> None:
-    """The answer's tool calls, each a tool message, run; the next answer queued when they have all settled."""
-    if not offered:
-        return
+    """The answer's tool calls, each a tool message, run; the next answer queued when they have all settled. With
+    none offered, a call the model writes anyway, having seen its earlier ones, is cut from what it says."""
     with store.connect() as connection:
         answer = chats.message(connection, message_id)
     if answer is None:
+        return
+    if not offered:
+        if exl3vl.OPEN_CALL in answer.text:
+            words = exl3vl.before_calls(answer.text, True)
+            with store.connect() as connection:
+                chats.write(connection, message_id, text=f"{words}\n\n{SPENT.format(ROUNDS)}".strip())
         return
     words, made = exl3vl.tool_calls(answer.text, offered)
     if not made:
@@ -176,6 +184,10 @@ def _answer_run(message: chats.Message) -> None:
     summary.pop("made", None)
     media = [a["path"] for a in found["artifacts"] if a["kind"] in ("image", "video")][-MADE_MOST:]
     text = json.dumps(summary | {"files": media}, ensure_ascii=False, indent=1)
+    if found["status"] in ("failed", "cancelled", "stopped"):
+        error = f"the run {found['status']}" + (f": {found['error']}" if found["error"] else "")
+        _write(message.id, state=chats.FAILED, text=text, media=media, error=error)
+        return
     _write(message.id, state=chats.DONE, text=text, media=media)
 
 
