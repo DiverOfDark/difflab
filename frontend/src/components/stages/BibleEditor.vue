@@ -479,11 +479,12 @@ const remove = () => {
               <input ref="fileInput" type="file" accept="image/*" hidden @change="give(($event.target as HTMLInputElement).files)" />
             </div>
             <div v-for="g in member.gaps ?? []" :key="g.role" class="gap note">no {{ g.role }} picture: {{ g.why }}</div>
-            <div v-if="member.kind !== 'environment' && member.kind !== 'style'" class="plate">
-              <span class="eyebrow">PLATE</span>
+            <div v-if="member.kind !== 'style'" class="plate">
+              <span class="eyebrow">{{ member.kind === 'environment' ? 'EMPTY' : 'PLATE' }}</span>
               <label>
                 <input type="checkbox" :checked="member.plate" :disabled="!!busy || !plates.length" @change="togglePlate(($event.target as HTMLInputElement).checked)" />
-                <span>Replace each photo's background with a flat backdrop, so the model copies the {{ member.noun }} and not the room it was photographed in.</span>
+                <span v-if="member.kind === 'environment'">Remove the people and animals from each photo of the {{ member.noun }}, so the model copies the place and not who stood in it.</span>
+                <span v-else>Replace each photo's background with a flat backdrop and remove everyone else, so the model copies the {{ member.noun }} and not the room it was photographed in.</span>
               </label>
               <span v-if="member.plate" class="mono small dim">{{ plating ? 'plating…' : `${plated} of ${plates.length} plated` }}</span>
             </div>

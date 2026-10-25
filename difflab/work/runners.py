@@ -664,10 +664,12 @@ def run_draw_look(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str,
 
 
 def run_plate_ref(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
-    """A member's reference photo with everything behind it replaced by a flat grey backdrop."""
+    """A member's reference photo with everything behind it replaced by a flat grey backdrop; a place's, emptied."""
     chosen = EditSettings(**settings).with_(seed=int(inputs["seed"]))
     picture = _frame(inputs["picture"])
-    said = words.COMPOSE_PLATE.format(noun=inputs["noun"], traits=inputs["traits"])
+    said = (words.COMPOSE_EMPTY_PLACE if inputs.get("kind") == "environment" else words.COMPOSE_PLATE).format(
+        noun=inputs["noun"], traits=inputs["traits"]
+    )
     made = key("plate_ref", 1, picture=picture.pixels, said=said, settings=chosen)
     target = cache.path(made, ".png")
     outputs = {"frame": store.relative(target), "key": str(made)}

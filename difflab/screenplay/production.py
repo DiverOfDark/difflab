@@ -17,7 +17,7 @@ from PIL import Image
 from difflab import config, store
 from difflab.core import media
 from difflab.core.keys import key
-from difflab.core.settings import Continuity, EditSettings, IngestSettings, Settings
+from difflab.core.settings import Continuity, EditSettings, IngestSettings, JudgeSettings, Settings
 from difflab.models.ltx25 import config as ltx_config
 from difflab.models.minimax_h3 import pipeline
 from difflab.models.minimax_h3.settings import VideoSettings
@@ -571,9 +571,10 @@ def update_member(member_id: int, **changes: Any) -> dict[str, int]:
                 store.update_member(connection, member_id, **fields)
                 moved["clips"] += _revoice(connection, production, member.slug)
         if "plate" in changes and bool(changes["plate"]) != member.plate:
-            if member.kind == "environment":
-                raise ValueError("a place is the backdrop: there is nothing behind it to replace")
             store.update_member(connection, member_id, plate=bool(changes["plate"]))
+            unplated = [s for s in production.manifest.get("unplated", []) if s != member.slug]
+            unplated += [] if changes["plate"] else [member.slug]
+            store.update_production(connection, production.id, manifest={**production.manifest, "unplated": unplated})
             recompile_casting(connection, member_id)
         store.touch_production(connection, member.production_id)
     if changes.get("plate"):
@@ -663,26 +664,94 @@ def plate(member_id: int, asked_by: str = "person") -> str | None:
         if member is None or production is None:
             raise LookupError(f"no member {member_id}")
         wanting = [r for r in store.refs_of(connection, member_id) if r.artifact and not r.generated and not r.plate]
-        if not wanting:
+        return _plates(connection, production, [(member, wanting)], f"{member.slug} · plates", asked_by)
+
+
+def plate_cut(production_id: int) -> str | None:
+    """A run plating every reference cut from a photograph that has no plate yet, the members plating from then
+    on: a place only where it shows someone. A member a person stopped plating is left as it is."""
+    with store.connect() as connection, store.transaction(connection):
+        production = store.production(connection, production_id)
+        if production is None:
             return None
-        editor, _ = settings.effective("edit_image", production.id)
-        assert isinstance(editor, EditSettings)
-        run_id = store.next_run_id(connection, datetime.now().strftime("%Y-%m-%d-%H%M%S"))
-        store.add_run(
-            connection, run_id, title=f"{production.title} · {member.slug} · plates", asked_by=asked_by,
-            scope=f"plates:{production.id}", production_id=production.id,
-            spec={"production": production.id, "items": [f"{member.slug} {r.role}" for r in wanting]},
-        )  # fmt: skip
+        unplated = set(production.manifest.get("unplated", []))
+        rejected = set(production.manifest.get("plate_rejected", []))
+        pending = {
+            int(row[0])
+            for row in connection.execute(
+                "SELECT for_id FROM jobs WHERE tool = 'plate_ref' AND for_kind = 'plate' AND state IN (?, ?, ?)",
+                (store.QUEUED, store.RUNNING, store.PAUSED),
+            )
+        }
+        everyone = [m for m in store.members_of(connection, production_id) if m.kind != "style"]
+        members = [m for m in everyone if m.slug not in unplated]
+        living = {m.slug for m in everyone if m.kind in crops.LIVING}
+        slugs = {m.id: m.slug for m in everyone}
+        refs = [r for r in store.refs_of_production(connection, production_id) if r.artifact]
+        owned = {slugs[r.member_id] for r in refs}
+        # A crop that is someone's only picture keeps them: plated, they would be painted out of it.
+        sole = {r.id for r in refs if any(m in living - owned for m in r.shows if m != slugs[r.member_id])}
+        chosen = []
+        for member in members:
+            wanting = [
+                r for r in store.refs_of(connection, member.id)
+                if r.artifact and r.provided is None and not r.generated and not r.plate and r.id not in pending
+                and r.artifact not in rejected and r.id not in sole
+                and (member.kind != "environment" or living & set(r.shows))
+            ]  # fmt: skip
+            if wanting:
+                chosen.append((member, wanting))
+                if not member.plate:
+                    store.update_member(connection, member.id, plate=True)
+        return _plates(connection, production, chosen, "plates", "planner")
+
+
+def _plates(
+    connection: Any,
+    production: store.Production,
+    chosen: list[tuple[store.Member, list[store.Reference]]],
+    title: str,
+    asked_by: str,
+) -> str | None:
+    """Each reference plated and judged against its crop; a plate below the gate is let go of (`made._judged`)."""
+    if not any(wanting for _, wanting in chosen):
+        return None
+    editor, _ = settings.effective("edit_image", production.id)
+    assert isinstance(editor, EditSettings)
+    verdicts, _ = settings.effective("judge", production.id)
+    assert isinstance(verdicts, JudgeSettings)
+    run_id = store.next_run_id(connection, datetime.now().strftime("%Y-%m-%d-%H%M%S"))
+    store.add_run(
+        connection, run_id, title=f"{production.title} · {title}", asked_by=asked_by,
+        scope=f"plates:{production.id}", production_id=production.id,
+        spec={"production": production.id, "items": [f"{m.slug} {r.role}" for m, refs in chosen for r in refs]},
+    )  # fmt: skip
+    for member, wanting in chosen:
+        place = member.kind == "environment"
         traits = compiler.card_of(member).short()
         for reference in wanting:
-            store.add_job(
+            plated = store.add_job(
                 connection, run_id, "plate_ref",
                 {"production": production.id, "picture": reference.artifact, "noun": member.noun, "traits": traits,
-                 "seed": editor.seed},
+                 "kind": member.kind, "seed": editor.seed},
                 label=f"plate {member.slug} · {reference.role}", settings=editor.data(), for_kind="plate",
                 for_id=reference.id,
             )  # fmt: skip
-        return run_id
+            store.add_job(
+                connection, run_id, "judge",
+                {"production": production.id, "kind": "reference picture",
+                 "path": {"from_job": plated.id, "output": "frame"},
+                 "purpose": f"a reference picture of the {member.noun}, "
+                            + ("every person and animal gone from it" if place else "alone, whole and sharp")
+                            + ", matching every listed trait",
+                 "arrangement": f"{{{member.slug}}}, empty of people and animals" if place
+                 else f"{{{member.slug}}} alone on a plain backdrop",
+                 "cast": [member.slug],
+                 **({} if place else {"pictures": {member.slug: reference.artifact}})},
+                label=f"judge {member.slug} · {reference.role} plate", settings=verdicts.data(), for_kind="plate",
+                for_id=reference.id,
+            )  # fmt: skip
+    return run_id
 
 
 def add_member(production_id: int, slug: str, **given: Any) -> store.Member:

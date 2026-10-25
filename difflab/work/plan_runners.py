@@ -360,6 +360,7 @@ def run_cut_crops(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str,
     )  # fmt: skip
     if (previous := _start("cut_crops", made)) is not None:
         _keep_cut(production_id, photos, previous, str(made))
+        production_module.plate_cut(production_id)
         return previous
     cut = cut_crops.opening_and_crops(frames, found, shows, kinds, aspect, video, fit)
     cut = dataclasses.replace(cut, crops=[c for c in cut.crops if [c.member, photos[c.photo], c.role] not in detached])
@@ -386,6 +387,7 @@ def run_cut_crops(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str,
         "extend": cut.extend,
     }
     _keep_cut(production_id, photos, outputs, str(made))
+    production_module.plate_cut(production_id)
     return outputs
 
 

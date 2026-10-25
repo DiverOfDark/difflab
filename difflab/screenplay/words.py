@@ -750,7 +750,9 @@ COMPOSE_LOOK_ALLOWED = "These may differ as the change needs: {allowed}."
 # The shape the old plates were written in (b1d50dc): the realism clause is positive because the editor
 # runs at cfg 1 and drops the negative prompt.
 COMPOSE_PLATE = """\
-Replace everything behind the {noun} with a flat, even mid-grey studio backdrop. Keep the {noun} exactly as it is: {traits}, the same pose, framing and light. Keep it an unretouched real photograph with natural skin texture and visible pores."""
+Replace everything behind the {noun} with a flat, even mid-grey studio backdrop, and remove every other person and animal. Keep the {noun} exactly as it is: {traits}, the same pose, framing and light. Keep it an unretouched real photograph with natural skin texture and visible pores."""
+# A place's photo with its people taken out, so a reference of the place hands over no one.
+COMPOSE_EMPTY_PLACE = """Remove every person and animal from this photograph of the {noun}, and fill where each one was with what lies behind them, continuing the walls, floor, furniture, light and shadows. Keep everything else exactly as it is: {traits}, the same framing, perspective and light. One unretouched real photograph, empty of people and animals."""
 # The opening photo whole, fitted into the canvas over a blurred stretch of itself (`cut_crops.padded`).
 COMPOSE_EXTEND_OPENING = """\
 The sharp photograph in the middle is part of a wider scene. Replace the blurred bands at its {sides} with the rest of that scene, continuing its walls, ground, furniture, light and perspective out to the edges. Keep everything in the sharp photograph exactly as it is: every person, face, pose and object, in the same place and size. No borders, frames or seams. One unretouched real photograph."""

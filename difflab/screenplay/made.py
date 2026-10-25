@@ -83,6 +83,20 @@ def _plated(connection: sqlite3.Connection, job: store.Job, outputs: dict[str, A
     production.recompile_casting(connection, reference.member_id)
 
 
+def _plate_judged(connection: sqlite3.Connection, job: store.Job, outputs: dict[str, Any]) -> None:
+    """A plate below the gate let go of, its crop handed over again and not plated again on its own."""
+    reference = store.ref(connection, int(job.for_id or 0))
+    if reference is None or outputs.get("passed") or outputs.get("unjudged") or not reference.artifact:
+        return
+    store.set_plate(connection, reference.id, None)
+    member = store.member(connection, reference.member_id)
+    held = None if member is None else store.production(connection, member.production_id)
+    if held is not None:
+        rejected = [*held.manifest.get("plate_rejected", []), reference.artifact]
+        store.update_production(connection, held.id, manifest={**held.manifest, "plate_rejected": rejected})
+    production.recompile_casting(connection, reference.member_id)
+
+
 def _drawn(connection: sqlite3.Connection, job: store.Job, outputs: dict[str, Any], state: str) -> None:
     """A member's drawn reference, and every prompt that casts it compiled again to hand it."""
     made_id = int(job.for_id or 0)
@@ -142,6 +156,9 @@ def _judged(connection: sqlite3.Connection, job: store.Job, outputs: dict[str, A
     """A verdict on a keyframe, a clip, a look or a drawn reference. Below the gate a keyframe is composed
     again on a new seed, told the judge's fixes, and a clip rendered again on one, until their attempts are
     spent; anything else below it, and whatever is out of attempts, goes to review."""
+    if state == store.DONE and job.for_kind == "plate":
+        _plate_judged(connection, job, outputs)
+        return
     if state != store.DONE or job.for_kind not in ("keyframe", "clip", "reference", "casting"):
         return
     kind, made_id = job.for_kind, int(job.for_id or 0)
