@@ -545,18 +545,19 @@ JUDGE_FORM = (
     "; it is the {was} of its reference photo turned into this, so only what these words name comes from that photo,"
     " and no {was} is left anywhere: a {was} still shown beside, behind or under it fails the picture"
 )
-JUDGE_FIXES_SCENE = '"fixes" are the issues a painter is told, about who is there, where each stands, what each holds and does; never about clothes, hair or a face, which the painter copies from the photos.'
+JUDGE_FIXES_SCENE = '"fixes" are the issues a painter is told, about who is there, where each stands, what each holds and does; never about clothes, hair or a face, which the painter copies from the photos. Where the picture shows something other than the words asked for, the painter did not know a word: the fix says it in the simplest plain words that show it, what is where and how it looks, never the word the picture missed.'
 # A look or a drawn reference is redrawn alone from its own words, so there the clothes, hair and face are
 # exactly what the editor must be told.
-JUDGE_FIXES_PICTURE = '"fixes" are what the editor redrawing this one picture is told, each a short instruction about the member\'s clothes, colours, hair, face, build, pose or backdrop that brings it to the description and the reference photo ("make the robe deep sapphire blue, not teal").'
+JUDGE_FIXES_PICTURE = '"fixes" are what the editor redrawing this one picture is told, each a short instruction about the member\'s clothes, colours, hair, face, build, pose or backdrop that brings it to the description and the reference photo ("make the robe deep sapphire blue, not teal"). A garment or thing the picture got wrong is named by how it looks, not by a word the editor already missed ("a long straight robe that wraps left over right, tied with a wide sash", not "a kimono").'
 
 # A clip's retake is rendered from these on a new seed (`judge.revise`).
 CLIP_REVISE_SYSTEM = """\
 You are the director of a live-action video. A video model rendered one shot from the SUMMARY and DESCRIPTION below, and the continuity supervisor rejected the take: you are shown its frames, in order, with what the supervisor found wrong and wants fixed. You rewrite the SUMMARY and the DESCRIPTION so the next take, rendered from them on a new seed, shows the shot as it was meant, as JSON.
 
 RULES
-- Change only what the issues and fixes need: who is in the frame, where each stands, what each holds and does, how the action runs. Keep every other sentence word for word, in its order, with its timing words ("For the first two seconds", "In the final two seconds").
-- An action the take skipped or blurred is said plainer and earlier, as its own sentence; one it got wrong is said again the way it should happen.
+- Rewrite freely every sentence the issues and fixes touch: who is in the frame, where each stands, what each holds and does, how the action runs. Keep every other sentence word for word, in its order, with its timing words ("For the first two seconds", "In the final two seconds").
+- The take is what the video model made of these words. Where it shows something else, the model did not know a word or did not picture a phrase, and the same words would fail again: say that part in other words, the simplest ones that show it as the camera sees it - which body part moves, which way, how far, how fast, and what it touches ("does a cartwheel" becomes "puts both hands on the sand and swings both legs over her head, landing on her feet"). A name for an action, a slang word, a figure of speech or a technical term the take did not show is replaced by that plain description, never repeated.
+- An action the take skipped or blurred is said plainer and earlier, as its own sentence.
 - Say what is there and what happens, never what is not: a model renders a thing it is told is absent. A person who should not be there is fixed by saying who fills the frame ("only <Subject 1> and <Subject 3> are on the beach").
 - Keep every <Subject N>, <Picture N>, <Video N> and <Audio N> label as it is written, and add none. Add nothing about faces, hair or clothes: those come from the pictures.
 - The SUMMARY keeps its square-bracketed task list first; the DESCRIPTION keeps its style sentences before [Shot 1] and stays about as long as it is.
