@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from difflab import store
-from difflab.core import context, protocol
+from difflab.core import context, protocol, provenance
 
 
 def run_started(run_id: str, at: float, title: str = "", pid: int | None = None) -> None:
@@ -43,6 +43,8 @@ def run_ended(ok: bool, error: str = "") -> None:
 
 def artifact_made(path: Path, kind: str, seed: int | None = None, key: str | None = None) -> None:
     """A file a job delivered, attributed to the job that was running when it appeared."""
+    if kind == store.IMAGE:
+        provenance.mark_png(path)
     try:
         where = store.relative(path)
     except ValueError:

@@ -13,7 +13,7 @@ import av
 import numpy as np
 import torch
 
-from difflab.core import ui
+from difflab.core import provenance, ui
 from difflab.core.audio import SAMPLE_RATE, limited
 
 # An untagged H.264 stream is read by players as BT.709 at this size, and swscale converts to BT.601
@@ -53,6 +53,7 @@ def save_video(
         audio = limited(waveform[:, :samples].contiguous().float().numpy()) if waveform is not None else None
 
         with av.open(str(path), "w", format="mp4") as container:
+            container.metadata.update(provenance.MP4_TAGS)
             video_stream = container.add_stream("h264", rate=Fraction(round(fps * 1000), 1000), options=dict(BT709))
             video_stream.width, video_stream.height = width, height
             video_stream.pix_fmt = "yuv420p"
@@ -102,6 +103,7 @@ class VideoWriter:
         self.width, self.height = width, height
         self.frames = 0
         self._container = av.open(str(path), "w", format="mp4", options={"movflags": "faststart"})
+        self._container.metadata.update(provenance.MP4_TAGS)
         options = {**BT709, **({"crf": str(crf)} if crf is not None else {})}
         self._video = self._container.add_stream("h264", rate=Fraction(round(fps * 1000), 1000), options=options)
         self._video.width, self._video.height = width, height

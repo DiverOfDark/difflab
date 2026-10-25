@@ -16,6 +16,8 @@ from typing import NamedTuple
 
 import av
 
+from difflab.core import provenance
+
 # dBFS, the limiter's ceiling. It holds sample peaks; a levelled chapter still measured -0.1 dBTP.
 LIMIT = -1.5
 AUDIO_BITRATE = "192k"
@@ -120,7 +122,7 @@ def film(chapters: Sequence[Chapter], destination: Path, title: str, markers: bo
         said = ", ".join(f"{name} {rate:g} fps" for name, rate in rates.items())
         raise ValueError(f"the chapters' streams are copied, so they share one frame rate: {said}")
     cues: list[Cue] = []
-    meta = [";FFMETADATA1", f"title={_escape(title)}"]
+    meta = [";FFMETADATA1", f"title={_escape(title)}", *(f"{k}={_escape(v)}" for k, v in provenance.MP4_TAGS.items())]
     at = 0.0
     for chapter in chapters:
         length = seconds_of(chapter.video)
