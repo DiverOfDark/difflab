@@ -1,5 +1,7 @@
 <script setup lang="ts">
 /** A chat with the VLM. Each reply is a run on the card, so it waits behind a render; the page polls it as it writes. */
+import DOMPurify from 'dompurify'
+import { marked } from 'marked'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
@@ -49,6 +51,7 @@ const canSend = computed(() => !!chat.value && !pending.value && !busy.value && 
 const fileUrl = (path: string) => `/uploads/${path.split('/').pop()}`
 const nameOf = (path: string) => (path.split('/').pop() ?? path).replace(/^[0-9a-f]{16}-/, '')
 const words = (s: string) => s.trim().split(/\s+/).filter(Boolean).length
+const rendered = (s: string) => DOMPurify.sanitize(marked.parse(s, { async: false, gfm: true, breaks: true }))
 
 async function act<T>(work: () => Promise<T>): Promise<T | undefined> {
   failure.value = ''
@@ -283,7 +286,8 @@ function waiting(message: ChatMessage): string {
             <summary class="label">thinking · {{ words(message.thinking) }} words</summary>
             <div class="words muted">{{ message.thinking }}</div>
           </details>
-          <div v-if="message.text" class="words">{{ message.text }}</div>
+          <div v-if="message.text && message.role === 'assistant'" class="words md" v-html="rendered(message.text)" />
+          <div v-else-if="message.text" class="words">{{ message.text }}</div>
           <p v-if="waiting(message)" class="status mono muted"><i class="dot running" />{{ waiting(message) }}</p>
           <p v-if="message.state === 'stopped'" class="status mono dim">stopped</p>
           <p v-if="message.state === 'failed'" class="band error">{{ message.error || 'failed' }}</p>
@@ -471,6 +475,96 @@ function waiting(message: ChatMessage): string {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   line-height: 1.55;
+}
+
+.md {
+  white-space: normal;
+}
+
+.md :deep(:first-child) {
+  margin-top: 0;
+}
+
+.md :deep(:last-child) {
+  margin-bottom: 0;
+}
+
+.md :deep(p),
+.md :deep(ul),
+.md :deep(ol),
+.md :deep(pre),
+.md :deep(blockquote),
+.md :deep(table) {
+  margin: 0 0 0.7em;
+}
+
+.md :deep(h1),
+.md :deep(h2),
+.md :deep(h3),
+.md :deep(h4) {
+  font-size: 1em;
+  font-weight: var(--weight-semibold);
+  margin: 1em 0 0.4em;
+}
+
+.md :deep(h1),
+.md :deep(h2) {
+  font-size: 1.15em;
+}
+
+.md :deep(ul),
+.md :deep(ol) {
+  padding-left: 1.4em;
+}
+
+.md :deep(li + li) {
+  margin-top: 0.2em;
+}
+
+.md :deep(code) {
+  font-family: var(--mono);
+  font-size: 0.9em;
+  background: var(--bg-raised);
+  border-radius: 3px;
+  padding: 1px 4px;
+}
+
+.md :deep(pre) {
+  background: var(--bg-raised);
+  border-radius: var(--radius-input);
+  padding: 8px 12px;
+  overflow-x: auto;
+}
+
+.md :deep(pre code) {
+  background: none;
+  padding: 0;
+  white-space: pre;
+}
+
+.md :deep(blockquote) {
+  border-left: 2px solid var(--line);
+  padding-left: var(--space-1);
+  color: var(--text-secondary);
+}
+
+.md :deep(table) {
+  border-collapse: collapse;
+  display: block;
+  overflow-x: auto;
+}
+
+.md :deep(th),
+.md :deep(td) {
+  border: 1px solid var(--line);
+  padding: 4px 8px;
+  text-align: left;
+}
+
+.md :deep(hr) {
+  border: none;
+  border-top: 1px solid var(--line);
+  margin: 1em 0;
 }
 
 .thinking summary {
