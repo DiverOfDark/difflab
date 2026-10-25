@@ -53,10 +53,8 @@ class Turn(NamedTuple):
 class Exl3VL:
     """Resident from the first call until `unload`, like `QwenVL`, and asked the same way."""
 
-    def __init__(self, checkpoint: Checkpoint, context: int = config.VLM_CONTEXT_TOKENS, kv_bits: int = 0) -> None:
-        """`kv_bits` quantizes the attention cache, 0 keeping it fp16."""
+    def __init__(self, checkpoint: Checkpoint) -> None:
         self.checkpoint = checkpoint
-        self.context, self.kv_bits = context, kv_bits
         self._parts: dict[str, Any] | None = None
         self._embedded: OrderedDict[str, Any] = OrderedDict()
 
@@ -74,11 +72,14 @@ class Exl3VL:
         model = Model.from_config(exl_config)
         # One job at a time: every recurrent slot is 48 layers of linear-attention state, ~150 MB for
         # each draft position, and the default 16 slots do not fit beside the weights.
-        quant: dict[str, Any] = (
-            {"layer_type": CacheLayer_quant, "k_bits": self.kv_bits, "v_bits": self.kv_bits} if self.kv_bits else {}
-        )
+        bits = config.VLM_KV_BITS
+        quant: dict[str, Any] = {"layer_type": CacheLayer_quant, "k_bits": bits, "v_bits": bits} if bits else {}
         cache = Cache(
-            model, max_num_tokens=self.context, max_batch_size=1, max_history=config.VLM_DRAFT_TOKENS, **quant
+            model,
+            max_num_tokens=config.VLM_CONTEXT_TOKENS,
+            max_batch_size=1,
+            max_history=config.VLM_DRAFT_TOKENS,
+            **quant,
         )
         model.load()
         drafts: dict[str, Any] = {}
@@ -86,7 +87,7 @@ class Exl3VL:
             mtp = Model.from_config(exl_config, component="mtp")
             drafts = {
                 "draft_model": mtp,
-                "draft_cache": Cache(mtp, max_num_tokens=self.context, max_batch_size=1, **quant),
+                "draft_cache": Cache(mtp, max_num_tokens=config.VLM_CONTEXT_TOKENS, max_batch_size=1, **quant),
                 "num_draft_tokens": config.VLM_DRAFT_TOKENS,
             }
             mtp.load()
@@ -188,7 +189,7 @@ class Exl3VL:
         try:
             return asked()
         except torch.OutOfMemoryError:
-            # Weights and a 64k cache leave ~0.4 GB of a 3090 once the desktop holds 3.4 GB: a clip judge ran
+            # Weights and a 4.25 GiB cache left ~0.4 GB of a 3090 once the desktop held 3.4 GB: a clip judge ran
             # out there, and the pages it stranded ran the next question out too (2026-10-25). A fresh load
             # gives the card back whole.
             ui.note("VLM out of memory: loading it again and asking once more")
@@ -314,8 +315,8 @@ class Exl3VL:
                     ui.note(f"VLM opening not kept on disk: {missed}")
 
         ids, ends = tokenizer.encode(prompt, encode_special_tokens=True, embeddings=embeddings), []
-        if ids.shape[-1] >= self.context:
-            raise ValueError(f"the prompt is {ids.shape[-1]:,} tokens and the VLM holds {self.context:,}")
+        if ids.shape[-1] >= config.VLM_CONTEXT_TOKENS:
+            raise ValueError(f"the prompt is {ids.shape[-1]:,} tokens and the VLM holds {config.VLM_CONTEXT_TOKENS:,}")
         if system:
             ends.append(
                 tokenizer.encode(prompt[: prompt.index("<|im_start|>user")], encode_special_tokens=True).shape[-1]

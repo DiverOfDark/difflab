@@ -30,24 +30,20 @@ FINISH_FPS = 60  # what RIFE retimes a finished chapter to; H3 draws 24
 FINISH_MEGAPIXELS = 3840 * 2160 / 1e6  # what the ESRGAN enlarges it to
 
 
-# The VLM (`models/exl3vl.py`). 16 full-attention layers of 4 KV heads at 256 cost 64 KiB a token, so
-# this is 2 GiB on the card. Measured 2026-10-03: a plan repair peaks near 11k tokens on a 60 s take of
-# five clips, and its answer grows ~640 tokens a clip, so 16k ran out at about nine clips (~100 s).
-# 64k (4 GiB) is for the clip judge's frame every half second (`judge.SAMPLED_EVERY`). Unquantized: a
-# quantized cache would move every ruling measured against this one.
-VLM_CONTEXT_TOKENS = 65536
-# The chat's own load (`tools/chat.py`), which rulings never use. At 8 bits a token is 34 KiB of cache and
-# 2.1 KiB of draft cache, and ExLlamaV3 stages the window as fp16 for a long prefill, 4 KiB a token more
-# (`Attention.autosplit_extra_measure`): 432 pages fill the 4.25 GiB the 64k fp16 cache and its draft do.
-# Loaded, 17.8 GB against the fp16 load's 18.2. Greedy and unthinking against fp16 (2026-10-26): two tool
-# choices, two facts hidden at 40.6k tokens and an 80-word picture description came out identical; a summary
-# of the 40.6k first differed at character 485 of 601, one word for another.
-CHAT_KV_BITS = 8
-CHAT_CONTEXT_TOKENS = 432 * 256
+# The VLM (`models/exl3vl.py`): 16 full-attention layers of 4 KV heads at 256. Measured 2026-10-03: a plan repair
+# peaks near 11k tokens on a 60 s take of five clips, and its answer grows ~640 tokens a clip; the clip judge takes a
+# frame every half second (`judge.SAMPLED_EVERY`), and a chat grows by its tool rounds. At 8 bits a token is 34 KiB of
+# cache and 2.1 KiB of draft cache, and ExLlamaV3 stages the window as fp16 for a long prefill, 4 KiB a token more
+# (`Attention.autosplit_extra_measure`): 432 pages fill the 4.25 GiB a 64k fp16 cache and its draft did, loaded at
+# 17.8 GB against fp16's 18.2. Greedy and unthinking against fp16 (2026-10-26): two tool choices, two facts hidden at
+# 40.6k tokens and an 80-word picture description came out identical; a summary of the 40.6k first differed at
+# character 485 of 601, one word for another. Rulings measured before then were measured on fp16.
+VLM_KV_BITS = 8
+VLM_CONTEXT_TOKENS = 432 * 256
 # A tool round adds 1.8-2.3k tokens (a search with its sheet, a fetch, a picture or a five-frame clip with its run's
 # summary) and one message allows 8 of them: past 70% a chat is summarised before its next reply, the newest two
 # messages from the person and what followed them kept as said.
-CHAT_COMPACT_TOKENS = CHAT_CONTEXT_TOKENS * 7 // 10
+CHAT_COMPACT_TOKENS = VLM_CONTEXT_TOKENS * 7 // 10
 CHAT_KEPT_TURNS = 2
 # MTP proposals per step. Measured on the 3090 (tok/s, sampled at 0.7/0.8/20; a card call with one
 # photo, a survey with two, 2k tokens of prose): none 36 / 36 / 36, 2 drafts 71 / 75 / 67, 3 drafts

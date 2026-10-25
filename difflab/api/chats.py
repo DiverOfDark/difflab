@@ -48,7 +48,7 @@ def one(chat_id: int) -> dict[str, Any] | None:
         "compact_next": found.compact_next,
         "context": {
             "used": next((m.tokens for m in reversed(said) if m.tokens and m.id > found.summary_through), 0),
-            "total": config.CHAT_CONTEXT_TOKENS,
+            "total": config.VLM_CONTEXT_TOKENS,
             "compacts_at": config.CHAT_COMPACT_TOKENS,
         },
         "default_system": prompts.CHAT_SYSTEM_PROMPT,

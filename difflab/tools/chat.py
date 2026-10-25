@@ -60,7 +60,7 @@ def reply(
                 chats.write(connection, message_id, thinking=thought, text=exl3vl.before_calls(words, False))
 
     def asked(turns: list[Turn], summarising: bool = False) -> str:
-        return _vlm(settings, chatting=True).chat(
+        return _vlm(settings).chat(
             turns,
             kept=conversation is None and not summarising,
             system=system,

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from difflab import config
 from difflab.core import models
 from difflab.core.hub import Checkpoint
 from difflab.core.settings import VlmSettings
@@ -10,12 +9,11 @@ from difflab.core.types import Frame
 from difflab.models.exl3vl import Exl3VL
 
 
-def spec(checkpoint: str, chatting: bool = False) -> models.ModelSpec:
-    """`chatting` is the chat's load, on its own longer, quantized cache."""
+def spec(checkpoint: str) -> models.ModelSpec:
     pinned = Checkpoint.parse(checkpoint)
     return models.ModelSpec(
-        name=f"vlm:{pinned.repo}" + (":chat" if chatting else ""),
-        build=lambda: Exl3VL(pinned, config.CHAT_CONTEXT_TOKENS, config.CHAT_KV_BITS) if chatting else Exl3VL(pinned),
+        name=f"vlm:{pinned.repo}",
+        build=lambda: Exl3VL(pinned),
         # Dropped from the page cache on eviction, since H3 maps 25 + 18 GB of a 58 GB machine right
         # after. ~17 GB on the card, so it is heavy: evicted, not parked in host RAM, when anything
         # else heavy is acquired.
@@ -31,8 +29,8 @@ def evict() -> None:
             models.registry.evict(name)
 
 
-def _vlm(settings: VlmSettings, chatting: bool = False) -> Exl3VL:
-    model: Exl3VL = models.registry.acquire(spec(settings.checkpoint, chatting))
+def _vlm(settings: VlmSettings) -> Exl3VL:
+    model: Exl3VL = models.registry.acquire(spec(settings.checkpoint))
     return model
 
 
