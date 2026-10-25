@@ -127,7 +127,8 @@ class Previewer:
         self._pending: list[Future[None]] = []
 
     def __call__(self, index: int, video: torch.Tensor, audio: torch.Tensor) -> None:
-        if context.current().previews_broken:
+        # Steps 1, 2, 4, 8...: each preview held an LTX step ~3 s on a 3090 (8-step 1280x736 shot, 2026-10-25).
+        if context.current().previews_broken or (index + 1) & index:
             return
         try:
             frames = self.picture(video)
