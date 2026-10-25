@@ -8,6 +8,7 @@ import base64
 import json
 import mimetypes
 import re
+from collections import Counter
 from collections.abc import Callable, MutableMapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -22,6 +23,7 @@ PICTURES_MOST = 6
 FINISHED = ("made", "approved", "pinned")
 FLAGGED = ("needs_review", "failed")
 LIVE = ("queued", "running", "paused")
+NUMBER = re.compile(r"\d+(?:\.\d+)?")
 VIEWS = {
     "timeline": "/api/productions/{production_id}/timeline",
     "planning": "/api/productions/{production_id}/ingesting",
@@ -568,6 +570,8 @@ async def call(name: str, given: dict[str, Any], base_url: str) -> list[dict[str
         view = str(given["view"])
         if view not in VIEWS:
             raise DirectorError(f"view is one of {', '.join(VIEWS)}")
+        if view == "timeline":
+            return [await asyncio.to_thread(_timeline, int(given["production_id"]), given.get("chapter"))]
         query = (
             {"chapter": given["chapter"]}
             if given.get("chapter") is not None and view in ("timeline", "render_queue")
@@ -715,37 +719,46 @@ def digest(found: dict[str, Any]) -> dict[str, Any]:
         )
     review += [f"unmatched photo {photo}" for photo in found.get("unmatched") or []]
     chapters = []
+    # Checks differ shot to shot only in their numbers: a 78-shot plan's were 29k characters of 84k, grouped 2.5k.
+    checks: dict[tuple[str, str, str], list[tuple[int, str]]] = {}
     for chapter in found["chapters"]:
-        shots = []
+        shots: list[str] = []
+        scene = action = None
         for s in chapter["shots"]:
             for part in ("keyframe", "prompt", "clip"):
                 if s[part]["state"] in FLAGGED:
                     review.append(f"shot {s['id']}: {part} {s[part]['state']}")
-            if s["prompt"].get("checks"):
-                review.append(f"shot {s['id']}: prompt checks {json.dumps(s['prompt']['checks'], ensure_ascii=False)}")
+            for check in s["prompt"].get("checks") or []:
+                kind = (check["severity"], check["code"], NUMBER.sub("#", check["message"]))
+                checks.setdefault(kind, []).append((s["id"], check["message"]))
             looks = [c for c in s["castings"] if c.get("amended")]
             review += [
                 f"shot {s['id']}: look casting {c['id']} ({c['member']}) {c['state']}"
                 for c in looks
                 if c["state"] in FLAGGED
             ]
+            if s["scene"] and s["scene"] != scene:
+                shots.append(s["scene"])
+                scene = s["scene"]
+            seen = [c["member"] + (f" · {c['label']}" if c.get("amended") else "") for c in s["castings"]]
+            takes = s["clip"].get("takes") or {}
+            states = "/".join(s[part]["state"] for part in ("keyframe", "prompt", "clip"))
+            extra = [f"cast {', '.join(seen)}"] if seen else []
+            extra += [f"opens on {s['opening']}"] if s["opening"] != "keyframe" else []
+            extra += [] if s["chained"] else ["not chained"]
+            extra += [", ".join(f"{n} {k}" for k, n in takes.items() if n)] if any(takes.values()) else []
+            extra += [f"says {json.dumps(s['dialogue'], ensure_ascii=False)}"] if s["dialogue"] else []
+            said = "as above" if s["action"] == action else s["action"]
+            action = s["action"]
             shots.append(
-                {
-                    "id": s["id"],
-                    "seconds": round(s["seconds"], 1),
-                    "scene": s["scene"],
-                    "action": s["action"],
-                    **({"dialogue": s["dialogue"]} if s["dialogue"] else {}),
-                    "opening": s["opening"],
-                    "chained": s["chained"],
-                    "cast": [c["member"] + (f" · {c['label']}" if c.get("amended") else "") for c in s["castings"]],
-                    "keyframe": s["keyframe"]["state"],
-                    "prompt": s["prompt"]["state"],
-                    "clip": s["clip"]["state"],
-                    **({"takes": s["clip"]["takes"]} if s["clip"].get("takes") else {}),
-                }
+                f"{s['id']} · {s['seconds']:.1f} s · {states}" + "".join(f" · {one}" for one in extra) + f" · {said}"
             )
         chapters.append({"position": chapter["position"], "title": chapter["title"], "shots": shots})
+    for (severity, code, _), where in checks.items():
+        times = Counter(shot_id for shot_id, _ in where)
+        ids = ", ".join(f"{shot_id}" + (f" ({n} times)" if n > 1 else "") for shot_id, n in times.items())
+        said = where[0][1] if len(times) == 1 else f"as on shot {where[0][0]}: {where[0][1]}"
+        review.append(f"shot{'s' if len(times) > 1 else ''} {ids}: prompt {severity} {code}, {said}")
     return {
         "id": found["id"],
         "title": found["title"],
@@ -754,12 +767,51 @@ def digest(found: dict[str, Any]) -> dict[str, Any]:
         "resume": listed.get("resume"),
         **{k: listed[k] for k in counted if k in listed},
         "cast": cast,
+        "shot_line": "id · seconds · keyframe/prompt/clip · cast, opening, takes, dialogue when there are any · action",
         "chapters": chapters,
         "review": review,
         # The ingest route's answer puts the ids it queued where the production's runs go.
         "live_runs": [r for r in found["runs"] if isinstance(r, dict) and r["state"] in LIVE],
         **({"missing_references": found["missing_references"]} if found.get("missing_references") else {}),
     }
+
+
+def _timeline(production_id: int, chapter: int | None) -> dict[str, Any]:
+    """A line a shot and a line a member: the page's timeline, a chapter of 48 shots, was 19.5k characters."""
+    found = production.timeline(production_id, None if chapter is None else int(chapter))
+    if found is None:
+        raise DirectorError("no such production")
+    shots = found["shots"]
+    lines = ["shot id · position · seconds · keyframe/prompt/clip · action"]
+    scene = action = None
+    for i, s in enumerate(shots):
+        if i == 0 or s["chapter"] != shots[i - 1]["chapter"]:
+            lines.append(f"chapter {s['chapter']}")
+            scene = None
+        if s["scene"] and s["scene"] != scene:
+            lines.append(f"  {s['scene']}")
+            scene = s["scene"]
+        extra = [f"opens on {s['opening']}"] if s["opening"] != "keyframe" else []
+        extra += [f"{s['waiting']} looks waiting"] if s["waiting"] else []
+        said = "as above" if s["action"] == action else s["action"]
+        action = s["action"]
+        lines.append(
+            f"  {s['id']} · #{s['position']} · {s['seconds']:.1f} s · {'/'.join(s['pipe'])}"
+            + "".join(f" · {one}" for one in extra)
+            + f" · {said}"
+        )
+    for track in found["tracks"]:
+        runs, worn = [], None
+        for run in track["runs"]:
+            if run["gap"]:
+                continue
+            span = f"{shots[run['a']]['id']}" + (f"-{shots[run['b']]['id']}" if run["b"] > run["a"] else "")
+            label = run["label"] + (" (back)" if run["revert"] else "") + (" (amended)" if run["mark"] else "")
+            said = span if label == worn else f"{label} {span}"
+            worn = label
+            runs.append(said + (f" [{run['image']}]" if run["image"] != "done" else ""))
+        lines.append(f"{track['member']} ({track['kind']}): {', '.join(runs)}")
+    return {"type": "text", "text": "\n".join(lines)}
 
 
 def _shot(shot_id: int, base_url: str) -> list[dict[str, Any]]:
