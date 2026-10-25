@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from typing import Any
 
 import av
 from PIL import Image
@@ -22,7 +23,13 @@ VIDEO = {".mp4", ".mov", ".mkv", ".webm"}
 WRITE_EVERY = 0.25  # seconds between writes of the reply so far; the page polls at about this rate
 
 
-def reply(message_id: int, settings: ChatSettings) -> dict[str, str]:
+def reply(
+    message_id: int,
+    settings: ChatSettings,
+    as_json: bool = False,
+    schema: dict[str, Any] | None = None,
+    effort: str | None = config.VLM_REASONING_EFFORT,
+) -> dict[str, str]:
     with store.connect() as connection:
         answer = chats.message(connection, message_id)
         if answer is None:
@@ -53,6 +60,9 @@ def reply(message_id: int, settings: ChatSettings) -> dict[str, str]:
             echo=False,
             numbered=True,
             heard=heard,
+            as_json=as_json,
+            schema=schema,
+            effort=effort,
             **settings.generation(),
         )
     except BaseException as problem:

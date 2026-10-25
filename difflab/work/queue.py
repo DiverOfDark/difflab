@@ -200,10 +200,18 @@ def _bound(value: Any, ids: list[int]) -> Any:
     return value
 
 
-def enqueue_chat(connection: sqlite3.Connection, message_id: int, title: str) -> str:
+def enqueue_chat(
+    connection: sqlite3.Connection,
+    message_id: int,
+    title: str,
+    overrides: dict[str, Any] | None = None,
+    asked: dict[str, Any] | None = None,
+) -> str:
     """One run for one reply, so it waits its turn on the card like everything else. Inside the caller's
-    transaction: a reply seen without its run is one whose run is gone."""
+    transaction: a reply seen without its run is one whose run is gone. `asked` is how the answer is
+    shaped (`as_json`, `schema`, `effort`), beside the message."""
     run_id = store.next_run_id(connection, datetime.now().strftime("%Y-%m-%d-%H%M%S"))
     store.add_run(connection, run_id, title=f"chat · {title}", scope="chat")
-    store.add_job(connection, run_id, "chat", {"message": message_id}, label="reply", settings=settings.for_job("chat"))
+    chosen = {**settings.for_job("chat"), **(overrides or {})}
+    store.add_job(connection, run_id, "chat", {"message": message_id, **(asked or {})}, label="reply", settings=chosen)
     return run_id

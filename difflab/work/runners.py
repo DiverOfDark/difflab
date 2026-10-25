@@ -112,7 +112,8 @@ def run_write_image_prompt(inputs: dict[str, Any], settings: dict[str, Any]) -> 
 
 
 def run_chat(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
-    return chat.reply(int(inputs["message"]), ChatSettings(**settings))
+    shaped = {name: inputs[name] for name in ("as_json", "schema", "effort") if name in inputs}
+    return chat.reply(int(inputs["message"]), ChatSettings(**settings), **shaped)
 
 
 def run_create_image(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:

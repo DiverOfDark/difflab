@@ -13,17 +13,19 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import hmac
+import json
 import sqlite3
-from collections.abc import Awaitable, Callable
+import uuid
+from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from difflab import config
-from difflab.api import assets, chats, gallery, runs
+from difflab.api import assets, chats, gallery, openai, runs
 from difflab.core import hub, profiling
 from difflab.core.settings import Continuity, IngestSettings
 from difflab.models.minimax_h3.settings import VideoSettings
@@ -41,6 +43,7 @@ from difflab.screenplay import (
     rendering,
     settings,
 )
+from difflab.store.chats import PENDING
 from difflab.work import cleanup, queue, watchdog
 from difflab.work.quick import Job
 
@@ -768,7 +771,7 @@ async def list_downloads() -> list[dict[str, Any]]:
 
 @app.delete("/api/downloads")
 async def delete_download(request: Request) -> list[dict[str, Any]]:
-    """`{"id": ..., "files": [...]}`: the entry, or only those files of a Hub snapshot. Refused for a file in
+    """`{"id": ..., "files": [...]}`: the entry, or only those files of a Hub snapshot. RequestError for a file in
     use while a job runs, since that job may be about to load it."""
     body = await request.json()
     entry, names = str(body.get("id", "")), [str(n) for n in body.get("files") or []]
@@ -873,6 +876,57 @@ def _chatting(act: Callable[[], dict[str, Any]]) -> dict[str, Any]:
         raise HTTPException(404, str(problem)) from problem
     except ValueError as problem:
         raise HTTPException(400, str(problem)) from problem
+
+
+# --- OpenAI-compatible --------------------------------------------------------------------------
+@app.get("/v1/models")
+def openai_models() -> dict[str, Any]:
+    return openai.models()
+
+
+@app.post("/v1/chat/completions")
+async def openai_chat(request: Request) -> Any:
+    """Chat completions on the VLM, streamed or not; the API key is the server's token, when it has one."""
+    body = dict(await request.json())
+    try:
+        chat_id, answer_id = await asyncio.to_thread(openai.ask, body)
+    except openai.RequestError as problem:
+        return _openai_error(400, str(problem))
+    made = f"chatcmpl-{uuid.uuid4().hex}"
+    replies = openai.follow(chat_id, answer_id, request.is_disconnected)
+    if body.get("stream"):
+
+        async def streamed() -> AsyncIterator[str]:
+            yield openai.chunk(made, {"role": "assistant", "content": ""})
+            async for thought, words, found in replies:
+                if thought:
+                    yield openai.chunk(made, {"reasoning_content": thought})
+                if words:
+                    yield openai.chunk(made, {"content": words})
+                if found.state not in PENDING:
+                    failed = openai.failure(found)
+                    if failed:
+                        yield f"data: {json.dumps({'error': {'message': failed, 'type': 'server_error'}})}\n\n"
+                    else:
+                        yield openai.chunk(made, {}, "stop")
+            yield "data: [DONE]\n\n"
+
+        return StreamingResponse(streamed(), media_type="text/event-stream")
+    thought = words = ""
+    found = None
+    async for more_thought, more_words, row in replies:
+        thought, words, found = thought + more_thought, words + more_words, row
+    if found is None or found.state in PENDING:
+        return _openai_error(499, "the client went away")
+    failed = openai.failure(found)
+    if failed:
+        return _openai_error(500, failed)
+    return openai.completion(made, thought, words)
+
+
+def _openai_error(status: int, message: str) -> JSONResponse:
+    kind = "invalid_request_error" if status == 400 else "server_error"
+    return JSONResponse({"error": {"message": message, "type": kind}}, status_code=status)
 
 
 # --- uploads -----------------------------------------------------------------------------------
