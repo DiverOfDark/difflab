@@ -28,3 +28,12 @@ LoRA the user happens to run, and never name or describe a production, project, 
 or its content. Say what kind of thing triggered the change instead: "a checkpoint with bf16 blocks among
 int8 ones", "a 15 s shot at 21,160 rows", "a chained shot". Measured numbers stay; whose work produced them
 does not. Default models the code ships with may be named.
+
+## The help guide
+
+`difflab/api/help.md` is what the MCP `help` tool answers from. Any change that adds, removes or alters
+something a user can do updates it in the same commit: a new or renamed button, tab, field, tool or
+workflow, or a changed default, limit or engine. Each section is a task as a user would ask it, then
+its steps in the page using the labels as they appear, then the MCP tools that do the same. Add a
+section for a new task, and delete steps that no longer exist. Check a changed heading still answers
+the questions it should: `help` matches a topic against headings first, then summaries, then bodies.
