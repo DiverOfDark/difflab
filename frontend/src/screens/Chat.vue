@@ -307,6 +307,18 @@ function rendering(message: ChatMessage): string {
   return state.gpu?.run === message.run ? `${state.gpu?.state ?? 'running'} · ${state.gpu?.title ?? ''}` : 'waiting for the card'
 }
 
+// Bound to drafts: a re-render (the list reloads every LIST_MS) writes a bound :value back over what is being typed.
+const titleDraft = ref('')
+const systemDraft = ref('')
+watch(
+  () => [chat.value?.id, chat.value?.title, chat.value?.system, chat.value?.default_system],
+  () => {
+    titleDraft.value = chat.value?.title ?? ''
+    systemDraft.value = chat.value ? chat.value.system || chat.value.default_system : ''
+  },
+  { immediate: true },
+)
+
 async function rename(event: Event) {
   if (!chat.value) return
   const title = (event.target as HTMLInputElement).value.trim()
@@ -361,7 +373,7 @@ function waiting(message: ChatMessage): string {
 
     <section v-if="chat" class="main" :class="{ dragging }" @dragover.prevent="dragging = true" @dragleave.self="dragging = false" @drop.prevent="dropped">
       <header class="head">
-        <input class="title" :value="chat.title" placeholder="untitled" @change="rename" @keydown.enter="($event.target as HTMLInputElement).blur()" />
+        <input v-model="titleDraft" class="title" placeholder="untitled" @change="rename" @keydown.enter="($event.target as HTMLInputElement).blur()" />
         <div class="fill mono muted" title="the newest reply's prompt against what the model holds; past the mark it summarises the chat first">
           <span>context {{ thousands(chat.context.used) }} / {{ thousands(chat.context.total) }}</span>
           <span class="meter"><i :style="{ width: `${Math.min(100, (100 * chat.context.used) / chat.context.total)}%` }" /><b :style="{ left: `${(100 * chat.context.compacts_at) / chat.context.total}%` }" /></span>
@@ -370,7 +382,7 @@ function waiting(message: ChatMessage): string {
         </div>
         <details class="system">
           <summary class="label">system prompt{{ chat.system ? ' · own' : '' }}</summary>
-          <textarea rows="5" :value="chat.system || chat.default_system" @change="setSystem" />
+          <textarea v-model="systemDraft" rows="5" @change="setSystem" />
           <p class="muted hint">Applies from the next reply. Clear it, or put the default back, to follow the default.</p>
         </details>
       </header>
