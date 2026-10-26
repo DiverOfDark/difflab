@@ -32,6 +32,8 @@ const POLL_MS = 300
 const LIST_MS = 5000
 const VIDEO = /\.(mp4|mov|mkv|webm)$/i
 const SOUND = /\.(wav|mp3|m4a|flac|ogg)$/i
+// A render a reply names by its path under output/, absolute or not: a tool's JSON is all that carried it.
+const NAMED = /(?<![\w/.-])(?:\/\S*?\/output\/)?((?:[\w.-]+\/)+[\w.-]+\.(?:mp4|mov|mkv|webm|png|jpe?g|webp))(?![\w/])/gi
 
 const props = defineProps<{ id?: number }>()
 const router = useRouter()
@@ -101,9 +103,15 @@ async function poll() {
   else if (chat.value?.id === id) timer = setTimeout(poll, POLL_MS * 3)
 }
 
+function shown(message: ChatMessage): string[] {
+  if (message.role !== 'assistant') return message.media
+  const named = [...message.text.matchAll(NAMED)].map((found) => found[1])
+  return [...new Set([...message.media, ...named])]
+}
+
 /** Every picture in the chat in order, so the viewer steps through them all. */
 const pictures = computed(() =>
-  (chat.value?.messages ?? []).flatMap((m) => m.media.filter((path) => !VIDEO.test(path) && !SOUND.test(path))),
+  (chat.value?.messages ?? []).flatMap((m) => shown(m).filter((path) => !VIDEO.test(path) && !SOUND.test(path))),
 )
 // Above the watch: it runs at once, and clears `viewing` before the first chat loads.
 const viewing = ref<number | null>(null)
@@ -407,8 +415,8 @@ function waiting(message: ChatMessage): string {
               <button :disabled="busy" @click="allow(message, false)">Decline</button>
             </div>
           </div>
-          <div v-if="message.media.length" class="media">
-            <template v-for="path in message.media" :key="path">
+          <div v-if="shown(message).length" class="media">
+            <template v-for="path in shown(message)" :key="path">
               <video v-if="VIDEO.test(path)" :src="fileUrl(path)" controls preload="metadata" />
               <audio v-else-if="SOUND.test(path)" :src="fileUrl(path)" controls />
               <img v-else :src="thumbUrl(path)" :alt="nameOf(path)" loading="lazy" @click="view(path)" />
