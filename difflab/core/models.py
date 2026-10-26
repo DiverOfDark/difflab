@@ -110,7 +110,7 @@ class Registry:
 
     def _park(self, spec: ModelSpec, model: Any, incoming: int) -> bool:
         modules = offload.modules_of(model)
-        if not modules or not hostcache.room(offload.on_card(modules) + incoming):
+        if not modules or not hostcache.calm() or not hostcache.room(offload.on_card(modules) + incoming):
             return False
         key = spec.key()
         try:

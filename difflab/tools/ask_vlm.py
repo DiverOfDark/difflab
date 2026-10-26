@@ -14,8 +14,10 @@ def spec(checkpoint: str) -> models.ModelSpec:
     return models.ModelSpec(
         name=f"vlm:{pinned.repo}",
         build=lambda: Exl3VL(pinned),
-        # ~17 GB on the card, so it is heavy: evicted when anything else heavy is acquired. ExLlamaV3's
-        # kernels hold pointers into its tensors, so it is not parked; its files are kept in RAM instead.
+        # ~17 GB on the card, so it is heavy: evicted when anything else heavy is acquired. Not parked:
+        # ExLlamaV3's kernels hold pointers into its tensors. Nor its files kept in tmpfs: loaded from
+        # there it took 6.0 s against 5.3-11.1 s off the NVMe, its own setup being most of a load, and
+        # writing the 15.3 GB set the machine swapping (2026-10-26).
         checkpoints=(pinned.path,),  # a folder: every .safetensors in it
         unload=lambda vlm: vlm.unload(),
         parks=False,

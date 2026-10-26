@@ -1,17 +1,14 @@
 """Host RAM that keeps evicted models while it is free, and gives it back the moment anything else wants it.
 
-Measured 2026-10-26 on the WD SN770: cold reads 3.4-4.0 GB/s (the VLM's 16.5 GB folder in 8.5 s), a warm
-btrfs page cache only 6.4 GB/s and an mmap copy out of it 0.3-3.7 GB/s, so the page cache is not worth
-keeping; the copies here are the process's own, parked CPU tensors and unnamed tmpfs files. Both can be swapped
-to zram, which gives them back slower than the NVMe would, so the watcher frees them at the first page
-swapped out or the first sign of pressure instead of letting the kernel choose.
+Measured 2026-10-26 on the WD SN770: cold reads 3.4-4.0 GB/s, a warm btrfs page cache only 6.4 GB/s and an
+mmap copy out of it 0.3-3.7 GB/s, so the page cache is not worth keeping; the copies here are parked CPU
+tensors. They can be swapped to zram, which gives them back slower than the NVMe would, so the watcher frees
+them once the machine swaps or feels pressure instead of letting the kernel choose.
 """
 
 from __future__ import annotations
 
 import os
-import shutil
-import tempfile
 import threading
 import time
 from collections import OrderedDict
@@ -20,7 +17,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from difflab import config
-from difflab.core import ui
 
 
 @dataclass
@@ -30,7 +26,7 @@ class _Entry:
 
 
 _entries: OrderedDict[str, _Entry] = OrderedDict()  # least recently used first
-_shadows: dict[str, Path] = {}
+_calm_until = 0.0
 _lock = threading.RLock()
 _watcher: threading.Thread | None = None
 
@@ -49,6 +45,12 @@ def rss() -> int:
 def held() -> int:
     with _lock:
         return sum(entry.size for entry in _entries.values())
+
+
+def calm() -> bool:
+    """Whether a new copy may be kept: not for a while after one was freed under pressure, since keeping 16 GB
+    of a 58 GB machine set it swapping and the copy was made and freed again within a minute."""
+    return time.time() >= _calm_until
 
 
 def room(needed: int, keep: str | None = None) -> bool:
@@ -94,53 +96,6 @@ def release_all(reason: str) -> list[str]:
         return keys
 
 
-def shadow(key: str, folder: Path) -> Path:
-    """`folder` with its safetensors in RAM, for a loader that reads files itself; `folder` when there
-    is no room. Small files stay links to the originals."""
-    with _lock:
-        if touch(key):
-            return _shadows[key]
-    files = sorted(folder.glob("*.safetensors"))
-    size = sum(file.stat().st_size for file in files)
-    if not room(size):
-        return folder
-    started = time.perf_counter()
-    links = Path(tempfile.mkdtemp(prefix="difflab-shadow-"))
-    handles: list[int] = []
-    try:
-        for entry in folder.iterdir():
-            if entry.suffix != ".safetensors":
-                (links / entry.name).symlink_to(entry.resolve())
-                continue
-            # Unnamed tmpfs, so a crash leaves nothing behind; this Python has no `os.memfd_create`.
-            handle = os.open("/dev/shm", os.O_TMPFILE | os.O_RDWR, 0o600)
-            handles.append(handle)
-            with entry.open("rb") as source:
-                total = entry.stat().st_size
-                sent = 0
-                while sent < total:
-                    sent += os.sendfile(handle, source.fileno(), sent, total - sent)
-            (links / entry.name).symlink_to(f"/proc/{os.getpid()}/fd/{handle}")
-    except OSError as problem:
-        for handle in handles:
-            os.close(handle)
-        shutil.rmtree(links, ignore_errors=True)
-        ui.note(f"no RAM copy of {folder.name} ({problem})")
-        return folder
-
-    def release() -> None:
-        _shadows.pop(key, None)
-        for handle in handles:
-            os.close(handle)
-        shutil.rmtree(links, ignore_errors=True)
-
-    with _lock:
-        hold(key, size, release)
-        _shadows[key] = links
-    ui.note(f"copied {size / 1024**3:.1f} GB of {key} into RAM in {time.perf_counter() - started:.1f} s")
-    return links
-
-
 def _release(key: str, reason: str) -> None:
     entry = _entries.pop(key)
     try:
@@ -165,6 +120,7 @@ def _swapped() -> int:
 
 
 def _watch() -> None:
+    global _calm_until
     swapped = _swapped()
     while True:
         time.sleep(config.HOST_WATCH_SECONDS)
@@ -183,4 +139,5 @@ def _watch() -> None:
             continue
         with _lock:
             if _entries:
+                _calm_until = time.time() + config.HOST_CALM_SECONDS
                 _release(next(iter(_entries)), reason)

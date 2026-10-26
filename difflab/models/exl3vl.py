@@ -19,7 +19,7 @@ from PIL import Image
 from transformers import AutoTokenizer
 
 from difflab import config
-from difflab.core import hostcache, ui
+from difflab.core import ui
 from difflab.core.hub import Checkpoint
 from difflab.models import kvdisk
 
@@ -61,13 +61,12 @@ class Exl3VL:
     def load(self) -> dict[str, Any]:
         if self._parts is None:
             with ui.loading(f"Loading VLM ({self.checkpoint.repo.rsplit('/', 1)[-1]})") as detail:
-                folder = self.checkpoint.fetch()
-                self._parts = self._load(folder, hostcache.shadow(f"files:{self.checkpoint.repo}", folder), detail)
+                self._parts = self._load(self.checkpoint.fetch(), detail)
         return self._parts
 
-    def _load(self, path: Path, source: Path, detail: Callable[[str], None]) -> dict[str, Any]:
-        detail(f"from {ui.link(path)}" + (", RAM copy" if source != path else ""))
-        exl_config = Config.from_directory(str(source))
+    def _load(self, path: Path, detail: Callable[[str], None]) -> dict[str, Any]:
+        detail(f"from {ui.link(path)}")
+        exl_config = Config.from_directory(str(path))
         vision = Model.from_config(exl_config, component="vision")
         vision.load()
         model = Model.from_config(exl_config)

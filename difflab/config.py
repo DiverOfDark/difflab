@@ -113,7 +113,8 @@ IDLE_RELEASE_MINUTES = float(os.environ.get("DIFFLAB_IDLE_RELEASE_MINUTES", "10"
 # avg10 read 0.00-0.01, so either limit is crossed only by real pressure.
 HOST_RESERVE_BYTES = int(float(os.environ.get("DIFFLAB_HOST_RESERVE_GB", "8")) * 1024**3)
 HOST_WATCH_SECONDS = 1.0
-HOST_SWAP_PAGES = 256  # swapped out within one watch, 1 MB
+HOST_SWAP_PAGES = 4096  # swapped out within one watch, 16 MB
+HOST_CALM_SECONDS = 600.0
 HOST_PRESSURE = 2.0  # memory PSI some avg10, percent
 BLOB_KEEP_DAYS = 7
 BLOB_KEEP_GB = float(os.environ.get("DIFFLAB_BLOB_KEEP_GB", "15"))
