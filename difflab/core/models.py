@@ -89,6 +89,12 @@ class Registry:
         torch.cuda.empty_cache()
         _drop_page_cache(spec.checkpoints)
 
+    def release(self) -> list[str]:
+        released = list(self._order)
+        for key in released:
+            self.evict(key)
+        return released
+
     def resident(self) -> list[str]:
         return list(self._order)
 

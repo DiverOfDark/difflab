@@ -172,6 +172,12 @@ class Previewer:
             _give_up(f"preview write failed ({type(error).__name__}: {error})")
 
 
+def forget() -> None:
+    global _audio_vae, _ltx_audio
+    with _audio_lock:
+        _audio_vae = _ltx_audio = None
+
+
 def _decode_audio(latents: torch.Tensor, checkpoint: str) -> torch.Tensor | None:
     """The estimate's soundtrack, on the CPU: 15 s decodes in about 17 s there, beside a 2-minute step."""
     global _audio_vae

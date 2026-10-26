@@ -241,6 +241,8 @@ Chat with the VLM (talk to the model), or reach difflab from another program.
 
 - **Chat** tab: a conversation with the VLM, pictures included, that acts through difflab's tools; its reply waits
   its turn on the card.
+- After 10 minutes with no job, every model leaves the card and memory (`DIFFLAB_IDLE_RELEASE_MINUTES`), so the
+  first reply or job after a pause loads its model again, about 8 s for the VLM.
 - **OpenAI-compatible API** at `/v1/chat/completions` and `/v1/models`: streaming, tool calls and reasoning
   content. The API key is the server's token, when it has one.
 - **MCP** at `/mcp`: these tools. Same token, as a bearer header.

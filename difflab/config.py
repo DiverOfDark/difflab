@@ -105,6 +105,9 @@ RUNS_KEEP = 10  # newest run directories kept whatever their age; final images a
 # tails at ~37 MB a shot, and 28 G on 2026-10-23, all of it under a week old; a cache hit, or a job naming
 # a blob, refreshes its mtime, so the age is since last use and the budget evicts least recently used.
 CLEANUP_EVERY_HOURS = 6
+# With no job for this long every model leaves the card and host RAM; the next job pays a cold load
+# (the VLM's 16.5 GB averaged 8.0 s, read off NVMe at 1.9 GB/s).
+IDLE_RELEASE_MINUTES = float(os.environ.get("DIFFLAB_IDLE_RELEASE_MINUTES", "10"))
 BLOB_KEEP_DAYS = 7
 BLOB_KEEP_GB = float(os.environ.get("DIFFLAB_BLOB_KEEP_GB", "15"))
 BLOB_KEEP_TOOLS = ("given", "director", "ruling")  # uploads, and VLM answers: small and slow to ask again

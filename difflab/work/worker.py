@@ -43,6 +43,8 @@ class Worker(threading.Thread):
         self.stopping = threading.Event()
         self.ctx: context.Context | None = None  # the job in flight, for the sampler and the commands
         self.swept = 0.0
+        self.worked = time.time()
+        self.released = False
 
     def run(self) -> None:
         _settle_orphans()
@@ -60,7 +62,12 @@ class Worker(threading.Thread):
                 cleanup.clear_asked()
             except (OSError, sqlite3.Error) as problem:
                 print(f"difflab: clearing stopped ({problem})", flush=True)
-            if not self.step():
+            if self.step():
+                self.worked, self.released = time.time(), False
+            else:
+                if not self.released and time.time() - self.worked > config.IDLE_RELEASE_MINUTES * 60:
+                    self.released = True
+                    _release_idle()
                 if time.time() - self.swept > config.CLEANUP_EVERY_HOURS * 3600:
                     self.swept = time.time()
                     try:
@@ -192,6 +199,36 @@ class Worker(threading.Thread):
                         elif isinstance(command, protocol.Resume):
                             _set_run_state(ctx.run_id, store.RUNNING)
             time.sleep(STATS_EVERY)
+
+
+def _release_idle() -> None:
+    import contextlib
+    import ctypes
+    import gc
+
+    import torch
+
+    from difflab.core import models
+    from difflab.models import offload
+    from difflab.tools import previews
+
+    before = _resources()
+    released = models.registry.release()
+    offload.unstage()
+    previews.forget()
+    gc.collect()
+    if torch.cuda.is_initialized():  # type: ignore[no-untyped-call]
+        torch.cuda.empty_cache()
+    with contextlib.suppress(OSError, AttributeError):
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    after = _resources()
+    freed = ", ".join(
+        f"{name} {before[key]:.1f} -> {after[key]:.1f} GB"
+        for name, key in (("VRAM", "vram_used"), ("RSS", "rss"))
+        if key in before and key in after
+    )
+    if released:
+        print(f"difflab: idle, released {', '.join(released)} ({freed})", flush=True)
 
 
 def _advance_chats() -> None:

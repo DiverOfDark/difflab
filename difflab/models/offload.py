@@ -220,6 +220,17 @@ def release() -> int:
     return len(resident)
 
 
+def unstage() -> None:
+    """Unpin the staging buffers, two blocks per device, for an idle process."""
+    for pair in _slots.values():
+        for slot in pair:
+            if slot.uploaded is not None:
+                slot.uploaded.synchronize()
+            if slot.buffer is not None:
+                _unpin(slot.buffer)
+    _slots.clear()
+
+
 def _copier(device: torch.device) -> torch.cuda.Stream:
     if device not in _copiers:
         _copiers[device] = torch.cuda.Stream(device)  # type: ignore[no-untyped-call]
