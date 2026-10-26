@@ -3,7 +3,7 @@
  *  card, so it waits behind others; the page polls while anything is in flight. */
 import DOMPurify from 'dompurify'
 import { marked } from 'marked'
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   chatAgain,
@@ -29,6 +29,7 @@ import {
 import { state } from '../store'
 
 const POLL_MS = 300
+const LIST_MS = 5000
 const VIDEO = /\.(mp4|mov|mkv|webm)$/i
 const SOUND = /\.(wav|mp3|m4a|flac|ogg)$/i
 
@@ -84,11 +85,12 @@ async function loadList() {
 function show(found: Chat) {
   const near = !thread.value || thread.value.scrollHeight - thread.value.scrollTop - thread.value.clientHeight < 120
   const grew = (found.messages.length !== chat.value?.messages.length || found.messages.at(-1)?.text !== chat.value?.messages.at(-1)?.text)
+  const added = found.id !== chat.value?.id || found.messages.length !== chat.value?.messages.length
   chat.value = found
   if (near && grew) nextTick(() => thread.value?.scrollTo({ top: thread.value.scrollHeight }))
   clearTimeout(timer)
   if (pending.value) timer = setTimeout(poll, POLL_MS)
-  else loadList()
+  if (added || !pending.value) loadList()
 }
 
 async function poll() {
@@ -99,11 +101,20 @@ async function poll() {
   else if (chat.value?.id === id) timer = setTimeout(poll, POLL_MS * 3)
 }
 
+/** Every picture in the chat in order, so the viewer steps through them all. */
+const pictures = computed(() =>
+  (chat.value?.messages ?? []).flatMap((m) => m.media.filter((path) => !VIDEO.test(path) && !SOUND.test(path))),
+)
+// Above the watch: it runs at once, and clears `viewing` before the first chat loads.
+const viewing = ref<number | null>(null)
+const onScreen = computed(() => (viewing.value === null ? null : (pictures.value[viewing.value] ?? null)))
+
 watch(
   () => props.id,
   async (id) => {
     clearTimeout(timer)
     failure.value = ''
+    viewing.value = null
     await loadList()
     if (id === undefined) {
       chat.value = null
@@ -121,7 +132,35 @@ watch(
   { immediate: true },
 )
 
-onBeforeUnmount(() => clearTimeout(timer))
+function view(path: string) {
+  viewing.value = pictures.value.indexOf(path)
+}
+
+function step(by: number) {
+  if (viewing.value === null || !pictures.value.length) return
+  viewing.value = (viewing.value + by + pictures.value.length) % pictures.value.length
+}
+
+function key(event: KeyboardEvent) {
+  if (onScreen.value === null) return
+  if (event.key === 'Escape') viewing.value = null
+  else if (event.key === 'ArrowRight') step(1)
+  else if (event.key === 'ArrowLeft') step(-1)
+  else return
+  event.preventDefault()
+}
+
+// Replies in chats other than the open one move them up too.
+let listing: ReturnType<typeof setInterval>
+onMounted(() => {
+  window.addEventListener('keydown', key)
+  listing = setInterval(loadList, LIST_MS)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', key)
+  clearTimeout(timer)
+  clearInterval(listing)
+})
 
 async function fresh() {
   const made = await act(startChat)
@@ -360,7 +399,7 @@ function waiting(message: ChatMessage): string {
             <template v-for="path in message.media" :key="path">
               <video v-if="VIDEO.test(path)" :src="fileUrl(path)" controls preload="metadata" />
               <audio v-else-if="SOUND.test(path)" :src="fileUrl(path)" controls />
-              <a v-else :href="fileUrl(path)" target="_blank"><img :src="thumbUrl(path)" :alt="nameOf(path)" loading="lazy" /></a>
+              <img v-else :src="thumbUrl(path)" :alt="nameOf(path)" loading="lazy" @click="view(path)" />
             </template>
           </div>
           <details v-if="message.thinking" class="thinking" :open="message.state === 'writing' && !message.text">
@@ -413,6 +452,20 @@ function waiting(message: ChatMessage): string {
       <p v-if="failure" class="band error">{{ failure }}</p>
       <p class="muted empty">Start a chat with the button on the left.</p>
     </section>
+
+    <div v-if="onScreen" class="viewer" @click.self="viewing = null">
+      <header>
+        <div class="about">
+          <span class="title">{{ nameOf(onScreen) }}</span>
+          <span class="mono dim">{{ (viewing ?? 0) + 1 }} / {{ pictures.length }}</span>
+        </div>
+        <a class="button" :href="fileUrl(onScreen)" :download="nameOf(onScreen)">download</a>
+        <button class="quiet" title="close (Esc)" @click="viewing = null">✕</button>
+      </header>
+      <button class="side prev" title="previous (←)" @click="step(-1)">‹</button>
+      <img :key="onScreen" class="full" :src="fileUrl(onScreen)" alt="" @click="viewing = null" />
+      <button class="side next" title="next (→)" @click="step(1)">›</button>
+    </div>
   </main>
 </template>
 
@@ -791,6 +844,94 @@ function waiting(message: ChatMessage): string {
   max-width: 320px;
   border-radius: var(--radius-card);
   display: block;
+}
+
+.media img {
+  cursor: zoom-in;
+}
+
+.viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  background: oklch(0% 0 0 / 0.94);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-columns: 64px minmax(0, 1fr) 64px;
+}
+
+.viewer header {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+}
+
+.viewer .about {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  margin-right: auto;
+}
+
+.viewer .title {
+  color: var(--text-primary);
+  font-family: var(--font-heading);
+  font-weight: var(--weight-semibold);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.viewer .about .mono {
+  font-size: 11px;
+}
+
+.viewer header .button {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-btn);
+  font-weight: var(--weight-medium);
+  text-decoration: none;
+  padding: 3px 10px;
+}
+
+.viewer header .button:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.viewer .full {
+  grid-row: 2;
+  grid-column: 2;
+  justify-self: center;
+  align-self: center;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  min-height: 0;
+  padding-bottom: var(--space-2);
+  box-sizing: border-box;
+  cursor: zoom-out;
+}
+
+.viewer .side {
+  grid-row: 2;
+  align-self: center;
+  justify-self: center;
+  border: none;
+  font-size: 40px;
+  line-height: 1;
+  color: var(--muted);
+  padding: var(--space-2) var(--space-1);
+}
+
+.viewer .prev {
+  grid-column: 1;
+}
+
+.viewer .next {
+  grid-column: 3;
 }
 
 .status {

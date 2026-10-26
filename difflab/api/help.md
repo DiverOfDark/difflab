@@ -220,7 +220,8 @@ In the page:
    photo of … on the web". Attach photos with **＋**, by pasting, or by dropping them; a picture dragged from
    another browser tab is fetched by its address.
 3. Each tool call is a card under the reply: the tool and its arguments, **result** to open what it returned, and
-   the picture or clip it made. A render in it says **waiting for the card** until it runs.
+   the picture or clip it made. A render in it says **waiting for the card** until it runs. Click a picture to
+   see it full screen: ← and → step through every picture in the chat, **download** saves it, Esc closes.
 4. Rendering a production's chapters, rerolling a shot, finishing, cancelling a run and deleting wait for you:
    **Allow** or **Decline**. Sending a new message instead declines it.
 5. **Stop** cancels the reply and any render the chat queued; a run the chat was only following goes on.
