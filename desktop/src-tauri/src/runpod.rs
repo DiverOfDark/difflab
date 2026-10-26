@@ -16,21 +16,29 @@ pub const VOLUME_NAME: &str = "difflab";
 // Left out: L4 (slow), PRO 6000 MIG slices (a share of the compute at a whole card's price), and what is only on
 // Community Cloud: RunPod placed a COMMUNITY deploy with the global volume on a host that cannot mount one ("Global
 // store: not available on this machine", retried every 16 s after a 22-minute image pull, 2026-10-26).
-pub const GPUS: [&str; 13] = [
-    "NVIDIA RTX A5000",
-    "NVIDIA GeForce RTX 3090",
-    "NVIDIA RTX PRO 4000 Blackwell",
-    "NVIDIA GeForce RTX 4090",
-    "NVIDIA RTX PRO 4500 Blackwell",
-    "NVIDIA RTX PRO 4500 Blackwell Server Edition",
-    "NVIDIA GeForce RTX 5090",
-    "NVIDIA RTX A6000",
-    "NVIDIA A40",
-    "NVIDIA L40",
-    "NVIDIA L40S",
-    "NVIDIA RTX 6000 Ada Generation",
-    "NVIDIA RTX PRO 5000 Blackwell",
+// Each with its dense int8 tensor TOPS from NVIDIA's spec sheets (sparse figures halved; Blackwell's FP4-sparse "AI
+// TOPS" quartered, which gives the 5090's 838): the H3 DiT runs through comfy_kitchen's int8 kernel, 178-210 TOPS
+// of the 3090's 284 (`difflab/models/convrot.py`), and dominates a render. bf16 peaks would rank the L40S and RTX
+// 6000 Ada at 5x a 3090, which diffusion benchmarks do not bear out; int8 is not halved on GeForce cards.
+pub const GPUS: [(&str, f64); 13] = [
+    ("NVIDIA RTX A5000", 222.0),
+    ("NVIDIA GeForce RTX 3090", 284.0),
+    ("NVIDIA RTX PRO 4000 Blackwell", 322.0),
+    ("NVIDIA GeForce RTX 4090", 660.6),
+    ("NVIDIA RTX PRO 4500 Blackwell", 405.0),
+    ("NVIDIA RTX PRO 4500 Blackwell Server Edition", 405.0),
+    ("NVIDIA GeForce RTX 5090", 838.0),
+    ("NVIDIA RTX A6000", 309.7),
+    ("NVIDIA A40", 299.3),
+    ("NVIDIA L40", 362.0),
+    ("NVIDIA L40S", 733.0),
+    ("NVIDIA RTX 6000 Ada Generation", 728.5),
+    ("NVIDIA RTX PRO 5000 Blackwell", 516.0),
 ];
+const BASELINE_TOPS: f64 = 284.0;
+// README "Speed (RTX 3090)": a 15 s shot at 0.8 MP, 4 steps, ~10 min, timed before the BF16 unlock that no RunPod
+// 3090 has.
+const SHOT_MINUTES_3090: f64 = 10.0;
 pub const DEFAULT_GPUS: [&str; 3] = [
     "NVIDIA GeForce RTX 3090",
     "NVIDIA GeForce RTX 4090",
@@ -300,6 +308,8 @@ pub struct Offer {
     pub name: String,
     pub vram_gb: u64,
     pub usd_per_hour: Option<f64>,
+    /// Estimated minutes for a 15 s shot, scaled from the 3090's by int8 TOPS.
+    pub shot_minutes: f64,
     /// RunPod's High / Medium / Low for a machine our pod fits on; None when there is none right now.
     pub stock: Option<String>,
 }
@@ -330,9 +340,13 @@ pub async fn offers() -> Result<Vec<Offer>, String> {
         .as_array()
         .into_iter()
         .flatten()
-        .filter(|g| GPUS.contains(&g["id"].as_str().unwrap_or("")))
-        .map(|g| Offer {
+        .filter_map(|g| {
+            let tops = GPUS.iter().find(|(id, _)| g["id"] == *id)?.1;
+            Some((g, tops))
+        })
+        .map(|(g, tops)| Offer {
             id: g["id"].as_str().unwrap_or("").to_string(),
+            shot_minutes: SHOT_MINUTES_3090 * BASELINE_TOPS / tops,
             name: g["displayName"].as_str().unwrap_or("").to_string(),
             vram_gb: g["memoryInGb"].as_u64().unwrap_or(0),
             usd_per_hour: g["securePrice"].as_f64().filter(|p| *p > 0.0),

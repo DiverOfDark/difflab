@@ -39,6 +39,7 @@ export interface Offer {
   name: string;
   vram_gb: number;
   usd_per_hour: number;
+  shot_minutes: number;
   stock: "High" | "Medium" | "Low" | null;
 }
 

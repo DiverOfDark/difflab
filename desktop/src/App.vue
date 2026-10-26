@@ -157,6 +157,10 @@ async function loadOffers() {
 }
 
 const STOCK_PILL: Record<string, string> = { High: "done", Medium: "live", Low: "stopped" };
+const shotUsd = (o: Offer) => (o.usd_per_hour * o.shot_minutes) / 60;
+// Among what RunPod has now, so a tag never points at a card that cannot be rented.
+const bestValue = computed(() => offers.value?.filter((o) => o.stock).reduce<Offer | null>((a, o) => (!a || shotUsd(o) < shotUsd(a) ? o : a), null)?.id);
+const fastest = computed(() => offers.value?.filter((o) => o.stock).reduce<Offer | null>((a, o) => (!a || o.shot_minutes < a.shot_minutes ? o : a), null)?.id);
 
 async function chooseFolder() {
   const picked = await open({ directory: true, defaultPath: resultsDir.value });
@@ -337,14 +341,25 @@ onMounted(async () => {
             </div>
             <div class="field">
               <span class="label">RunPod GPUs</span>
-              <span class="note">It rents whichever ticked GPU is free first. Stock is for a machine with 64 GB of RAM, which every pod needs.</span>
+              <span class="note">It rents whichever ticked GPU is free first. A 15 s shot is estimated from each card's speed against a 3090's ~10 minutes; what it costs is that time at the hourly price. Stock counts machines with the 64 GB of RAM every pod needs.</span>
               <div v-if="offers" class="offers mono">
+                <div class="th">
+                  <span />
+                  <span>GPU</span>
+                  <span class="num">VRAM</span>
+                  <span class="num">per hour</span>
+                  <span class="num">15 s shot</span>
+                  <span class="num">costs</span>
+                  <span>now</span>
+                </div>
                 <label v-for="o in offers" :key="o.id" :class="{ dim: !o.stock }">
                   <input v-model="prefs.gpus" type="checkbox" :value="o.id" />
-                  <span>{{ o.name }}</span>
+                  <span>{{ o.name }}<span v-if="o.id === bestValue" class="tag">best value</span><span v-if="o.id === fastest" class="tag">fastest</span></span>
                   <span class="num">{{ o.vram_gb }} GB</span>
-                  <span class="num">{{ usd(o.usd_per_hour) }}/h</span>
-                  <span><span class="pill" :class="o.stock ? STOCK_PILL[o.stock] : 'failed'">{{ o.stock ? o.stock.toLowerCase() : "none now" }}</span></span>
+                  <span class="num">{{ usd(o.usd_per_hour) }}</span>
+                  <span class="num">~{{ Math.round(o.shot_minutes) }} min</span>
+                  <span class="num">~{{ usd(shotUsd(o)) }}</span>
+                  <span><span class="pill" :class="o.stock ? STOCK_PILL[o.stock] : 'failed'">{{ o.stock ? o.stock.toLowerCase() : "none" }}</span></span>
                 </label>
               </div>
               <p v-else class="note">{{ offersNote || "Asking RunPod for prices…" }}</p>
@@ -515,10 +530,19 @@ button {
   gap: 4px;
   font-size: var(--text-xs);
 }
-.offers > label {
+.offers > label,
+.offers > .th {
   display: grid;
-  grid-template-columns: 20px 1fr 56px 72px 80px;
+  grid-template-columns: 20px 1fr 52px 64px 68px 56px 64px;
   align-items: center;
+}
+.offers > .th {
+  color: var(--text-tertiary);
+}
+.offers .tag {
+  display: block;
+  font-size: 10px;
+  color: var(--accent);
 }
 .offers .num {
   text-align: right;
