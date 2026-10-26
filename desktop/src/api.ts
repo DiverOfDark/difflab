@@ -31,6 +31,15 @@ export interface Prefs {
   auto_download: boolean;
   results_dir: string;
   setup_done: boolean;
+  gpus: string[];
+}
+
+export interface Offer {
+  id: string;
+  name: string;
+  vram_gb: number;
+  usd_per_hour: number;
+  stock: "High" | "Medium" | "Low" | null;
 }
 
 export interface Hardware {
@@ -58,6 +67,7 @@ export interface Secrets {
 
 export const load = () => invoke<Loaded>("load");
 export const hardware = () => invoke<Hardware>("hardware");
+export const offers = () => invoke<Offer[]>("offers");
 export const balance = (key?: string) => invoke<number | null>("balance", { key: key || null });
 export const saveSettings = (prefs: Prefs, secrets: Secrets = {}) =>
   invoke("save_settings", {

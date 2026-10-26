@@ -68,7 +68,9 @@ make stale before you commit to it.
 
 - **On this PC** if it has the hardware (an NVIDIA card with 24 GB, 64 GB of RAM, and Docker). If it
   doesn't, the app says what is missing.
-- **On a RunPod pod** otherwise: an RTX 3090, 4090 or 5090, billed by the second. The first pod creates
+- **On a RunPod pod** otherwise: whichever GPU ticked in Settings is free first (24-48 GB, shown with
+  RunPod's live price and stock; an RTX 3090, 4090 or 5090 until changed), billed by the second.
+  Only Secure Cloud: RunPod put a Community Cloud pod on a host that could not mount the global volume. The first pod creates
   a global volume named `difflab` that any GPU in any region can mount, for projects and results. The
   first pod downloads the models (~96 GB) and keeps a copy on the volume; later pods copy it onto their
   own disk and load from there.

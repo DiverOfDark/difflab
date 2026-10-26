@@ -85,7 +85,7 @@ async function next() {
       <button class="option" :class="{ on: kind === 'runpod' }" @click="choose('runpod')">
         <span class="eyebrow">RunPod cloud</span>
         <strong>Rent a GPU when I need it</strong>
-        <span class="muted">An RTX 3090, 4090 or 5090, billed by the second from your RunPod balance, and stopped for you when you are done.</span>
+        <span class="muted">An RTX 3090, 4090 or 5090 (Settings lists other GPUs with their prices), billed by the second from your RunPod balance, and stopped for you when you are done.</span>
       </button>
     </section>
 

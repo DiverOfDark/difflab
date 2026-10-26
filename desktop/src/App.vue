@@ -6,7 +6,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { exit, relaunch } from "@tauri-apps/plugin-process";
 import * as api from "./api";
-import { usd, type Hardware, type Kind, type Prefs, type LogLine, type Status, type Versions } from "./api";
+import { usd, type Hardware, type Kind, type Offer, type Prefs, type LogLine, type Status, type Versions } from "./api";
 import Wizard from "./Wizard.vue";
 
 type Tab = "run" | "results" | "settings";
@@ -15,7 +15,7 @@ const loaded = ref(false);
 const wizard = ref(false);
 const tab = ref<Tab>("run");
 const status = ref<Status>({ phase: "none", kind: null, gpu: "", usd: 0, usd_per_hour: 0, uptime_s: 0, draining: false, message: "", progress: null, slow: false, layers: [] });
-const prefs = reactive<Prefs>({ idle_minutes: 5, stuck_minutes: 15, spend_limit_usd: 5, exit_when_done: false, auto_download: true, results_dir: "", setup_done: false });
+const prefs = reactive<Prefs>({ idle_minutes: 5, stuck_minutes: 15, spend_limit_usd: 5, exit_when_done: false, auto_download: true, results_dir: "", setup_done: false, gpus: [] });
 const hasKey = ref(false);
 const hasLocal = ref(false);
 const balance = ref<number | null>(null);
@@ -33,6 +33,8 @@ const logLines = ref<LogLine[]>([]);
 const logBox = ref<HTMLElement | null>(null);
 const logsOpen = ref(true);
 const LOG_SHOWN = 1000;
+const offers = ref<Offer[] | null>(null);
+const offersNote = ref("");
 
 // Follows the bottom unless the reader has scrolled up to read something.
 function addLog(line: LogLine) {
@@ -144,6 +146,18 @@ const saveSettings = () =>
     setTimeout(() => (saved.value = false), 2000);
   });
 
+async function loadOffers() {
+  offersNote.value = "";
+  try {
+    offers.value = await api.offers();
+  } catch (e) {
+    offers.value = null;
+    offersNote.value = String(e);
+  }
+}
+
+const STOCK_PILL: Record<string, string> = { High: "done", Medium: "live", Low: "stopped" };
+
 async function chooseFolder() {
   const picked = await open({ directory: true, defaultPath: resultsDir.value });
   if (typeof picked === "string") {
@@ -213,7 +227,7 @@ onMounted(async () => {
       </span>
       <span class="state mono">
         <span v-if="balance !== null" title="your RunPod balance">{{ usd(balance) }}</span>
-        <button v-if="updateBadge" class="link update" title="an update is ready" @click="tab = 'settings'; wizard = false">update</button>
+        <button v-if="updateBadge" class="link update" title="an update is ready" @click="tab = 'settings'; wizard = false; loadOffers()">update</button>
         <span class="phase"><i class="dot" :class="phase.dot" />{{ phase.label.toLowerCase() }}</span>
       </span>
     </header>
@@ -225,7 +239,7 @@ onMounted(async () => {
         <nav class="seg">
           <button :class="{ on: tab === 'run' }" @click="tab = 'run'">Run</button>
           <button :class="{ on: tab === 'results' }" @click="tab = 'results'">Results</button>
-          <button :class="{ on: tab === 'settings' }" @click="tab = 'settings'">Settings</button>
+          <button :class="{ on: tab === 'settings' }" @click="tab = 'settings'; loadOffers()">Settings</button>
         </nav>
 
         <template v-if="tab === 'run'">
@@ -320,6 +334,20 @@ onMounted(async () => {
                 <div><span class="name">Stuck</span><span class="hint">Minutes a render may go without progress.</span></div>
                 <input v-model.number="prefs.stuck_minutes" type="number" min="5" max="60" />
               </div>
+            </div>
+            <div class="field">
+              <span class="label">RunPod GPUs</span>
+              <span class="note">It rents whichever ticked GPU is free first. Stock is for a machine with 64 GB of RAM, which every pod needs.</span>
+              <div v-if="offers" class="offers mono">
+                <label v-for="o in offers" :key="o.id" :class="{ dim: !o.stock }">
+                  <input v-model="prefs.gpus" type="checkbox" :value="o.id" />
+                  <span>{{ o.name }}</span>
+                  <span class="num">{{ o.vram_gb }} GB</span>
+                  <span class="num">{{ usd(o.usd_per_hour) }}/h</span>
+                  <span><span class="pill" :class="o.stock ? STOCK_PILL[o.stock] : 'failed'">{{ o.stock ? o.stock.toLowerCase() : "none now" }}</span></span>
+                </label>
+              </div>
+              <p v-else class="note">{{ offersNote || "Asking RunPod for prices…" }}</p>
             </div>
             <label class="check"><input v-model="prefs.exit_when_done" type="checkbox" /> Stop as soon as the queue is done</label>
             <label class="check"><input v-model="prefs.auto_download" type="checkbox" /> Download RunPod results automatically</label>
@@ -481,6 +509,20 @@ button {
   gap: var(--space-1);
   align-items: center;
   color: var(--text-secondary);
+}
+.offers {
+  display: grid;
+  gap: 4px;
+  font-size: var(--text-xs);
+}
+.offers > label {
+  display: grid;
+  grid-template-columns: 20px 1fr 56px 72px 80px;
+  align-items: center;
+}
+.offers .num {
+  text-align: right;
+  padding-right: var(--space-2);
 }
 .path {
   margin: 0;

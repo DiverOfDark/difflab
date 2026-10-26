@@ -15,6 +15,7 @@ pub struct Prefs {
     pub auto_download: bool,
     pub results_dir: String,
     pub setup_done: bool,
+    pub gpus: Vec<String>,
 }
 
 impl Default for Prefs {
@@ -27,6 +28,7 @@ impl Default for Prefs {
             auto_download: true,
             results_dir: String::new(),
             setup_done: false,
+            gpus: crate::runpod::DEFAULT_GPUS.map(String::from).to_vec(),
         }
     }
 }

@@ -10,8 +10,28 @@ const GRAPHQL: &str = "https://api.runpod.io/graphql";
 const LOGS: &str = "https://api.runpod.io/v2";
 pub const IMAGE: &str = "ghcr.io/diverofdark/difflab:latest";
 pub const VOLUME_NAME: &str = "difflab";
-// The pipeline offloads for a 24 GB card; README "Serving it" and `core/models.py` assume a 58 GB host.
-pub const GPUS: [&str; 3] = [
+// What may be ticked: 24-48 GB, Ampere or later (ExLlamaV3 and the int8 kernels need sm_80; the image builds
+// 8.0-12.0). The pipeline offloads for 24 GB; 32 GB holds the H3 DiT with its activations and VAE decode
+// (19.5 + ~6 + 7.4 GB), 48 GB the VLM beside it (17.8 + 25.5); all three resident would need ~69 GB.
+// Left out: L4 (slow), PRO 6000 MIG slices (a share of the compute at a whole card's price), and what is only on
+// Community Cloud: RunPod placed a COMMUNITY deploy with the global volume on a host that cannot mount one ("Global
+// store: not available on this machine", retried every 16 s after a 22-minute image pull, 2026-10-26).
+pub const GPUS: [&str; 13] = [
+    "NVIDIA RTX A5000",
+    "NVIDIA GeForce RTX 3090",
+    "NVIDIA RTX PRO 4000 Blackwell",
+    "NVIDIA GeForce RTX 4090",
+    "NVIDIA RTX PRO 4500 Blackwell",
+    "NVIDIA RTX PRO 4500 Blackwell Server Edition",
+    "NVIDIA GeForce RTX 5090",
+    "NVIDIA RTX A6000",
+    "NVIDIA A40",
+    "NVIDIA L40",
+    "NVIDIA L40S",
+    "NVIDIA RTX 6000 Ada Generation",
+    "NVIDIA RTX PRO 5000 Blackwell",
+];
+pub const DEFAULT_GPUS: [&str; 3] = [
     "NVIDIA GeForce RTX 3090",
     "NVIDIA GeForce RTX 4090",
     "NVIDIA GeForce RTX 5090",
@@ -160,11 +180,12 @@ impl Client {
         volume_id: &str,
         image: &str,
         env: &[(&str, String)],
+        gpus: &[String],
     ) -> Result<Pod, String> {
         let input = json!({
             "name": "difflab",
             "imageName": image,
-            "gpuTypeIdList": GPUS,
+            "gpuTypeIdList": gpus,
             "gpuCount": 1,
             "cloudType": "SECURE",
             "containerDiskInGb": CONTAINER_DISK_GB,
@@ -182,7 +203,7 @@ impl Client {
             .await?;
         let pod = &made["podFindAndDeployOnDemand"];
         let id = pod["id"].as_str().ok_or(
-            "RunPod found no free GPU with 24 GB and 64 GB of RAM; try again in a few minutes",
+            "RunPod has none of the ticked GPUs free with 64 GB of RAM; tick more in Settings or try again in a few minutes",
         )?;
         Ok(Pod {
             id: id.to_string(),
@@ -271,6 +292,56 @@ impl Client {
             .await
             .map(|_| ())
     }
+}
+
+#[derive(Serialize)]
+pub struct Offer {
+    pub id: String,
+    pub name: String,
+    pub vram_gb: u64,
+    pub usd_per_hour: Option<f64>,
+    /// RunPod's High / Medium / Low for a machine our pod fits on; None when there is none right now.
+    pub stock: Option<String>,
+}
+
+/// Secure Cloud prices and stock for each GPU in `GPUS`; needs no key.
+pub async fn offers() -> Result<Vec<Offer>, String> {
+    let query = format!(
+        "{{ gpuTypes {{ id displayName memoryInGb securePrice \
+         lowestPrice(input: {{gpuCount: 1, secureCloud: true, minMemoryInGb: {MIN_RAM_GB}, minDisk: {CONTAINER_DISK_GB}}}) \
+         {{ stockStatus }} }} }}"
+    );
+    let body: Value = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .unwrap_or_default()
+        .post(GRAPHQL)
+        .json(&json!({ "query": query }))
+        .send()
+        .await
+        .map_err(|e| format!("RunPod is unreachable: {e}"))?
+        .json()
+        .await
+        .map_err(|e| format!("RunPod answered oddly: {e}"))?;
+    if let Some(problem) = body["errors"][0]["message"].as_str() {
+        return Err(format!("RunPod: {problem}"));
+    }
+    let mut found: Vec<Offer> = body["data"]["gpuTypes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|g| GPUS.contains(&g["id"].as_str().unwrap_or("")))
+        .map(|g| Offer {
+            id: g["id"].as_str().unwrap_or("").to_string(),
+            name: g["displayName"].as_str().unwrap_or("").to_string(),
+            vram_gb: g["memoryInGb"].as_u64().unwrap_or(0),
+            usd_per_hour: g["securePrice"].as_f64().filter(|p| *p > 0.0),
+            stock: g["lowestPrice"]["stockStatus"].as_str().map(str::to_string),
+        })
+        .filter(|o| o.usd_per_hour.is_some())
+        .collect();
+    found.sort_by(|a, b| a.usd_per_hour.partial_cmp(&b.usd_per_hour).unwrap());
+    Ok(found)
 }
 
 pub fn proxy_url(pod_id: &str) -> String {

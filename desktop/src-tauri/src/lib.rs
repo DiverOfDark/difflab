@@ -552,6 +552,11 @@ fn logs(inner: State<'_, Shared>) -> Vec<runpod::LogLine> {
 }
 
 #[tauri::command]
+async fn offers() -> Result<Vec<runpod::Offer>, String> {
+    runpod::offers().await
+}
+
+#[tauri::command]
 async fn hardware() -> Result<local::Hardware, String> {
     Ok(local::check().await)
 }
@@ -678,6 +683,9 @@ async fn launch(app: &AppHandle, inner: &Inner, kind: Kind) -> Result<Session, S
             })
         }
         Kind::Runpod => {
+            if prefs.gpus.is_empty() {
+                return Err("No GPU is ticked in Settings".into());
+            }
             let client = inner.runpod()?;
             let key = inner.store.secret(RUNPOD_KEY).unwrap_or_default();
             let volume = client.global_volume().await?;
@@ -698,7 +706,9 @@ async fn launch(app: &AppHandle, inner: &Inner, kind: Kind) -> Result<Session, S
                 Some(v) => format!("{}@{}", runpod::IMAGE.trim_end_matches(":latest"), v.digest),
                 None => runpod::IMAGE.to_string(),
             };
-            let pod = client.create_pod(&volume, &image, &env).await?;
+            let pod = client
+                .create_pod(&volume, &image, &env, &prefs.gpus)
+                .await?;
             Ok(Session {
                 kind,
                 base_url: runpod::proxy_url(&pod.id),
@@ -1453,6 +1463,7 @@ pub fn run() {
             versions,
             logs,
             hardware,
+            offers,
             save_settings,
             start,
             stop,
