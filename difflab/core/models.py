@@ -3,7 +3,8 @@
 What makes eviction worth doing carefully is that these models do not fit side by side in host RAM,
 never mind VRAM: the text encoder maps 25 GB and the DiT 18 GB against 58 GB of system memory. So
 dropping one also drops its checkpoint's page cache, which safetensors would otherwise leave behind
-(it maps rather than copies).
+(it maps rather than copies). A heavy model evicted while host RAM is free is parked there instead, and
+`hostcache` frees it the moment the room is wanted.
 
 `budget` is how many heavy models may be resident at once. One is the honest answer on this machine;
 the small VAEs are cheap enough that a recipe may raise it.
@@ -25,7 +26,7 @@ from typing import Any
 
 import torch
 
-from difflab.core import ui
+from difflab.core import hostcache, ui
 from difflab.models import offload
 
 
@@ -36,6 +37,8 @@ class ModelSpec:
     checkpoints: tuple[Path, ...] = ()  # dropped from the page cache on eviction (a folder: its .safetensors)
     heavy: bool = True  # counts against the residency budget
     unload: Callable[[Any], None] | None = None  # for models that hold their own resources
+    # Kept in host RAM on eviction while there is room; not for native code holding pointers into the card.
+    parks: bool = True
 
     def key(self) -> str:
         return self.name
@@ -48,6 +51,10 @@ class Registry:
     _specs: dict[str, ModelSpec] = field(default_factory=dict)
     _order: list[str] = field(default_factory=list)  # least recently used first
     _parked: dict[str, torch.device] = field(default_factory=dict)  # light models in host RAM, and their home
+    _cold: dict[str, tuple[ModelSpec, Any, offload.Parked]] = field(default_factory=dict)  # heavy, evicted to RAM
+    # What each build grew the process by, learned on its first load: file sizes overstate it, since what goes
+    # to the card passes through the page cache, which the kernel reclaims by itself.
+    _footprint: dict[str, int] = field(default_factory=dict)
 
     def acquire(self, spec: ModelSpec) -> Any:
         key = spec.key()
@@ -63,8 +70,13 @@ class Registry:
                     detail("skipped, resident")
             return self._resident[key]
         if spec.heavy:
-            self._make_room_for(key)
-        model = self._roomy(spec.build, spec)
+            self._make_room_for(spec)
+        model = self._warm(spec)
+        if model is None:
+            hostcache.room(self._footprint.get(key, 0))
+            before = hostcache.rss()
+            model = self._roomy(spec.build, spec)
+            self._footprint[key] = max(0, hostcache.rss() - before)
         self._resident[key] = model
         self._specs[key] = spec
         self._touch(key)
@@ -75,15 +87,16 @@ class Registry:
         left resident beside the video VAE (4.85 GB) fits, and then encoding a reference clip did not."""
         return self._roomy(work, spec)
 
-    def evict(self, key: str) -> None:
+    def evict(self, key: str, incoming: int = 0, keep: bool = True) -> None:
+        """`incoming`: host bytes the model taking its place will want, so it is not parked into its room."""
         if key not in self._resident:
             return
         spec = self._specs.pop(key)
         model = self._resident.pop(key)
         self._order.remove(key)
         self._parked.pop(key, None)
-        if spec.unload is not None:
-            spec.unload(model)
+        if not (keep and spec.heavy and spec.parks and self._park(spec, model, incoming)):
+            _discard(spec, model)
         del model
         gc.collect()
         torch.cuda.empty_cache()
@@ -92,8 +105,47 @@ class Registry:
     def release(self) -> list[str]:
         released = list(self._order)
         for key in released:
-            self.evict(key)
-        return released
+            self.evict(key, keep=False)
+        return released + hostcache.release_all("idle")
+
+    def _park(self, spec: ModelSpec, model: Any, incoming: int) -> bool:
+        modules = offload.modules_of(model)
+        if not modules or not hostcache.room(offload.on_card(modules) + incoming):
+            return False
+        key = spec.key()
+        try:
+            parked = offload.park(modules)
+        except RuntimeError as problem:  # out of host memory part way: what moved goes with the model
+            ui.note(f"could not keep {spec.name} in RAM ({problem})")
+            return False
+        self._cold[key] = (spec, model, parked)
+        hostcache.hold(key, parked.size, lambda: self._forget(key))
+        ui.note(f"keeping {spec.name} in RAM, {parked.size / 1024**3:.1f} GB")
+        return True
+
+    def _warm(self, spec: ModelSpec) -> Any:
+        key = spec.key()
+        if not hostcache.take(key):
+            return None
+        _, model, parked = self._cold.pop(key)
+        with ui.step(f"Loading {spec.name}") as detail:
+            try:
+                self._roomy(lambda: offload.unpark(parked), spec)
+            except torch.OutOfMemoryError:
+                _discard(spec, model)
+                raise
+            except RuntimeError as problem:
+                _discard(spec, model)
+                detail(f"rebuilt, RAM copy failed ({problem})")
+                return None
+            detail(f"from RAM, {parked.size / 1024**3:.1f} GB")
+        return model
+
+    def _forget(self, key: str) -> None:
+        spec, model, _ = self._cold.pop(key)
+        _discard(spec, model)
+        del model
+        gc.collect()
 
     def resident(self) -> list[str]:
         return list(self._order)
@@ -138,17 +190,25 @@ class Registry:
                 self.evict(victim)
             return make()
 
-    def _make_room_for(self, incoming: str) -> None:
+    def _make_room_for(self, incoming: ModelSpec) -> None:
         heavy = [k for k in self._order if self._specs[k].heavy]
         while len(heavy) >= max(1, self.budget):
             victim = heavy.pop(0)
-            ui.note(f"evicting {victim} to make room for {incoming}")
-            self.evict(victim)
+            ui.note(f"evicting {victim} to make room for {incoming.name}")
+            self.evict(victim, self._footprint.get(incoming.key(), 0))
+
+
+def _discard(spec: ModelSpec, model: Any) -> None:
+    if spec.unload is not None:
+        spec.unload(model)
+
+
+def _files(paths: Iterable[Path]) -> list[Path]:
+    return [file for given in paths for file in (sorted(given.glob("*.safetensors")) if given.is_dir() else [given])]
 
 
 def _drop_page_cache(paths: Iterable[Path]) -> None:
-    files = [file for given in paths for file in (sorted(given.glob("*.safetensors")) if given.is_dir() else [given])]
-    for path in files:
+    for path in _files(paths):
         try:
             handle = os.open(path, os.O_RDONLY)
         except OSError:

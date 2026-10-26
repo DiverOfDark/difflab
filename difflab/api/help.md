@@ -241,6 +241,9 @@ Chat with the VLM (talk to the model), or reach difflab from another program.
 
 - **Chat** tab: a conversation with the VLM, pictures included, that acts through difflab's tools; its reply waits
   its turn on the card.
+- A model pushed off the card by another stays in the computer's memory while there is room, keeping 8 GB free
+  (`DIFFLAB_HOST_RESERVE_GB`), and loads back from there, **from RAM** in its loading step; the VLM keeps a copy of
+  its files instead. Both are dropped as soon as anything else needs the memory.
 - After 10 minutes with no job, every model leaves the card and memory (`DIFFLAB_IDLE_RELEASE_MINUTES`), so the
   first reply or job after a pause loads its model again, about 8 s for the VLM.
 - **OpenAI-compatible API** at `/v1/chat/completions` and `/v1/models`: streaming, tool calls and reasoning

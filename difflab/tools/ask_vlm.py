@@ -14,11 +14,11 @@ def spec(checkpoint: str) -> models.ModelSpec:
     return models.ModelSpec(
         name=f"vlm:{pinned.repo}",
         build=lambda: Exl3VL(pinned),
-        # Dropped from the page cache on eviction, since H3 maps 25 + 18 GB of a 58 GB machine right
-        # after. ~17 GB on the card, so it is heavy: evicted, not parked in host RAM, when anything
-        # else heavy is acquired.
+        # ~17 GB on the card, so it is heavy: evicted when anything else heavy is acquired. ExLlamaV3's
+        # kernels hold pointers into its tensors, so it is not parked; its files are kept in RAM instead.
         checkpoints=(pinned.path,),  # a folder: every .safetensors in it
         unload=lambda vlm: vlm.unload(),
+        parks=False,
     )
 
 

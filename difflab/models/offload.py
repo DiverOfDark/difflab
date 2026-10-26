@@ -21,6 +21,7 @@ leaves room for.
 import weakref
 from collections.abc import Iterable
 from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import dataclass
 
 import torch
 from torch import nn
@@ -218,6 +219,95 @@ def release() -> int:
     if resident:
         torch.cuda.empty_cache()
     return len(resident)
+
+
+@dataclass
+class Parked:
+    moved: list[tuple[nn.Module, str, bool, torch.device]]
+    size: int  # host bytes the model holds while parked, its streamed blocks' copies included
+
+
+def modules_of(root: object, depth: int = 3) -> list[nn.Module]:
+    """The modules a built model holds: itself, a pipeline's components, an editor's pipeline's."""
+    if isinstance(root, nn.Module):
+        return [root]
+    if depth == 0 or isinstance(root, (str, bytes, torch.Tensor)):
+        return []
+    if isinstance(root, dict):
+        values = list(root.values())
+    elif isinstance(root, (list, tuple)):
+        values = list(root)
+    else:
+        values = list(getattr(root, "__dict__", {}).values())
+    found: dict[int, nn.Module] = {}
+    for value in values:
+        for module in modules_of(value, depth - 1):
+            found.setdefault(id(module), module)
+    return list(found.values())
+
+
+def park(modules: Iterable[nn.Module]) -> Parked:
+    """Everything the modules hold on a card, moved to host RAM; streamed blocks fall back to their copies."""
+    moved: list[tuple[nn.Module, str, bool, torch.device]] = []
+    size = 0
+    seen: set[int] = set()
+    pending = list(modules)
+    while pending:
+        module = pending.pop()
+        if id(module) in seen:
+            continue
+        seen.add(id(module))
+        streamer: BlockStreamer | None = getattr(module, _ATTRIBUTE, None)
+        if streamer is not None:
+            streamer.drop()
+            if streamer.resident:
+                streamer.unsettle()
+            size += streamer.size
+            continue
+        for slots, is_parameter in ((module._parameters, True), (module._buffers, False)):
+            for name, tensor in slots.items():
+                if tensor is None:
+                    continue
+                if tensor.device.type != "cpu":
+                    moved.append((module, name, is_parameter, tensor.device))
+                    _put(module, name, is_parameter, tensor.data.to("cpu"))
+                size += tensor.numel() * tensor.element_size()
+        pending.extend(module.children())
+    return Parked(moved, size)
+
+
+def unpark(parked: Parked) -> None:
+    """Puts back what `park` moved; safe to repeat after running out of memory part way."""
+    for module, name, is_parameter, device in parked.moved:
+        tensor = (module._parameters if is_parameter else module._buffers)[name]
+        if tensor is not None and tensor.device != device:
+            _put(module, name, is_parameter, tensor.data.to(device))
+
+
+def on_card(modules: Iterable[nn.Module]) -> int:
+    """Bytes the modules hold on a card outside their streamed blocks: what parking them would copy."""
+    total = 0
+    seen: set[int] = set()
+    pending = list(modules)
+    while pending:
+        module = pending.pop()
+        if id(module) in seen or hasattr(module, _ATTRIBUTE):
+            continue
+        seen.add(id(module))
+        for tensor in (*module._parameters.values(), *module._buffers.values()):
+            if tensor is not None and tensor.device.type != "cpu":
+                total += tensor.numel() * tensor.element_size()
+        pending.extend(module.children())
+    return total
+
+
+def _put(module: nn.Module, name: str, is_parameter: bool, tensor: torch.Tensor) -> None:
+    if is_parameter:
+        parameter = module._parameters[name]
+        if parameter is not None:
+            parameter.data = tensor
+    else:
+        module._buffers[name] = tensor
 
 
 def unstage() -> None:
