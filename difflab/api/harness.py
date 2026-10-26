@@ -31,7 +31,9 @@ LOOK = {
     "summary, or any a tool returned.",
     "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]},
 }
-REPEATED = "*Stopped: {} came back the same as the call before it. Say how to go on.*"
+SAME_MOST = 2  # runs of one call, its tool and arguments alike, after a message from the person; `run` follows freely
+REPEATED = f"Not run: the same call, arguments and all, was already made {SAME_MOST} times since the person spoke."
+STOPPED_REPEAT = "*Stopped: {} was asked for again with the same arguments. Say how to go on.*"
 # "The person did not allow it." read as a hiccup: the model called the same reroll again (2026-10-25).
 DECLINED = "The person declined this call. Do not make it again: ask them what they want instead."
 
@@ -117,9 +119,13 @@ def decline(connection: sqlite3.Connection, chat_id: int) -> None:
 def _run(message: chats.Message, allowed: bool = False) -> None:
     call = message.calls[0]
     name, given = call["name"], dict(call["arguments"])
+    earlier = [one for one in _since_person(message) if _same(one, message) and one.text != REPEATED]
+    if name != "run" and len(earlier) >= SAME_MOST:
+        _write(message.id, state=chats.DONE, text=REPEATED)
+        return
     try:
         if name in ASKED and not allowed:
-            if any(_same(one, message) and one.text == DECLINED for one in _before(message)):
+            if any(one.text == DECLINED for one in earlier):
                 _write(message.id, state=chats.DONE, text=DECLINED)
             else:
                 _write(message.id, state=chats.ASKING, text=_cost(name, given))
@@ -230,9 +236,9 @@ def _next(chat_id: int) -> None:
             return
         if any(one.state in (*chats.PENDING, chats.ASKING, chats.STOPPED) for one in after):
             return
-        if _stuck(after, _before(after[0], said)):
-            called = ", ".join(sorted({one.calls[0]["name"] for one in after}))
-            chats.add_message(connection, chat_id, chats.ASSISTANT, REPEATED.format(called))
+        repeated = sorted({one.calls[0]["name"] for one in after if one.text == REPEATED})
+        if repeated:
+            chats.add_message(connection, chat_id, chats.ASSISTANT, STOPPED_REPEAT.format(", ".join(repeated)))
             return
         chat = chats.chat(connection, chat_id)
         assert chat is not None
@@ -240,29 +246,13 @@ def _next(chat_id: int) -> None:
         chats.write(connection, answer.id, run_id=queue.enqueue_chat(connection, answer.id, chat.title))
 
 
-def _before(message: chats.Message, said: list[chats.Message] | None = None) -> list[chats.Message]:
-    """The tool calls of the answer before the one `message` answers, unless the person spoke between them."""
-    if said is None:
-        with store.connect() as connection:
-            said = chats.messages(connection, message.chat_id)
-    at = next(i for i, one in enumerate(said) if one.id == message.id)
-    answers = [i for i in range(at) if said[i].role in (chats.ASSISTANT, chats.USER)]
-    if len(answers) < 2 or said[answers[-1]].role != chats.ASSISTANT or said[answers[-2]].role != chats.ASSISTANT:
-        return []
-    return [one for one in said[answers[-2] + 1 : answers[-1]] if one.role == chats.TOOL]
+def _since_person(message: chats.Message) -> list[chats.Message]:
+    """The tool calls made before `message` since the person last spoke."""
+    with store.connect() as connection:
+        said = chats.messages(connection, message.chat_id)
+    spoke = max((one.id for one in said if one.role == chats.USER and one.id < message.id), default=0)
+    return [one for one in said if one.role == chats.TOOL and spoke < one.id < message.id]
 
 
 def _same(one: chats.Message, other: chats.Message) -> bool:
     return [one.calls[0]["name"], one.calls[0]["arguments"]] == [other.calls[0]["name"], other.calls[0]["arguments"]]
-
-
-def _stuck(calls: list[chats.Message], before: list[chats.Message]) -> bool:
-    """Every call the same as one the answer before made, and answered the same: a run still rendering is not,
-    since its status moves between two looks."""
-
-    def answered(one: chats.Message) -> tuple[Any, ...]:
-        return one.state, one.text, one.error, one.media
-
-    return bool(before) and all(
-        any(_same(one, old) and answered(one) == answered(old) for old in before) for one in calls
-    )
