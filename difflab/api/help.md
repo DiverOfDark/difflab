@@ -231,7 +231,7 @@ In the page:
    holds the summary, and the model can still see an old picture again by its path.
 
 The model makes pictures and clips without asking, looks at each result and says what is wrong with it, and makes
-one again only when told to. One message allows 20 rounds of tool calls. Web search goes through the search engines'
+one again only when told to. A call that comes back exactly as the one before it stops the chat, which then waits for you to say how to go on. Web search goes through the search engines'
 own pages; when they refuse, the chat gives a link to search in your browser, and you drop what you pick into it.
 
 Over MCP: the same tools, called by your own agent; `search_images`, `fetch_image` and `search_web` are the chat's only.

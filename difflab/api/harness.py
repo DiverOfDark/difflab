@@ -20,22 +20,19 @@ from difflab.models import exl3vl
 from difflab.store import chats
 from difflab.work import queue
 
-# Answers with tool calls after one message from the person, before one has to do without: a production set up from
-# an idea took 10 (draft, follow, start, read, follow, plan, follow...), and 8 cut it off (2026-10-26).
-ROUNDS = 20
 MADE_MOST = 6  # of a run's files, the newest handed back as its result
 FOLLOWED = ("make_picture", "make_clip", "upscale")  # answered with what their run makes
 ASKED = frozenset(
     {name for name, route in director.BY_NAME.items() if route.costly or route.method == "DELETE"} | {"cancel_run"}
 )
-# "The person did not allow it." read as a hiccup: the model called the same reroll again (2026-10-25).
 LOOK = {
     "name": "look",
     "description": "A picture or clip the server holds, shown to you again by its path: one named in the chat's "
     "summary, or any a tool returned.",
     "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]},
 }
-SPENT = "*Stopped after {} rounds of tool calls for one message: say “go on” to continue.*"
+REPEATED = "*Stopped: {} came back the same as the call before it. Say how to go on.*"
+# "The person did not allow it." read as a hiccup: the model called the same reroll again (2026-10-25).
 DECLINED = "The person declined this call. Do not make it again: ask them what they want instead."
 
 
@@ -53,29 +50,16 @@ def tools() -> list[dict[str, Any]]:
     return listed
 
 
-def prepare(message_id: int, spent: bool) -> tuple[list[dict[str, Any]], str]:
-    """The tools a reply may call and what the system prompt is told about them; none once `spent`."""
-    with store.connect() as connection:
-        answer = chats.message(connection, message_id)
-    if answer is None:
-        raise LookupError(f"no chat message {message_id}: the chat was deleted")
-    if spent:
-        return [], prompts.CHAT_TOOLS_SPENT
+def prepare() -> tuple[list[dict[str, Any]], str]:
+    """The tools a reply may call and what the system prompt is told about them."""
     return tools(), prompts.CHAT_TOOLS_PROMPT
 
 
 def after_reply(message_id: int, offered: list[dict[str, Any]]) -> None:
-    """The answer's tool calls, each a tool message, run; the next answer queued when they have all settled. With
-    none offered, a call the model writes anyway, having seen its earlier ones, is cut from what it says."""
+    """The answer's tool calls, each a tool message, run; the next answer queued when they have all settled."""
     with store.connect() as connection:
         answer = chats.message(connection, message_id)
     if answer is None:
-        return
-    if not offered:
-        if exl3vl.OPEN_CALL in answer.text:
-            words = exl3vl.before_calls(answer.text, True)
-            with store.connect() as connection:
-                chats.write(connection, message_id, text=f"{words}\n\n{SPENT.format(ROUNDS)}".strip())
         return
     words, made = exl3vl.tool_calls(answer.text, offered)
     if not made:
@@ -135,7 +119,10 @@ def _run(message: chats.Message, allowed: bool = False) -> None:
     name, given = call["name"], dict(call["arguments"])
     try:
         if name in ASKED and not allowed:
-            _write(message.id, state=chats.ASKING, text=_cost(name, given))
+            if any(_same(one, message) and one.text == DECLINED for one in _before(message)):
+                _write(message.id, state=chats.DONE, text=DECLINED)
+            else:
+                _write(message.id, state=chats.ASKING, text=_cost(name, given))
             return
         if name in director.BY_NAME and director.BY_NAME[name].costly:
             given["confirm"] = True
@@ -243,10 +230,39 @@ def _next(chat_id: int) -> None:
             return
         if any(one.state in (*chats.PENDING, chats.ASKING, chats.STOPPED) for one in after):
             return
-        spoke = max((i for i, one in enumerate(said) if one.role == chats.USER), default=-1)
-        rounds = sum(1 for i in answers if i > spoke and said[i].calls)
+        if _stuck(after, _before(after[0], said)):
+            called = ", ".join(sorted({one.calls[0]["name"] for one in after}))
+            chats.add_message(connection, chat_id, chats.ASSISTANT, REPEATED.format(called))
+            return
         chat = chats.chat(connection, chat_id)
         assert chat is not None
         answer = chats.add_message(connection, chat_id, chats.ASSISTANT, state=chats.QUEUED)
-        asked = {"spent": True} if rounds >= ROUNDS else {}
-        chats.write(connection, answer.id, run_id=queue.enqueue_chat(connection, answer.id, chat.title, asked=asked))
+        chats.write(connection, answer.id, run_id=queue.enqueue_chat(connection, answer.id, chat.title))
+
+
+def _before(message: chats.Message, said: list[chats.Message] | None = None) -> list[chats.Message]:
+    """The tool calls of the answer before the one `message` answers, unless the person spoke between them."""
+    if said is None:
+        with store.connect() as connection:
+            said = chats.messages(connection, message.chat_id)
+    at = next(i for i, one in enumerate(said) if one.id == message.id)
+    answers = [i for i in range(at) if said[i].role in (chats.ASSISTANT, chats.USER)]
+    if len(answers) < 2 or said[answers[-1]].role != chats.ASSISTANT or said[answers[-2]].role != chats.ASSISTANT:
+        return []
+    return [one for one in said[answers[-2] + 1 : answers[-1]] if one.role == chats.TOOL]
+
+
+def _same(one: chats.Message, other: chats.Message) -> bool:
+    return [one.calls[0]["name"], one.calls[0]["arguments"]] == [other.calls[0]["name"], other.calls[0]["arguments"]]
+
+
+def _stuck(calls: list[chats.Message], before: list[chats.Message]) -> bool:
+    """Every call the same as one the answer before made, and answered the same: a run still rendering is not,
+    since its status moves between two looks."""
+
+    def answered(one: chats.Message) -> tuple[Any, ...]:
+        return one.state, one.text, one.error, one.media
+
+    return bool(before) and all(
+        any(_same(one, old) and answered(one) == answered(old) for old in before) for one in calls
+    )

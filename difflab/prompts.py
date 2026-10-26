@@ -523,6 +523,3 @@ most 400 words: what the user wants and every preference or correction they gave
 its path, with what it shows; the production, shot, member and run ids touched and what was changed; and what is \
 still open. Leave out greetings, and anything already done that nothing depends on. Call no tools."""
 CHAT_SUMMARY_LEAD = "Earlier in this chat, summarised; its pictures are named by path, and `look` shows one again:"
-CHAT_TOOLS_SPENT = (
-    "You have called tools as many times as one message allows: answer with what you have, and say what is left."
-)

@@ -117,7 +117,7 @@ def run_chat(inputs: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]
         return chat.reply(int(inputs["message"]), ChatSettings(**settings), **shaped)
     from difflab.api import harness  # not at the top: the API imports the work package
 
-    offered, briefing = harness.prepare(int(inputs["message"]), bool(inputs.get("spent")))
+    offered, briefing = harness.prepare()
     said = chat.reply(int(inputs["message"]), ChatSettings(**settings), tools=offered, briefing=briefing, **shaped)
     harness.after_reply(int(inputs["message"]), offered)
     return said
