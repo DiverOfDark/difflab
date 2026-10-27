@@ -51,7 +51,7 @@ onUnmounted(halt)
 </script>
 
 <template>
-  <div class="app">
+  <div class="app" :class="{ pinned: route.path.startsWith('/chat') }">
     <header class="top">
       <div class="left">
         <RouterLink to="/" class="brand">
@@ -91,6 +91,10 @@ onUnmounted(halt)
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+}
+
+.app.pinned {
+  height: 100dvh;
 }
 
 .top {
@@ -206,6 +210,34 @@ a.state:hover {
     height: auto;
     flex-wrap: wrap;
     padding: var(--space-1) var(--space-2);
+  }
+}
+
+@media (max-width: 640px) {
+  .left {
+    display: contents;
+  }
+
+  .gpu {
+    order: 1;
+  }
+
+  .seg {
+    order: 2;
+    width: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .seg > * {
+    flex: 1 0 auto;
+    padding: 8px 10px;
+    text-align: center;
+  }
+
+  .top > .line {
+    order: 3;
+    width: 100%;
   }
 }
 </style>

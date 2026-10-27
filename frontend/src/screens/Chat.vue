@@ -36,6 +36,9 @@ const SOUND = /\.(wav|mp3|m4a|flac|ogg)$/i
 // A render a reply names by its path under output/, absolute or not: a tool's JSON is all that carried it.
 const NAMED = /(?<![\w/.-])(?:\/\S*?\/output\/)?((?:[\w.-]+\/)+[\w.-]+\.(?:mp4|mov|mkv|webm|png|jpe?g|webp))(?![\w/])/gi
 
+// A phone's Enter is its only new line, and focusing the box there opens the keyboard over the thread.
+const TOUCH = window.matchMedia('(pointer: coarse)').matches
+
 const props = defineProps<{ id?: number }>()
 const router = useRouter()
 
@@ -48,6 +51,7 @@ const busy = ref(false)
 const failure = ref('')
 const dragging = ref(false)
 const armed = ref<number | null>(null)
+const drawer = ref(false)
 const thread = ref<HTMLElement | null>(null)
 const picker = ref<HTMLInputElement | null>(null)
 const box = ref<HTMLTextAreaElement | null>(null)
@@ -124,6 +128,7 @@ watch(
     clearTimeout(timer)
     failure.value = ''
     viewing.value = null
+    drawer.value = false
     await loadList()
     if (id === undefined) {
       chat.value = null
@@ -135,7 +140,7 @@ watch(
     if (found) {
       chat.value = null
       show(found)
-      nextTick(() => box.value?.focus())
+      if (!TOUCH) nextTick(() => box.value?.focus())
     }
   },
   { immediate: true },
@@ -148,6 +153,14 @@ function view(path: string) {
 function step(by: number) {
   if (viewing.value === null || !pictures.value.length) return
   viewing.value = (viewing.value + by + pictures.value.length) % pictures.value.length
+}
+
+const touchedAt = ref<number | null>(null)
+function swiped(event: TouchEvent) {
+  const from = touchedAt.value
+  const x = event.changedTouches[0]?.clientX
+  touchedAt.value = null
+  if (from !== null && x !== undefined && Math.abs(x - from) > 50) step(x < from ? 1 : -1)
 }
 
 function key(event: KeyboardEvent) {
@@ -253,7 +266,7 @@ async function send() {
 }
 
 function keyed(event: KeyboardEvent) {
-  if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+  if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && !TOUCH) {
     event.preventDefault()
     send()
   }
@@ -367,11 +380,11 @@ function waiting(message: ChatMessage): string {
 
 <template>
   <main class="chat-screen">
-    <aside class="side">
+    <aside class="side" :class="{ open: drawer || !chat, full: !chat }">
       <button class="primary" :disabled="busy" @click="fresh">New chat</button>
       <nav class="list">
         <div v-for="one in list" :key="one.id" class="item" :class="{ on: one.id === props.id }">
-          <RouterLink :to="`/chat/${one.id}`" class="name">{{ one.title || 'new chat' }}</RouterLink>
+          <RouterLink :to="`/chat/${one.id}`" class="name" @click="drawer = false">{{ one.title || 'new chat' }}</RouterLink>
           <button class="quiet del" :class="{ armed: armed === one.id }" :title="armed === one.id ? 'click again to delete' : 'delete'" @click="remove(one.id)">
             {{ armed === one.id ? 'delete?' : '×' }}
           </button>
@@ -379,10 +392,14 @@ function waiting(message: ChatMessage): string {
         <p v-if="!list.length" class="muted empty">No chats yet.</p>
       </nav>
     </aside>
+    <div v-if="drawer" class="scrim" @click="drawer = false" />
 
     <section v-if="chat" class="main" :class="{ dragging }" @dragover.prevent="dragging = true" @dragleave.self="dragging = false" @drop.prevent="dropped">
       <header class="head">
-        <input v-model="titleDraft" class="title" placeholder="untitled" @change="rename" @keydown.enter="($event.target as HTMLInputElement).blur()" />
+        <div class="titled">
+          <button class="quiet chats" title="all chats" @click="drawer = true">☰</button>
+          <input v-model="titleDraft" class="title" placeholder="untitled" @change="rename" @keydown.enter="($event.target as HTMLInputElement).blur()" />
+        </div>
         <div class="fill mono muted" title="the newest reply's prompt against what the model holds; past the mark it summarises the chat first">
           <span>context {{ thousands(chat.context.used) }} / {{ thousands(chat.context.total) }}</span>
           <span class="meter"><i :style="{ width: `${Math.min(100, (100 * chat.context.used) / chat.context.total)}%` }" /><b :style="{ left: `${(100 * chat.context.compacts_at) / chat.context.total}%` }" /></span>
@@ -464,7 +481,7 @@ function waiting(message: ChatMessage): string {
         <div class="row">
           <button class="clip" title="attach pictures or videos" @click="picker?.click()">＋</button>
           <input ref="picker" type="file" multiple accept="image/*,video/*,audio/*" hidden @change="picked" />
-          <textarea ref="box" v-model="text" rows="3" placeholder="Message · Enter sends, Shift+Enter for a new line" @keydown="keyed" @paste="pasted" />
+          <textarea ref="box" v-model="text" :rows="TOUCH ? 2 : 3" :placeholder="TOUCH ? 'Message' : 'Message · Enter sends, Shift+Enter for a new line'" @keydown="keyed" @paste="pasted" />
           <button v-if="pending" class="danger" @click="stop">Stop</button>
           <button v-else class="primary" :disabled="!canSend" @click="send">Send</button>
         </div>
@@ -472,10 +489,10 @@ function waiting(message: ChatMessage): string {
     </section>
     <section v-else class="main">
       <p v-if="failure" class="band error">{{ failure }}</p>
-      <p class="muted empty">Start a chat with the button on the left.</p>
+      <p class="muted empty">Start a chat with <b>New chat</b>.</p>
     </section>
 
-    <div v-if="onScreen" class="viewer" @click.self="viewing = null">
+    <div v-if="onScreen" class="viewer" @click.self="viewing = null" @touchstart.passive="touchedAt = $event.touches[0]?.clientX ?? null" @touchend="swiped">
       <header>
         <div class="about">
           <span class="title">{{ nameOf(onScreen) }}</span>
@@ -495,7 +512,9 @@ function waiting(message: ChatMessage): string {
 .chat-screen {
   display: grid;
   grid-template-columns: 240px minmax(0, 1fr);
-  height: calc(100vh - 56px);
+  flex: 1;
+  min-height: 0;
+  position: relative;
 }
 
 .side {
@@ -541,6 +560,7 @@ function waiting(message: ChatMessage): string {
 }
 
 .item:hover .del,
+.item.on .del,
 .item .del.armed {
   visibility: visible;
 }
@@ -575,6 +595,17 @@ function waiting(message: ChatMessage): string {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
+}
+
+.titled {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.chats,
+.scrim {
+  display: none;
 }
 
 .title {
@@ -1047,5 +1078,103 @@ function waiting(message: ChatMessage): string {
 
 .clip {
   padding: 7px 11px;
+}
+
+@media (hover: none) {
+  .item .del,
+  .actions {
+    visibility: visible;
+    opacity: 1;
+  }
+}
+
+@media (max-width: 720px) {
+  .chat-screen {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .side {
+    display: none;
+    background: var(--bg-base);
+  }
+
+  .side.open {
+    display: flex;
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: min(300px, 85vw);
+    z-index: 6;
+    border-right: 1px solid var(--line);
+  }
+
+  .side.full {
+    position: static;
+    width: auto;
+    border-right: none;
+  }
+
+  .scrim {
+    display: block;
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    background: oklch(0% 0 0 / 0.5);
+  }
+
+  .chats {
+    display: block;
+    font-size: 18px;
+  }
+
+  .item .name {
+    padding: 10px 8px;
+  }
+
+  .head {
+    padding: var(--space-1) var(--space-2);
+  }
+
+  .fill {
+    flex-wrap: wrap;
+  }
+
+  .thread {
+    padding: var(--space-2);
+  }
+
+  .message {
+    max-width: 100%;
+  }
+
+  .message.user {
+    max-width: 90%;
+  }
+
+  .media img,
+  .media video {
+    max-width: 100%;
+  }
+
+  .band {
+    margin: 0 var(--space-2) var(--space-1);
+  }
+
+  .composer {
+    padding: var(--space-1) var(--space-2) calc(var(--space-1) + env(safe-area-inset-bottom));
+  }
+
+  /* Under 16px, iOS Safari zooms the page into a focused field. */
+  .composer textarea,
+  .title {
+    font-size: 16px;
+  }
+
+  .row textarea {
+    max-height: 30dvh;
+  }
+
+  .viewer {
+    grid-template-columns: 0 minmax(0, 1fr) 0;
+  }
 }
 </style>

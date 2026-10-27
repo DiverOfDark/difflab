@@ -231,6 +231,8 @@ In the page:
    summarises the chat, keeping your newest two messages and what followed them as they were; **compact** asks for
    that now, for example before changing subject. Older messages stay on the page, dimmed above a divider that
    holds the summary, and the model can still see an old picture again by its path.
+7. On a phone, **☰** beside the title opens the list of chats. Enter there makes a new line and **Send** sends;
+   swipe left or right on a full-screen picture to step through them.
 
 The model makes pictures and clips without asking, looks at each result and says what is wrong with it, and makes
 one again only when told to. The same call with the same arguments (the same photos and prompt, say) runs at most twice after one of your messages; a third stops the chat, which then waits for you to say how to go on. Web search goes through the search engines'
