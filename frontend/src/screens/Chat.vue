@@ -26,6 +26,7 @@ import {
   type ChatMessage,
   type ChatSummary,
 } from '../api'
+import RunProgress from '../components/RunProgress.vue'
 import { state } from '../store'
 
 const POLL_MS = 300
@@ -408,6 +409,7 @@ function waiting(message: ChatMessage): string {
             <span class="args muted">{{ called(message) }}</span>
           </div>
           <p v-if="message.role === 'tool' && message.state === 'writing'" class="status mono muted"><i class="dot running" />{{ rendering(message) }}</p>
+          <RunProgress v-if="message.role === 'tool' && message.state === 'writing' && message.run" :id="message.run" />
           <div v-if="message.state === 'asking'" class="ask">
             <p>{{ message.text }}</p>
             <div class="buttons">
