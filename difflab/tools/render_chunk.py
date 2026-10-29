@@ -134,6 +134,9 @@ def encode_references(
     The two halves differ on purpose: the DiT gets every latent frame the VAE produced, while Qwen is
     shown the clip at 2 fps.
     """
+    problem = h3_config.reference_problem(len(frames), len(clips), len(soundtracks))
+    if problem:
+        raise ValueError(problem)
     settings = settings or VideoSettings()
     if geometry is None:
         geometry = plan(frames[0] if frames else clips[0].frame(0), settings)

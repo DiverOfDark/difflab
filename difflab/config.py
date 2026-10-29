@@ -21,10 +21,25 @@ CANVAS_ALIGN = 32
 # across 25 edits run with every block streaming (2026-10-10/11), 7.41 GB in the VAE decode against
 # 4.4-6.3 GB while denoising. CUDA context and VAE weights included, so it errs high by those.
 EDIT_RESERVE_BYTES = int(7.5 * 1024**3)
+# Qwen-Image-Edit 2509's model card: "optimal performance with 1 to 3 input images"; 2511 and the AIO built on it
+# were trained the same way.
+EDIT_MAX_PICTURES = 3
 # The same for Qwen-Image 2.1. A 2 MP edit with a donor held 8.4 GB before the call (26 of 32 blocks resident
 # at 10.5 GiB) and still ran out; streaming every block it peaked at 18.5 GB beside a 3.4 GB desktop
 # (2026-10-25). Taken from that one edit, not a sweep: the all-streaming retry covers what it misses.
 EDIT21_RESERVE_BYTES = 12 * 1024**3
+# Qwen-Image 2.1's model card: "Support up to 10 reference images".
+EDIT21_MAX_PICTURES = 10
+# The area 2.1's references share, edited picture aside: three at a 2 MP output's own area. Their prefix K/V is
+# 512 KiB a token, 11.7 GB here, and what does not fit the card waits in host RAM: three at 2 MP spilled 14 of 32
+# layers (+6 GB RSS) and drew in 29 s against 30 s at 4 MP with nothing spilled; at cfg 4 the second cache spilled
+# 46 of 64 layers and the worker peaked at 33.7 GB RSS (2026-10-29).
+EDIT21_REFERENCE_MEGAPIXELS = 6.0
+# What a block's K/V leaves free on the card for the rest of the prefill, per prefix token. Chosen, not derived:
+# with it, 1 to 10 references at a 2 MP output peaked at 17.0-17.6 GB allocated, cfg 1 and 4 (2026-10-29).
+EDIT21_PREFILL_BYTES_PER_TOKEN = 160 * 1024
+# H3's chunk (`minimax_h3.config.MATMUL_CHUNK_TOKENS`); measured bit-identical to the unchunked SwiGLU.
+EDIT21_MLP_CHUNK_TOKENS = 8192
 
 FINISH_FPS = 60  # what RIFE retimes a finished chapter to; H3 draws 24
 FINISH_MEGAPIXELS = 3840 * 2160 / 1e6  # what the ESRGAN enlarges it to

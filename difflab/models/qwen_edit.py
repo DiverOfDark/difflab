@@ -46,6 +46,10 @@ class Editor:
     ) -> Image.Image:
         """`image` is already at the target size; the output is that size floored to /16. `donors` follow it
         as Picture 2, 3, ...: the prompt names them, the output keeps `image`'s geometry."""
+        if 1 + len(donors) > config.EDIT_MAX_PICTURES:
+            raise ValueError(
+                f"Qwen-Image-Edit reads at most {config.EDIT_MAX_PICTURES} pictures, got {1 + len(donors)}"
+            )
         pipe = self.pipe
         blocks = pipe.transformer.transformer_blocks
 

@@ -95,6 +95,13 @@ class Job:
                 )
             elif not self.start and self.edit.engine == "minimax-h3":
                 problems.append("minimax-h3 plays a clip out from a start photo: mark one, or pick a Qwen engine")
+            elif self.start and self.edit.engine == "minimax-h3":
+                problems.append(h3_config.reference_problem(len(self.photos) - 1))
+            else:
+                engine = self.edit.engine if self.start else "qwen-image-2.1"
+                most = config.EDIT21_MAX_PICTURES if engine == "qwen-image-2.1" else config.EDIT_MAX_PICTURES
+                if len(self.photos) > most:
+                    problems.append(f"{engine} reads at most {most} pictures, got {len(self.photos)}")
         elif self.mode == "upscale":
             if self.clip is None:
                 problems.append("upscale needs a clip to enlarge")
@@ -104,6 +111,8 @@ class Job:
                 problems.append("upscale needs finish_megapixels: the size to deliver at")
         elif not self.photos:
             problems.append("no photos: the first one is what the result opens on")
+        elif self.video_engine == "minimax-h3" and len(self.photos) > 1:
+            problems.append(h3_config.reference_problem(len(self.photos) - 1))
         elif self.video_engine == "ltx-2.5" and len(self.photos) > 1:
             v23 = self.ltx.version() == ltx_config.V23
             most = ltx_config.MSR23_MAX_SUBJECTS if v23 else ltx_config.MSR_MAX_REFERENCES
@@ -111,6 +120,7 @@ class Job:
                 problems.append(
                     f"LTX-{'2.3' if v23 else '2.5'} places at most {most} references after the opening photo"
                 )
+        problems = [problem for problem in problems if problem]
         problems += [f"no such photo: {photo}" for photo in self.photos if not photo.is_file()]
         if self.finish_megapixels is not None and self.finish_megapixels <= 0:
             problems.append(f"finish_megapixels={self.finish_megapixels:g}: leave it unset to deliver as sampled")

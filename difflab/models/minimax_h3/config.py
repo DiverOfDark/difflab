@@ -43,3 +43,22 @@ SAMPLE_RESERVE_PER_ROW = int(17.3 * 1024**3 / 113_500)
 # Both fixed when a model is built, and a built model is shared by every call after it.
 MATMUL_CHUNK_TOKENS = 8192  # token chunk for the int8 linears and the SwiGLU intermediate
 VAE_TILE_BATCH = 24  # 256x256 decoder tiles run at once; halved automatically if one group cannot fit
+
+# H3-Base-Ref2VA's model card: "≤ 9 images", "≤ 3 clips" of video and of audio, "Maximum number of files across all
+# input types is 12".
+MAX_REFERENCE_IMAGES = 9
+MAX_REFERENCE_CLIPS = 3
+MAX_REFERENCE_SOUNDTRACKS = 3
+MAX_REFERENCES = 12
+
+
+def reference_problem(images: int, clips: int = 0, soundtracks: int = 0) -> str:
+    for count, most, what in (
+        (images, MAX_REFERENCE_IMAGES, "reference pictures"),
+        (clips, MAX_REFERENCE_CLIPS, "reference clips"),
+        (soundtracks, MAX_REFERENCE_SOUNDTRACKS, "reference soundtracks"),
+        (images + clips + soundtracks, MAX_REFERENCES, "references in all"),
+    ):
+        if count > most:
+            return f"MiniMax H3 takes at most {most} {what}, got {count}"
+    return ""

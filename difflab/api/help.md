@@ -20,7 +20,8 @@ Draw a fresh picture from a description, with optional reference photos.
 
 In the page:
 1. Open **Take**, pick mode **picture**.
-2. Leave every photo unmarked as start (or drop none). Photos you drop are references.
+2. Leave every photo unmarked as start (or drop none). Photos you drop are references, up to 10. Past three they
+   share one budget of about 6 MP, so each is read smaller the more there are.
 3. Pick model **Qwen 2.1**, the experimental engine that draws without a start photo (about 30 s).
 4. Under **Words**, choose **IDEA** to have the VLM write the prompt, or **PROMPT** to give it exactly.
 5. Optional: set the aspect ("3:2") in the settings groups on the right. Press the render button.
@@ -34,6 +35,8 @@ Change something in a photo while keeping the rest.
 In the page:
 1. **Take** → **picture**. Drop the photo and mark it the start; any photos after it are references (a garment, a prop).
 2. Model **Qwen Edit** (the default editor) or **Qwen 2.1**. **MiniMax H3** plays the edit out as a short clip and keeps its last frame, slower (about 2 min) but good at motion and pose changes.
+   How many photos each reads, the start photo included: Qwen Edit 3, Qwen 2.1 10, MiniMax H3 10 (9 references).
+   More are refused before anything renders.
 3. Under **Words**, IDEA ("make it night, keep her pose") or PROMPT (the edit instruction as written).
 4. Render. Change the seed in the settings to get another attempt at the same words.
 
@@ -56,7 +59,7 @@ Over MCP: `make_clip` with `photos: [opening, ...]`, `idea` or `prompt`, optiona
 Keep a person, garment or prop looking right in a clip.
 
 Every photo after the first is a reference, in the order given.
-- **MiniMax H3** steers by them as references in its own caption format.
+- **MiniMax H3** steers by up to 9 of them as references in its own caption format.
 - **LTX** places up to 5 references after the opening photo on 2.5 (called Image 1…), 4 on 2.3 (Figure 1…).
 An IDEA is written to name them; with PROMPT, refer to them yourself in the model's format.
 

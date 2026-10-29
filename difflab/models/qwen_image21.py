@@ -11,7 +11,9 @@ bf16 halves (cosine 0.99997 each way). Its rows carry their own scales, so split
 
 import gc
 import math
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, cast
 
@@ -23,6 +25,8 @@ from diffusers import (
     QwenImage21Pipeline,
     QwenImage21Transformer2DModel,
 )
+from diffusers.models.transformers.transformer_qwenimage21 import QwenImage21KVCache, QwenImage21KVLayerCache
+from diffusers.pipelines.qwenimage21 import pipeline_qwenimage21
 from PIL import Image
 from safetensors import safe_open
 from safetensors.torch import load_file
@@ -35,6 +39,7 @@ from difflab.core import ui
 from difflab.core.hub import Checkpoint, ModelFile
 from difflab.models import lora, offload
 from difflab.models.convrot import dequantize, read_quant_meta
+from difflab.models.minimax_h3.transformer import ChunkedFeedForward
 from difflab.models.minimax_h3.weights import QuantSpec, swap_quantized_linears
 from difflab.models.processors import ImageOnlyQwen3VLProcessor
 
@@ -54,6 +59,58 @@ _TEXT_RENAMES = (
     ("model.norm.", "model.language_model.norm."),
 )
 _LORA_PREFIXES = ("diffusion_model.", "transformer.", "base_model.model.", "lora_unet_")
+
+
+class _SpillingLayerCache(QwenImage21KVLayerCache):  # type: ignore[misc]
+    """A block's prefix K/V, kept in host RAM when the card has no room left for it."""
+
+    device: torch.device | None = None
+
+    def store(self, k: torch.Tensor, v: torch.Tensor) -> None:
+        self.device = k.device
+        reserve = k.shape[1] * config.EDIT21_PREFILL_BYTES_PER_TOKEN
+        if offload.room(k.device) - k.nbytes - v.nbytes < reserve:
+            k, v = k.to("cpu"), v.to("cpu")
+        super().store(k, v)
+
+    def get(self) -> tuple[torch.Tensor, torch.Tensor]:
+        k: torch.Tensor
+        v: torch.Tensor
+        k, v = super().get()
+        if k.device == self.device:
+            return k, v
+        return k.to(self.device), v.to(self.device)
+
+
+class _SpillingKVCache(QwenImage21KVCache):  # type: ignore[misc]
+    def __init__(self, num_layers: int) -> None:
+        self.layer_caches = [_SpillingLayerCache() for _ in range(num_layers)]
+
+
+_areas: ContextVar[list[int] | None] = ContextVar("qwen_image21_areas", default=None)
+_calculate_dimensions = pipeline_qwenimage21.calculate_dimensions
+
+
+def _dimensions(target_area: int, ratio: float) -> tuple[int, int, None]:
+    areas = _areas.get()
+    sized: tuple[int, int, None] = _calculate_dimensions(areas.pop(0) if areas else target_area, ratio)
+    return sized
+
+
+# The pipeline encodes every condition image at one `output_resolution`; these give each its own area, and let a
+# cache that will not fit stay in host RAM.
+pipeline_qwenimage21.calculate_dimensions = _dimensions
+pipeline_qwenimage21.QwenImage21KVCache = _SpillingKVCache
+
+
+@contextmanager
+def _condition_areas(areas: Sequence[int]) -> Iterator[None]:
+    """`areas` in the order of the images; the pipeline first sizes the last one for an output size it is given."""
+    token = _areas.set([areas[-1], *areas] if areas else None)
+    try:
+        yield
+    finally:
+        _areas.reset(token)
 
 
 def _read(path: str) -> tuple[dict[str, torch.Tensor], dict[str, QuantSpec]]:
@@ -93,6 +150,8 @@ def load_transformer(path: str, loras: Sequence[tuple[str, float]]) -> QwenImage
         if missing or unexpected:
             raise RuntimeError(f"transformer: missing={sorted(missing)[:8]} unexpected={sorted(unexpected)[:8]}")
         sites = [_apply_lora(model, file, strength) for file, strength in loras]
+        for block in model.transformer_blocks:
+            block.img_mlp = ChunkedFeedForward(block.img_mlp, config.EDIT21_MLP_CHUNK_TOKENS)
         detail(" · ".join([f"{len(quant)} int8 layers", *sites]))
     frozen: QwenImage21Transformer2DModel = model.requires_grad_(False).eval()
     return frozen
@@ -210,6 +269,13 @@ def _decode(pipe: QwenImage21Pipeline, latents: torch.Tensor, height: int, width
     return decoded
 
 
+def reference_areas(size: tuple[int, int], count: int) -> list[int]:
+    """Each reference at the output's area, or an equal share of `EDIT21_REFERENCE_MEGAPIXELS` once they pass it."""
+    side = round(math.sqrt(size[0] * size[1]))
+    share = config.EDIT21_REFERENCE_MEGAPIXELS * 1e6 / max(count, 1)
+    return [min(side * side, int(share))] * count
+
+
 class Editor21:
     """Qwen-Image 2.1, one transformer file and one LoRA stack."""
 
@@ -245,8 +311,10 @@ class Editor21:
         donors: Sequence[Image.Image] = (),
         turbo: bool = True,
     ) -> Image.Image:
-        """`image` is already at the target size, and every input is encoded at that area."""
-        return self._draw([image, *donors], prompt, image.size, steps, cfg, seed, negative_prompt, turbo)
+        """`image` is already at the target size and is encoded at it; `donors` share `reference_areas`'s budget."""
+        side = round(math.sqrt(image.width * image.height))
+        areas = [side * side, *reference_areas(image.size, len(donors))]
+        return self._draw([image, *donors], areas, prompt, image.size, steps, cfg, seed, negative_prompt, turbo)
 
     def create(
         self,
@@ -260,11 +328,13 @@ class Editor21:
         references: Sequence[Image.Image] = (),
     ) -> Image.Image:
         """A picture on a fresh canvas, `size` on the /32 grid, with any `references` as its condition images."""
-        return self._draw(list(references) or None, prompt, size, steps, cfg, seed, negative_prompt, turbo)
+        areas = reference_areas(size, len(references))
+        return self._draw(list(references) or None, areas, prompt, size, steps, cfg, seed, negative_prompt, turbo)
 
     def _draw(
         self,
         images: list[Image.Image] | None,
+        areas: list[int],
         prompt: str,
         size: tuple[int, int],
         steps: int,
@@ -273,6 +343,8 @@ class Editor21:
         negative_prompt: str,
         turbo: bool,
     ) -> Image.Image:
+        if images and len(images) > config.EDIT21_MAX_PICTURES:
+            raise ValueError(f"Qwen-Image 2.1 reads at most {config.EDIT21_MAX_PICTURES} pictures, got {len(images)}")
         pipe = self.pipe
         width, height = size
         base = cast(dict[str, object], FlowMatchEulerDiscreteScheduler.load_config(OFFICIAL.path / "scheduler"))
@@ -282,7 +354,7 @@ class Editor21:
         blocks = pipe.transformer.transformer_blocks
 
         def run() -> torch.Tensor:
-            with ui.EditProgress(pipe.transformer, steps) as progress:
+            with ui.EditProgress(pipe.transformer, steps) as progress, _condition_areas(areas):
                 result = pipe(
                     image=images,
                     prompt=prompt,
@@ -292,8 +364,6 @@ class Editor21:
                     sigmas=sigmas,
                     height=height,
                     width=width,
-                    # The condition images are resized to this area; the target's keeps them 1:1 with the output.
-                    output_resolution=round(math.sqrt(width * height)),
                     generator=torch.Generator("cpu").manual_seed(seed),
                     callback_on_step_end=progress.on_step_end,
                     # Decoded below instead: inside the call the step-0 prefix KV cache is still held, and a 2 MP

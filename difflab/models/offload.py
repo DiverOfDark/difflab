@@ -199,12 +199,12 @@ def fit(blocks: Iterable[nn.Module], reserve: int) -> int:
     streamers: list[BlockStreamer] = [getattr(block, _ATTRIBUTE) for block in blocks]
     reserve += max((streamer.size for streamer in streamers), default=0)
     for streamer in reversed(streamers):
-        if _room(streamer.device) >= reserve:
+        if room(streamer.device) >= reserve:
             break
         if streamer.resident:
             streamer.unsettle()
     for streamer in streamers:
-        if not streamer.resident and _room(streamer.device) - streamer.size >= reserve:
+        if not streamer.resident and room(streamer.device) - streamer.size >= reserve:
             streamer.settle()
     return sum(streamer.resident for streamer in streamers)
 
@@ -339,6 +339,6 @@ def _unpin(flat: torch.Tensor) -> None:
     torch.cuda.check_error(cudart.cudaHostUnregister(flat.data_ptr()))
 
 
-def _room(device: torch.device) -> int:
+def room(device: torch.device) -> int:
     free, _ = torch.cuda.mem_get_info(device)
     return free + torch.cuda.memory_reserved(device) - torch.cuda.memory_allocated(device)
