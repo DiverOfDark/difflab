@@ -10,16 +10,20 @@ shows five of them and the originals are several megabytes each.
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 from pathlib import Path
 from typing import Any
 
+import av
 from PIL import Image
 
 from difflab import config
 
 ASSETS_DIR = config.OUTPUT_DIR / "assets"
 THUMB = 320  # the long edge of the picture the form shows
+PICTURES = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+CLIPS = {".mp4", ".mov", ".mkv", ".webm"}
 KINDS = {
     ".jpg",
     ".jpeg",
@@ -61,6 +65,7 @@ def describe(path: Path) -> dict[str, Any]:
     thumb = _thumbnail(path)
     if thumb is not None:
         info["thumb"] = f"/uploads/{thumb.name}"
+    if path.suffix.lower() in PICTURES:
         with Image.open(path) as picture:
             info["width"], info["height"] = picture.size
     return info
@@ -91,19 +96,37 @@ def resolve(name: str) -> Path | None:
 
 
 def _thumbnail(path: Path) -> Path | None:
-    """A small copy beside the original, drawn once. `None` for a clip, which has no still to show."""
-    if path.suffix.lower() not in {".jpg", ".jpeg", ".png", ".webp", ".bmp"}:
+    """A small copy beside the original, drawn once; a clip's is its first frame. `None` for a sound."""
+    suffix = path.suffix.lower()
+    if suffix not in PICTURES and suffix not in CLIPS:
         return None
-    thumb = path.with_suffix(f".thumb{path.suffix}")
-    if not thumb.exists():
-        try:
-            with Image.open(path) as picture:
-                small = picture.convert("RGB")
-                small.thumbnail((THUMB, THUMB))
-                small.save(thumb, quality=85)
-        except OSError:
-            return None
+    thumb = path.with_suffix(".thumb.jpg" if suffix in CLIPS else f".thumb{path.suffix}")
+    if thumb.exists():
+        return thumb
+    # Drawn to a private name and renamed: the gallery asks for one thumbnail from several
+    # connections at once, and a half-written file is served as a broken picture.
+    partial = thumb.with_name(f".{os.getpid()}-{os.urandom(4).hex()}-{thumb.name}")
+    try:
+        small = _first_frame(path) if suffix in CLIPS else _opened(path)
+        small.thumbnail((THUMB, THUMB))
+        small.save(partial, quality=85)
+        partial.replace(thumb)
+    except (OSError, ValueError, av.FFmpegError):
+        partial.unlink(missing_ok=True)
+        return None
     return thumb
+
+
+def _opened(path: Path) -> Image.Image:
+    with Image.open(path) as picture:
+        return picture.convert("RGB")
+
+
+def _first_frame(path: Path) -> Image.Image:
+    with av.open(str(path)) as container:
+        for frame in container.decode(video=0):
+            return frame.to_image().convert("RGB")
+    raise ValueError(f"{path.name} has no video frames")
 
 
 def _safe(stem: str) -> str:

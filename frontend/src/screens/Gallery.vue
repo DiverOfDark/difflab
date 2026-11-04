@@ -55,7 +55,7 @@ const days = computed(() => {
 
 const url = (item: { path: string }) => `/output/${item.path}`
 const nameOf = (item: { path: string }) => item.path.split('/').pop() ?? item.path
-const still = (item: GalleryItem) => (item.kind === 'image' ? item.path : item.poster)
+const still = (item: GalleryItem) => item.poster ?? item.path
 const size = (bytes: number) => (bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${(bytes / 1e6).toFixed(1)} MB`)
 const when = (t: number) => new Date(t * 1000).toLocaleString()
 
@@ -239,8 +239,8 @@ onBeforeUnmount(() => {
               @mouseenter="hovered = item.id"
               @mouseleave="hovered = null"
             >
-              <video v-if="item.kind === 'video' && (hovered === item.id || !still(item))" :src="url(item)" :poster="still(item) ? thumbUrl(still(item)!) : undefined" muted loop playsinline :autoplay="hovered === item.id" preload="metadata" />
-              <img v-else :src="thumbUrl(still(item)!)" alt="" loading="lazy" />
+              <video v-if="item.kind === 'video' && hovered === item.id" :src="url(item)" :poster="thumbUrl(still(item))" muted loop playsinline autoplay />
+              <img v-else :src="thumbUrl(still(item))" alt="" loading="lazy" />
               <span v-if="item.kind === 'video' || made(item)" class="badge mono">
                 {{ item.kind === 'video' ? '▶' : '' }}{{ made(item) ? ` +${made(item)}` : '' }}
               </span>
@@ -279,13 +279,11 @@ onBeforeUnmount(() => {
       <button class="side next" title="next (→)" @click="step(1)">›</button>
       <nav v-if="current.steps.length" class="steps">
         <button class="shot" :class="{ on: viewing === null }" title="the result" @click="viewing = null">
-          <img v-if="still(current)" :src="thumbUrl(still(current)!)" alt="" />
-          <video v-else :src="`${url(current)}#t=0.1`" muted preload="metadata" />
+          <img :src="thumbUrl(still(current))" alt="" />
           <span class="mono">result</span>
         </button>
         <button v-for="(one, i) in current.steps" :key="i" class="shot" :class="{ on: viewing === i, text: one.kind === 'text' }" :title="one.label" @click="viewing = i">
-          <img v-if="one.kind === 'image'" :src="thumbUrl(one.path)" alt="" loading="lazy" />
-          <video v-else-if="one.kind === 'video'" :src="`${url(one)}#t=0.1`" muted preload="metadata" />
+          <img v-if="one.kind !== 'text'" :src="thumbUrl(one.path)" alt="" loading="lazy" />
           <span v-else class="words-icon">“ ”</span>
           <span class="mono">{{ one.kind === 'video' ? '▶ ' : '' }}{{ one.label }}</span>
         </button>
@@ -570,7 +568,6 @@ img.full {
 }
 
 .shot img,
-.shot video,
 .words-icon {
   width: 100%;
   height: 64px;
