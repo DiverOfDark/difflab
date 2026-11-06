@@ -117,7 +117,7 @@ def _compact(chat: chats.Chat, said: list[chats.Message], summarise: Callable[[l
     kept = config.CHAT_KEPT_TURNS if len(spoke) > config.CHAT_KEPT_TURNS else 1
     through = spoke[-kept] - 1 if spoke else 0
     if through > chat.summary_through:
-        shown = [one for one in said if one.id > chat.summary_through]
+        shown = [one for one in said if chat.summary_through < one.id <= through]
         summary = exl3vl.before_calls(
             _fitting(shown, summarise, _opening(chat), [Turn(chats.USER, [prompts.CHAT_COMPACT_PROMPT])]), True
         )
@@ -138,9 +138,11 @@ def _opening(chat: chats.Chat) -> list[Turn]:
 def _fitting(
     said: list[chats.Message], ask: Callable[[list[Turn]], str], before: list[Turn], after: list[Turn] | None = None
 ) -> str:
-    """Over the context, the pictures of all but the newest messages go before anything said does."""
+    """Over the context, the pictures of all but the newest messages go before anything said does, then those too."""
     pictured = [one.id for one in said if one.media]
     cuts = [0] + [pictured[-kept] for kept in (PICTURED_KEPT, 1) if kept < len(pictured)]
+    if pictured:
+        cuts.append(pictured[-1] + 1)
     for at, cut in enumerate(cuts):
         try:
             return ask([*before, *_turns(said, cut), *(after or [])])

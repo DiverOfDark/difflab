@@ -233,7 +233,9 @@ In the page:
 6. **context** under the title is how full the model's memory of the chat is. Past the mark, the next reply first
    summarises the chat, keeping your newest two messages and what followed them as they were; **compact** asks for
    that now, for example before changing subject. Older messages stay on the page, dimmed above a divider that
-   holds the summary, and the model can still see an old picture again by its path.
+   holds the summary, and the model can still see an old picture again by its path. When your newest messages
+   alone carry more pictures than it holds, about 100 at 1 MP, it gets their paths instead of seeing them; send big
+   batches in parts of 40 or so to have each one seen.
 7. On a phone, **☰** beside the title opens the list of chats. Enter there makes a new line and **Send** sends;
    swipe left or right on a full-screen picture to step through them.
 
