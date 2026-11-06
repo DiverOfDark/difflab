@@ -315,8 +315,13 @@ class Exl3VL:
                     ui.note(f"VLM opening not kept on disk: {missed}")
 
         ids, ends = tokenizer.encode(prompt, encode_special_tokens=True, embeddings=embeddings), []
-        if ids.shape[-1] >= config.VLM_CONTEXT_TOKENS:
-            raise ValueError(f"the prompt is {ids.shape[-1]:,} tokens and the VLM holds {config.VLM_CONTEXT_TOKENS:,}")
+        # The generator refuses a job unless its prompt and `max_new_tokens` both fit in the cache's pages, the
+        # MTP draft's page included: a 108k-token chat prompt under an 8,192 cap asked for 455 of 432 pages.
+        held = config.VLM_CONTEXT_TOKENS - max_new_tokens - PAGE_SIZE
+        if ids.shape[-1] > held:
+            raise ValueError(
+                f"the prompt is {ids.shape[-1]:,} tokens and the VLM holds {held:,} beside a {max_new_tokens:,}-token answer"
+            )
         if system:
             ends.append(
                 tokenizer.encode(prompt[: prompt.index("<|im_start|>user")], encode_special_tokens=True).shape[-1]
