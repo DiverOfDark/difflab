@@ -316,11 +316,13 @@ class Exl3VL:
 
         ids, ends = tokenizer.encode(prompt, encode_special_tokens=True, embeddings=embeddings), []
         # The generator refuses a job unless its prompt and `max_new_tokens` both fit in the cache's pages, the
-        # MTP draft's page included: a 108k-token chat prompt under an 8,192 cap asked for 455 of 432 pages.
-        held = config.VLM_CONTEXT_TOKENS - max_new_tokens - PAGE_SIZE
+        # MTP draft's page included, and the answer's prompt carries the thought: a 108k-token chat prompt under
+        # an 8,192 cap asked for 455 of 432 pages, and with room for the answer alone, 443 once it had thought.
+        answers = max_new_tokens + (config.VLM_THINK_TOKENS if effort else 0)
+        held = config.VLM_CONTEXT_TOKENS - answers - PAGE_SIZE
         if ids.shape[-1] > held:
             raise ValueError(
-                f"the prompt is {ids.shape[-1]:,} tokens and the VLM holds {held:,} beside a {max_new_tokens:,}-token answer"
+                f"the prompt is {ids.shape[-1]:,} tokens and the VLM holds {held:,} beside {answers:,} of thought and answer"
             )
         if system:
             ends.append(
