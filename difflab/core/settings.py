@@ -307,10 +307,14 @@ class EditSettings(Settings):
     steps_21: int = setting(
         40, "2.1 steps", "Qwen-Image 2.1's base model, with turbo off; Qwen's own pipeline takes 40", low=1, high=100
     )
+    # Measured 2026-11-09 re-editing a picture 2.1 had drawn, base model and a base fine-tune, 2 MP, 25 steps: at cfg 1
+    # both ignored "add a man handing her the hookah" and came back grained and over-sharpened, and 40 steps did no
+    # better; 2.5 added him with less grain, 4 cleanly, 105 s against 65 s. A first edit of a camera photo held up at 1.
     cfg_21: float = setting(
         1.0,
         "2.1 cfg",
-        "Qwen-Image 2.1 is sampled without guidance; above 1 the negative prompt costs a second pass",
+        "the Turbo runs without guidance; the base model and its fine-tunes want about 4 to follow an edit of a picture"
+        " they drew, at twice the time a step: the negative prompt costs a second pass",
         low=1,
         high=8,
         advanced=True,
